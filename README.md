@@ -126,9 +126,6 @@ boss-resume-filter/
 ├── PACKAGING.md          # 打包指南
 ├── requirements.txt      # Python 依赖
 ├── install.bat           # 安装脚本
-├── templates/            # 模板文件
-│   ├── 需求文档示例.md
-│   └── 简化需求模板.md
 ├── tests/                # 测试脚本目录
 └── scripts/              # 辅助脚本目录
 ```

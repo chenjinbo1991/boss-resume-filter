@@ -47,7 +47,6 @@ pyinstaller --onefile --noconsole --name "BOSS_简历筛选器" gui_main.py
 dist/
 ├── BOSS_简历筛选器.exe   <-- 主程序
 ├── job_config.json        <-- 岗位配置
-├── templates/             <-- 模板文件
 └── README.md             <-- 说明文档
 ```
 
@@ -142,7 +141,6 @@ pyinstaller --onefile --noconsole \
 ```
 BOSS_简历筛选器.exe
 job_config.json
-templates/
 ```
 
 #### Q4: 如何更新到新版本？

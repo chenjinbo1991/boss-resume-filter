@@ -785,7 +785,7 @@ class BossFilterGUI:
 
         # API 配置页面标题
         api_header_frame = ttk.Frame(api_container, style='TFrame')
-        api_header_frame.pack(fill="x", pady=(0, int(30 * self.dpi_scale * self.zoom_factor)))
+        api_header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
 
         api_title_label = ttk.Label(api_header_frame, text="AI 模型 API 配置",
                                    font=self.font_section, foreground=self.colors['text_primary'])
@@ -798,7 +798,7 @@ class BossFilterGUI:
         # 新电脑提示：检测到已保存配置但 API Key 丢失
         if hasattr(self, 'api_config') and self.api_config.get("needs_reconfigure"):
             reconfig_card = ttk.LabelFrame(api_container, text="  ⚠️  提示  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-            reconfig_card.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+            reconfig_card.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
             ttk.Label(reconfig_card, text="检测到已保存的模型配置，但 API Key 未配置（可能是新电脑）",
                      font=self.font_label, foreground=self.colors['warning'],
                      background=self.colors['bg_card']).pack(anchor="w")
@@ -808,7 +808,7 @@ class BossFilterGUI:
 
         # API 配置卡片
         config_card = ttk.LabelFrame(api_container, text="  API 配置  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        config_card.pack(fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
+        config_card.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 1. 当前使用模型显示
         current_model_frame = ttk.Frame(config_card, style='TFrame')
@@ -892,7 +892,7 @@ class BossFilterGUI:
 
         # 3. 已保存模型列表
         model_list_card = ttk.LabelFrame(api_container, text="  已保存模型（双击切换）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        model_list_card.pack(fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+        model_list_card.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 模型列表 Treeview
         model_columns = ("name", "provider", "base_url")
@@ -1005,7 +1005,7 @@ class BossFilterGUI:
 
         # 页面标题
         header_frame = ttk.Frame(self.run_page, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(30 * self.dpi_scale * self.zoom_factor)))
+        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
 
         title_label = ttk.Label(header_frame, text="运行控制",
                                font=self.font_section, foreground=self.colors['text_primary'])
@@ -1017,7 +1017,7 @@ class BossFilterGUI:
 
         # === 浏览器连接状态检测 ===
         browser_frame = ttk.LabelFrame(control_container, text="  浏览器状态  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        browser_frame.pack(fill="x", padx=int(30 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
+        browser_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         browser_status_row = ttk.Frame(browser_frame, style='TFrame')
         browser_status_row.pack(fill="x")
@@ -1039,7 +1039,7 @@ class BossFilterGUI:
 
         # 运行参数
         param_frame = ttk.Frame(control_container, style='TFrame')
-        param_frame.pack(fill="x", padx=int(30 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
+        param_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 滚动轮次
         row1 = ttk.Frame(param_frame, style='TFrame')
@@ -1083,7 +1083,7 @@ class BossFilterGUI:
 
         # 控制按钮区
         btn_container = ttk.Frame(control_container, style='TFrame')
-        btn_container.pack(fill="x", padx=int(30 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
+        btn_container.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 开始/停止按钮
         self.start_btn = ttk.Button(btn_container, text="▶️ 开始运行", command=self.start_run, style='Accent.TButton', state="disabled")
@@ -1100,10 +1100,10 @@ class BossFilterGUI:
         # 日志区域
         log_label = ttk.Label(control_container, text="运行日志",
                              font=self.font_section, foreground=self.colors['text_primary'])
-        log_label.pack(anchor="w", pady=(int(15 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
+        log_label.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
 
         log_container = ttk.Frame(control_container, style='Card.TFrame')
-        log_container.pack(fill="both", expand=True)
+        log_container.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor))
 
         # 日志文本框 - 等宽字体
         log_font = font.Font(family='Consolas', size=int(12 * self.dpi_scale * self.zoom_factor))

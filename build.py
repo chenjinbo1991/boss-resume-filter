@@ -1,6 +1,7 @@
 """
 BOSS 简历筛选器 - 打包脚本
 用法: python build.py
+默认使用 pack_venv 虚拟环境，如不存在则自动创建
 """
 import subprocess
 import sys
@@ -8,168 +9,133 @@ import shutil
 import os
 from pathlib import Path
 
-# 项目根目录
 BASE_DIR = Path(__file__).parent.resolve()
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
-SPEC_DIR = BASE_DIR / "spec"
+VENV_DIR = BASE_DIR / "pack_venv"
+VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 
 
-def run(cmd, description=""):
-    """执行命令并打印输出"""
-    if description:
-        print(f"\n{'='*60}")
-        print(f"  {description}")
-        print(f"{'='*60}")
-    print(f">>> {cmd}")
-    result = subprocess.run(cmd, shell=True, capture_output=False, text=True)
-    if result.returncode != 0:
-        print(f"\n[错误] 命令失败: {cmd}")
-        sys.exit(1)
-    return result
+def ensure_venv():
+    """确保在 pack_venv 中运行，不在则切进去再跑"""
+    if Path(sys.executable).resolve() == VENV_PYTHON.resolve():
+        return  # 已经在 venv 里
+
+    if not VENV_PYTHON.exists():
+        print("[创建虚拟环境] pack_venv")
+        subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
+        subprocess.run(
+            [str(VENV_PYTHON), "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r", "requirements.txt"],
+            check=True,
+        )
+        subprocess.run(
+            [str(VENV_PYTHON), "-m", "pip", "install", "-q", "--disable-pip-version-check", "pyinstaller"],
+            check=True,
+        )
+
+    # 用 venv python 重新执行本脚本
+    print(f"[切换环境] → {VENV_PYTHON}")
+    os.execl(str(VENV_PYTHON), str(VENV_PYTHON), __file__)
+
+
+def ensure_deps():
+    """仅检查依赖是否齐全，缺了才装"""
+    required = ["DrissionPage", "pandas", "openpyxl", "requests", "python-dotenv", "keyring", "pyinstaller"]
+    missing = []
+    for pkg in required:
+        try:
+            __import__(pkg.replace("-", "_"))
+        except ImportError:
+            missing.append(pkg)
+
+    if missing:
+        print(f"[安装缺失依赖] {', '.join(missing)}")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check", *missing],
+            check=True,
+        )
+    else:
+        print("[依赖检查] 全部就绪")
 
 
 def clean():
-    """清理旧的打包文件"""
-    print("\n" + "="*60)
-    print("  清理旧文件")
-    print("="*60)
-
-    for d in [DIST_DIR, BUILD_DIR, SPEC_DIR]:
-        if d.exists():
-            shutil.rmtree(d)
-            print(f"  删除: {d}")
-
-    for f in BASE_DIR.glob("*.spec"):
-        f.unlink()
-        print(f"  删除: {f}")
-
-
-def install_deps():
-    """安装打包依赖"""
-    print("\n" + "="*60)
-    print("  检查环境")
-    print("="*60)
-
-    # 检查是否有 pathlib 冲突
-    try:
-        import pathlib
-        if pathlib.__file__ and 'site-packages' in pathlib.__file__:
-            print("[警告] 检测到 pathlib 包与 PyInstaller 冲突")
-            print("请执行以下命令移除：")
-            print("  conda remove pathlib -y")
-            print("  # 或")
-            print("  pip uninstall pathlib -y")
-            print("\n移除后重新运行本脚本。")
-            sys.exit(1)
-    except ImportError:
-        pass
-
-    run("pip install pyinstaller", "安装 PyInstaller")
-    run("pip install -r requirements.txt", "安装项目依赖")
+    """仅清理 dist，保留 build 缓存加速后续打包"""
+    if DIST_DIR.exists():
+        shutil.rmtree(DIST_DIR)
+        print(f"  清理: {DIST_DIR}")
 
 
 def build_gui():
-    """打包 GUI 版本（推荐）"""
-    print("\n" + "="*60)
+    """打包 GUI 版本"""
+    print("\n" + "=" * 60)
     print("  打包 GUI 版本")
-    print("="*60)
+    print("=" * 60)
 
-    run(
-        'pyinstaller '
-        '--onefile '           # 打包成单个 EXE
-        '--noconsole '         # 不显示控制台窗口
-        '--name "BOSS_简历筛选器" '  # EXE 名称
-        '--add-data "job_config.json;." '  # 包含配置文件
-        '--add-data "api_config.json;." '  # 包含 API 配置
-        '--add-data "templates;templates" '  # 包含模板目录
-        '--hidden-import=tkinter '
-        '--hidden-import=tkinter.ttk '
-        '--hidden-import=tkinter.font '
-        '--hidden-import=tkinter.filedialog '
-        '--hidden-import=tkinter.messagebox '
-        '--exclude-module=PyQt5 '
-        '--exclude-module=PySide6 '
-        '--exclude-module=torch '
-        '--exclude-module=botocore '
-        '--exclude-module=boto3 '
-        'gui_main.py',
-        "正在打包 GUI 版本..."
-    )
-
-    print(f"\n[成功] GUI 版本已打包到: {DIST_DIR}/BOSS_简历筛选器.exe")
-
-
-def build_cli():
-    """打包命令行版本"""
-    print("\n" + "="*60)
-    print("  打包命令行版本")
-    print("="*60)
-
-    run(
-        'pyinstaller '
-        '--onefile '
-        '--name "BOSS_简历筛选器_CLI" '
+    cmd = (
+        "pyinstaller "
+        "--onefile "
+        "--noconsole "
+        "--log-level WARN "
+        '--name "BOSS_简历筛选器" '
         '--add-data "job_config.json;." '
-        '--add-data "templates;templates" '
-        'bossmaster.py',
-        "正在打包 CLI 版本..."
+        '--add-data "api_config.json;." '
+"--hidden-import=tkinter "
+        "--hidden-import=tkinter.ttk "
+        "--hidden-import=tkinter.font "
+        "--hidden-import=tkinter.filedialog "
+        "--hidden-import=tkinter.messagebox "
+        "--exclude-module=PyQt5 "
+        "--exclude-module=PySide6 "
+        "--exclude-module=torch "
+        "--exclude-module=botocore "
+        "--exclude-module=boto3 "
+        "gui_main.py"
     )
+    print(f">>> {cmd}")
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode != 0:
+        print(f"\n[错误] 打包失败")
+        sys.exit(1)
 
-    print(f"\n[成功] CLI 版本已打包到: {DIST_DIR}/BOSS_简历筛选器_CLI.exe")
+    exe_path = DIST_DIR / "BOSS_简历筛选器.exe"
+    size_mb = exe_path.stat().st_size / (1024 * 1024)
+    print(f"\n[完成] {exe_path}  ({size_mb:.1f} MB)")
 
 
 def copy_artifacts():
-    """复制必要的辅助文件到 dist 目录"""
-    print("\n" + "="*60)
+    """复制辅助文件到 dist"""
+    print("\n" + "=" * 60)
     print("  复制辅助文件")
-    print("="*60)
+    print("=" * 60)
 
-    # 复制 README
     for file in ["README.md", "requirements.txt", "job_config.json", "gui.bat"]:
         src = BASE_DIR / file
         if src.exists():
             shutil.copy2(src, DIST_DIR / file)
             print(f"  复制: {file}")
 
-    # 复制模板目录
-    if (BASE_DIR / "templates").exists():
-        shutil.copytree(BASE_DIR / "templates", DIST_DIR / "templates", dirs_exist_ok=True)
-        print("  复制: templates/")
 
 
 def main():
-    """主入口"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║         BOSS 简历筛选器 - 自动打包脚本                        ║
 ╚══════════════════════════════════════════════════════════════╝
 """)
 
-    # 清理旧文件
+    ensure_venv()
+    ensure_deps()
     clean()
-
-    # 安装依赖
-    install_deps()
-
-    # 打包 GUI 版本（主程序）
     build_gui()
-
-    # 复制辅助文件
     copy_artifacts()
 
-    # 打印完成信息
     print("""
 ╔══════════════════════════════════════════════════════════════╗
 ║                     打包完成                                  ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  输出目录: dist/                                             ║
 ║  主程序  : dist/BOSS_简历筛选器.exe                           ║
-║  配置文件: dist/job_config.json                              ║
-║  模板目录: dist/templates/                                   ║
 ╚══════════════════════════════════════════════════════════════╝
-
-[注意] 首次运行前，请确保目标电脑已安装 Chrome 浏览器
 """)
 
 

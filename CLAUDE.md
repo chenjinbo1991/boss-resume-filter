@@ -17,9 +17,6 @@ boss-resume-filter/
 ├── gui.bat               # GUI 启动脚本
 ├── install.bat           # 安装脚本
 ├── requirements.txt      # Python 依赖
-├── templates/            # 模板文件
-│   ├── 需求文档示例.md
-│   └── 简化需求模板.md
 ├── CLAUDE.md             # 本文件
 ├── README.md             # 项目主文档
 ├── CHANGELOG.md          # 更新日志
