@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # 尝试导入 security 模块（用于从 keyring 读取 API Key）
 try:
-    from security import get_api_key, generate_service_id
+    from security import get_api_key
     HAS_SECURITY = True
 except (ImportError, Exception):
     HAS_SECURITY = False
@@ -29,11 +29,11 @@ llm_type = os.getenv("LOCAL_LLM_TYPE", "openai").lower()
 base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:8000/v1")
 model = os.getenv("LOCAL_LLM_MODEL", "qwen-plus")
 
-# 优先从 keyring 读取 API Key
+# 优先从 keyring 读取 API Key（按服务商管理）
 api_key = None
 if HAS_SECURITY:
     provider = os.getenv("LOCAL_LLM_PROVIDER", "qwen")
-    api_key = get_api_key(generate_service_id(provider, model))
+    api_key = get_api_key(provider)
 
 # 降级到环境变量
 if not api_key:

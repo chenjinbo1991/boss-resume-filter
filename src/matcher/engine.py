@@ -13,7 +13,7 @@ try:
     # 添加项目根目录到路径
     root_dir = Path(__file__).parent.parent.parent
     sys.path.insert(0, str(root_dir))
-    from security import get_api_key, generate_service_id
+    from security import get_api_key
     HAS_SECURITY = True
 except (ImportError, Exception):
     HAS_SECURITY = False
@@ -47,13 +47,12 @@ from ..parser import JobRequirement, ResumeInfo
 load_dotenv()
 
 
-def _get_api_key_from_keyring(provider: str, model: str) -> str | None:
-    """从系统钥匙串读取 API Key"""
+def _get_api_key_from_keyring(provider: str) -> str | None:
+    """从系统钥匙串读取 API Key（按服务商管理）"""
     if not HAS_SECURITY:
         return None
     try:
-        service_id = generate_service_id(provider, model)
-        return get_api_key(service_id)
+        return get_api_key(provider)
     except Exception:
         return None
 
@@ -138,7 +137,7 @@ class MatchEngine:
 
         if self.use_claude:
             # 从 keyring 读取 Claude API Key
-            claude_api_key = _get_api_key_from_keyring("anthropic", "claude-sonnet-4-20250514")
+            claude_api_key = _get_api_key_from_keyring("anthropic")
             if not claude_api_key:
                 # 降级到环境变量
                 claude_api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -152,10 +151,9 @@ class MatchEngine:
         # 从 keyring 读取 API Key（优先）或环境变量（后备）
         self.local_api_key = None
         if HAS_SECURITY:
-            # 尝试从 keyring 读取当前配置的 API Key
+            # 尝试从 keyring 读取当前服务商的 API Key
             provider = os.getenv("LOCAL_LLM_PROVIDER", "qwen")
-            model = self.local_model_name
-            self.local_api_key = _get_api_key_from_keyring(provider, model)
+            self.local_api_key = _get_api_key_from_keyring(provider)
 
         # 降级到环境变量
         if not self.local_api_key:

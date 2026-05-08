@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # 尝试导入 security 模块（用于从 keyring 读取 API Key）
 try:
-    from security import get_api_key, generate_service_id
+    from security import get_api_key
     HAS_SECURITY = True
 except (ImportError, Exception):
     HAS_SECURITY = False
@@ -35,13 +35,12 @@ st.set_page_config(
 )
 
 
-def _get_api_key_from_keyring(provider: str, model: str) -> str | None:
-    """从系统钥匙串读取 API Key"""
+def _get_api_key_from_keyring(provider: str) -> str | None:
+    """从系统钥匙串读取 API Key（按服务商管理）"""
     if not HAS_SECURITY:
         return None
     try:
-        service_id = generate_service_id(provider, model)
-        return get_api_key(service_id)
+        return get_api_key(provider)
     except Exception:
         return None
 
@@ -100,7 +99,7 @@ def main():
 
         if llm_option == "Claude API":
             # 尝试从 keyring 读取 API Key
-            claude_key = _get_api_key_from_keyring("anthropic", "claude-sonnet-4-20250514")
+            claude_key = _get_api_key_from_keyring("anthropic")
             if claude_key:
                 st.success("✓ API Key 已配置（加密存储）")
             else:
@@ -112,7 +111,7 @@ def main():
             model_name = os.getenv("LOCAL_LLM_MODEL", "qwen-plus")
             st.text_input("模型名称", value=model_name, disabled=True)
             # 检查 API Key 是否已配置
-            qwen_key = _get_api_key_from_keyring("qwen", model_name)
+            qwen_key = _get_api_key_from_keyring("qwen")
             if qwen_key:
                 st.success("✓ API Key 已配置（加密存储）")
             else:
