@@ -1,0 +1,65 @@
+0:00:00 Startup
+0:00:00 Microsoft.DeleteProfileHelper.CleanUpEphemeralProfiles
+0:00:00 Microsoft.DeleteProfileHelper.CleanUpDeletedProfiles
+0:00:00 Microsoft.NewBrowser_Normal
+0:00:00 Microsoft.BrowserList.AddBrowser
+0:00:00 Tab1 StartNav1 #auto_toplevel
+0:00:00 Browser1 Insert active Tab1 at 0
+0:00:00 Tab1 AddInfobar73
+0:00:00 Tab1 FinishNav1
+0:00:00 Tab1 PageLoad
+0:00:10 Widget Closed: MenuHost
+0:00:11 Widget Closed: MenuHost
+0:00:11 Tab2 StartNav2 #link
+0:00:11 Browser1 Insert active Tab2 at 1
+0:00:11 Tab2 AddInfobar73
+0:00:11 Tab2 FinishNav2
+0:00:11 Tab2 StartNav3 #renderer-script #auto_subframe
+0:00:11 Tab2 FinishNav3
+0:00:11 Tab2 PageLoad
+0:00:11 Tab2 StartNav4 #renderer-script #link
+0:00:11 Tab2 PageLoad #failure
+0:00:11 Tab2 FinishNav4
+0:00:11 Tab2 StartNav5 #renderer-script #auto_subframe
+0:00:11 Tab2 FinishNav5
+0:00:11 Tab2 PageLoad
+0:00:11 Tab2 StartNav6 #renderer-script #auto_subframe
+0:00:11 Tab2 FinishNav6
+0:00:11 Tab2 PageLoad
+0:00:12 Tab2 PageLoad
+0:00:12 PermissionBubbleRequest
+0:00:12 Microsoft.ENP.Framework.CourtesyEngine.FrequencyCappingAllowed
+0:00:12 Microsoft.Nurturing.Framework.CourtesyEngine.FrequencyCappingAllowed
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseWebContentsAt
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseTabs
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl_TabClosable
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl_NotClosingAll
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseWebContentses
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseWebContentses_FastShutdown
+0:00:12 Microsoft.Shutdown.TabStripModel.ShouldRunUnloadListenerBeforeClosing_false
+0:00:12 Microsoft.Shutdown.TabStripModel.RunUnloadListenerBeforeClosing_false
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl_ClosedAll
+0:00:12 Microsoft.Shutdown.TabStripModel.SendDetachWebContentsNotifications
+0:00:12 Widget Closed: PermissionPromptBaseView
+0:00:12 Widget Closed: StatusBubble
+0:00:12 Browser1 Close Tab2 at 1
+0:00:12 Tab2 RemoveInfobar73 #not-animated
+0:00:12 Tab2 WebContentsDestroyed
+0:00:15 Widget Closed: MenuHost
+0:00:15 Tab3 StartNav8 #link
+0:00:15 Browser1 Insert active Tab3 at 1
+0:00:15 Tab3 AddInfobar73
+0:00:15 Tab3 FinishNav8
+0:00:16 Tab3 StartNav9 #renderer-script #auto_subframe
+0:00:16 Tab3 FinishNav9
+0:00:16 Tab3 PageLoad
+0:00:16 Tab3 StartNav10 #renderer-script #link
+0:00:16 Tab3 StartNav11 #renderer-script #auto_subframe
+0:00:16 Tab3 FinishNav11
+0:00:16 Tab3 PageLoad
+0:00:16 Tab3 PageLoad
+0:00:18 Tab3 FinishNav10 ERR_ABORTED
+0:00:18 Tab3 StartNav12 #renderer-user #link
+0:00:24 Tab3 FinishNav12 ERR_ABORTED
+0:00:24 Tab3 StartNav13 #renderer-user #link

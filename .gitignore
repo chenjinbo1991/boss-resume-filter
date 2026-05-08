@@ -1,0 +1,43 @@
+# 环境配置
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+pack_venv/
+
+# 简历数据（敏感）
+resumes/
+output/
+
+# 候选人数据（累积数据，本地存储）
+candidates_all.json
+candidates_all.xlsx
+
+# 打包输出
+dist/
+build/
+*.spec
+
+# 日志和调试
+*.log
+debug_*.py
+debug_*.log
+build_log*.txt
+*.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
