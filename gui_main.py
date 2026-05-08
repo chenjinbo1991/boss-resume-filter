@@ -103,7 +103,7 @@ class BossFilterGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("BOSS 简历筛选器 v2.0 - 智能候选人筛选工具")
+        self.root.title("BOSS 简历筛选器 v3.0 - 智能候选人筛选工具")
 
         # 高 DPI 支持 - 启用系统 DPI 缩放
         try:
@@ -328,7 +328,7 @@ class BossFilterGUI:
         bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         bottom_frame.pack(side="bottom", fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
-        version_label = ttk.Label(bottom_frame, text="v2.0",
+        version_label = ttk.Label(bottom_frame, text="v3.0",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
                                   foreground='#64748B', background=self.colors['bg_sidebar'])
         version_label.pack(anchor="w")
@@ -1387,9 +1387,9 @@ class BossFilterGUI:
                 total = len(candidates)
                 greeted = sum(1 for c in candidates if c.get('greet_sent', False))
                 # 强烈推荐：匹配分>=80
-                strong = sum(1 for c in candidates if c.get('match_score', 0) >= 80)
+                strong = sum(1 for c in candidates if c.get('match_score', 0) >= 75)
                 # 推荐：匹配分>=70 且<80
-                recommended = sum(1 for c in candidates if 70 <= c.get('match_score', 0) < 80)
+                recommended = sum(1 for c in candidates if 60 <= c.get('match_score', 0) < 75)
 
                 self.home_stats_vars['total_home'].set(str(total))
                 self.home_stats_vars['recommended_home'].set(str(recommended))
@@ -1414,10 +1414,10 @@ class BossFilterGUI:
                 filtered = candidates
             elif stat_type == 'strong_home':
                 title = "强烈推荐"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 80]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= 75]
             elif stat_type == 'recommended_home':
                 title = "推荐"
-                filtered = [c for c in candidates if 70 <= c.get('match_score', 0) < 80]
+                filtered = [c for c in candidates if 60 <= c.get('match_score', 0) < 75]
             elif stat_type == 'greeted_home':
                 title = "已打招呼"
                 filtered = [c for c in candidates if c.get('greet_sent', False)]
@@ -1541,18 +1541,18 @@ class BossFilterGUI:
             if stat_type == 'passed':
                 # 通过筛选：强烈推荐 + 推荐
                 title = "通过筛选"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 70]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= 60]
                 # 只显示已打招呼的
                 detail_type = 'greeted'
             elif stat_type == 'strong':
                 # 强烈推荐
                 title = "强烈推荐"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 80]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= 75]
                 detail_type = 'all'
             elif stat_type == 'recommended':
                 # 推荐
                 title = "推荐"
-                filtered = [c for c in candidates if 70 <= c.get('match_score', 0) < 80]
+                filtered = [c for c in candidates if 60 <= c.get('match_score', 0) < 75]
                 detail_type = 'all'
             else:
                 return
@@ -2065,45 +2065,40 @@ class BossFilterGUI:
 
                         # 去重并排序
                         models = sorted(list(set(chat_models)))
-
-                        # 显示过滤提示
                         filtered_count = len(raw_models) - len(models)
-                        if filtered_count > 0:
-                            print(f"已过滤 {filtered_count} 个非聊天模型（embedding、rerank 等）")
 
                         # 创建选择对话框
                         def show_model_dialog():
                             dialog = tk.Toplevel(self.root)
                             dialog.title("选择模型")
                             dialog.transient(self.root)
-                            dialog.grab_set()
+                            dialog.withdraw()  # 先隐藏，布局完成后再定位显示
 
-                            # 对话框大小和位置
-                            dialog_width = 600
-                            dialog_height = 500
-                            x = self.root.winfo_x() + 80
-                            y = self.root.winfo_y() + 40
-                            dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+                            # 对话框大小
+                            dialog_width = 750
+                            dialog_height = 680
+                            dialog.resizable(True, True)
+                            dialog.minsize(500, 400)
 
                             # 标题
-                            title_text = f"{provider} - 可用聊天模型 ({len(models)} 个)"
-                            if filtered_count > 0:
-                                title_text += f"，已过滤 {filtered_count} 个非聊天模型"
+                            title_text = f"{provider} - 可用模型 ({len(models)} 个)"
                             info_label = ttk.Label(dialog, text=title_text,
                                                    font=self.font_section)
-                            info_label.pack(pady=10)
+                            info_label.pack(pady=(15, 0))
 
-                            # 提示
-                            hint_label = ttk.Label(dialog, text='双击模型名称或选中后点"确定"使用，建议测试连接后再保存',
-                                                   font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
-                                                   foreground=self.colors['warning'])
-                            hint_label.pack(pady=(0, 10))
+                            # 过滤说明
+                            filter_note = "已自动过滤 embedding、rerank、tts 等非聊天模型" if filtered_count > 0 else ""
+                            if filter_note:
+                                note_label = ttk.Label(dialog, text=filter_note,
+                                                       font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
+                                                       foreground=self.colors['warning'])
+                                note_label.pack(pady=(4, 12))
 
                             # 模型列表框
                             listbox_frame = ttk.Frame(dialog)
                             listbox_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-                            listbox = tk.Listbox(listbox_frame, font=self.font_button, height=15)
+                            listbox = tk.Listbox(listbox_frame, font=self.font_button, height=10)
                             scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=listbox.yview)
                             listbox.configure(yscrollcommand=scrollbar.set)
 
@@ -2116,7 +2111,18 @@ class BossFilterGUI:
 
                             # 按钮行
                             btn_frame = ttk.Frame(dialog)
-                            btn_frame.pack(fill="x", padx=20, pady=10)
+                            btn_frame.pack(fill="x", padx=25, pady=(10, 15))
+
+                            # 阻止鼠标滚轮事件传播到父窗口
+                            def _on_dialog_mousewheel(event):
+                                if event.delta > 0:
+                                    listbox.yview_scroll(-1, "units")
+                                else:
+                                    listbox.yview_scroll(1, "units")
+                                return "break"
+
+                            dialog.bind("<MouseWheel>", _on_dialog_mousewheel)
+                            listbox.bind("<MouseWheel>", _on_dialog_mousewheel)
 
                             def on_select(event=None):
                                 selection = listbox.curselection()
@@ -2135,13 +2141,14 @@ class BossFilterGUI:
                                     selected_model = listbox.get(selection[0])
                                     self.api_model_var.set(selected_model)
                                     dialog.destroy()
-                                    # 双击后自动测试连接
                                     self.api_status_label.config(text="⏳ 正在测试连接...", foreground=self.colors['warning'])
                                     self.root.after(300, self.test_api_connection)
 
-                            ttk.Button(btn_frame, text="确定", command=on_select).pack(side="left", padx=5)
-                            ttk.Button(btn_frame, text="确定并测试", command=lambda: on_double_click(None)).pack(side="left", padx=5)
-                            ttk.Button(btn_frame, text="取消", command=dialog.destroy).pack(side="left", padx=5)
+                            # 按钮布局（居中）
+                            btn_inner = ttk.Frame(btn_frame)
+                            btn_inner.pack()
+                            ttk.Button(btn_inner, text="确定", command=on_select, width=12).pack(side="left", padx=8)
+                            ttk.Button(btn_inner, text="取消", command=dialog.destroy, width=12).pack(side="left", padx=8)
 
                             # 绑定回车键和双击
                             dialog.bind("<Return>", lambda e: on_select())
@@ -2152,6 +2159,17 @@ class BossFilterGUI:
                                 listbox.selection_set(0)
                                 listbox.see(0)
 
+                            # 相对父窗口居中（不受多显示器DPI差异影响）
+                            dialog.update_idletasks()
+                            px = self.root.winfo_x()
+                            py = self.root.winfo_y()
+                            pw = self.root.winfo_width()
+                            ph = self.root.winfo_height()
+                            x = px + (pw - dialog_width) // 2
+                            y = py + (ph - dialog_height) // 2
+                            dialog.geometry(f"{dialog_width}x{dialog_height}+{max(0, x)}+{max(0, y)}")
+                            dialog.deiconify()
+                            dialog.grab_set()
                             dialog.wait_window()
 
                         self.root.after(0, lambda: self.api_status_label.config(
@@ -3013,7 +3031,7 @@ class BossFilterGUI:
             from bossmaster import load_job_config, ChromiumPage, time, run_smart_scan
             import argparse
 
-            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v4 [图形界面模式]")
+            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v3.0 [图形界面模式]")
             self.append_log(f"滚动轮次：{rounds}, 打招呼等级：{greet_level_text}({greet_level})")
 
             job_rules, _ = load_job_config()
@@ -3079,12 +3097,12 @@ class BossFilterGUI:
                 total = len(candidates)
 
                 # 强烈推荐：匹配分>=80
-                strong_list = [c for c in candidates if c.get('match_score', 0) >= 80]
+                strong_list = [c for c in candidates if c.get('match_score', 0) >= 75]
                 strong_total = len(strong_list)
                 strong_greeted = sum(1 for c in strong_list if c.get('greet_sent', False))
 
                 # 推荐：匹配分>=70 且<80
-                recommended_list = [c for c in candidates if 70 <= c.get('match_score', 0) < 80]
+                recommended_list = [c for c in candidates if 60 <= c.get('match_score', 0) < 75]
                 recommended_total = len(recommended_list)
                 recommended_greeted = sum(1 for c in recommended_list if c.get('greet_sent', False))
 
@@ -3109,13 +3127,13 @@ class BossFilterGUI:
 
                 for c in sorted_candidates[:100]:
                     score = c.get('match_score', 0)
-                    level = "强烈推荐" if score >= 80 else ("推荐" if score >= 70 else "待定")
+                    level = "强烈推荐" if score >= 75 else ("推荐" if score >= 60 else "待定")
                     status = "已招呼" if c.get('greet_sent', False) else "未招呼"
 
                     # 根据推荐等级设置颜色标记
-                    if score >= 80:
+                    if score >= 75:
                         tag = 'strong_recommend'
-                    elif score >= 70:
+                    elif score >= 60:
                         tag = 'recommend'
                     else:
                         tag = 'pending'
@@ -3388,7 +3406,7 @@ class BossFilterGUI:
 
     def show_about(self):
         """显示关于"""
-        messagebox.showinfo("关于", "BOSS 简历筛选器 v2.0\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+        messagebox.showinfo("关于", "BOSS 简历筛选器 v3.0\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
 
 
 def main():

@@ -13,7 +13,7 @@
 - **Excel 导出**: 自动生成带颜色标识的 Excel 文件（多工作表 + 统计摘要）
 - **图形界面**: 提供友好的 GUI 界面，支持可视化配置和操作（推荐新手使用）
 
-### v2.0 新增功能
+### v3.0 新增功能
 - **多 AI 服务商支持**: qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - **API Key 加密存储**: 使用系统钥匙串（Windows DPAPI）加密，配置文件中不含明文 Key
 - **模型列表动态获取**: 根据 API Key 自动获取可用模型列表
@@ -110,7 +110,7 @@ python bossmaster.py --greet --verbose
 ```
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
-├── gui_main.py           # 图形界面主程序（v2.0）
+├── gui_main.py           # 图形界面主程序（v3.0）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── main.py               # 命令行入口
 ├── security.py           # API Key 安全存储模块

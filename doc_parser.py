@@ -353,7 +353,7 @@ def parse_job_requirements(text: str) -> Dict:
         'Vue', 'Vue.js', 'React', 'Angular', 'HTML', 'CSS',
         'AI', '人工智能', '机器学习', '深度学习',
         'LLM', '大模型', 'AI Agent', '智能体', 'Langchain', 'LangChain', '智能问答', '知识库', 'RAG',
-        '微服务', '分布式', '消息中间件', '数据库'
+        '微服务', '分布式', '消息中间件'
     ]
 
     if required_section:
@@ -395,9 +395,7 @@ def parse_job_requirements(text: str) -> Dict:
         'Linux', 'Git', '微服务', '分布式', '大数据', '云计算',
         'MQTT', 'Kafka', 'RabbitMQ', '消息队列', '消息中间件', 'GraphQL', 'RESTful', 'API', 'RPC',
         # 工作流
-        'activiti', 'camunda', 'flowable', '工作流',
-        # 数据库通用
-        '数据库'
+        'activiti', 'camunda', 'flowable', '工作流'
     ]
 
     # 对文本进行预处理，统一常见变体

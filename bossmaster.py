@@ -1,5 +1,5 @@
 """
-BOSS 直聘候选人智能提取工具 v4
+BOSS 直聘候选人智能提取工具 v3.0
 支持 Excel 导出
 """
 import time
@@ -177,9 +177,9 @@ def export_to_excel(candidates, filename):
         for i, c in enumerate(sorted_candidates):
             score = c.get('match_score', 0)
             # 根据匹配分计算推荐指数
-            if score >= 80:
+            if score >= 75:
                 recommend_level = "强烈推荐"
-            elif score >= 70:
+            elif score >= 60:
                 recommend_level = "推荐"
             else:
                 recommend_level = "待定"
@@ -356,6 +356,36 @@ def parse_experience_years(text):
     return None
 
 
+def _keyword_found(text, keyword):
+    """检查关键词是否在文本中作为独立词出现，避免子串误匹配（如 AI 匹配 email）"""
+    # 中文关键词用子串匹配（中文不存在子串误匹配问题）
+    if any('一' <= c <= '鿿' for c in keyword):
+        return keyword.lower() in text.lower()
+    # 英文/数字关键词用单词边界匹配
+    try:
+        return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text, re.IGNORECASE))
+    except re.error:
+        return keyword.lower() in text.lower()
+
+
+def _calc_edu_bonus(text):
+    """计算学历加分（0~15）"""
+    bonus = 0
+    has_985211 = any(mark in text for mark in ['985', '211', '双一流'])
+    is_doctor = '博士' in text
+    is_master = '硕士' in text
+    is_bachelor = '本科' in text
+
+    if is_doctor:
+        bonus = 15
+    elif is_master:
+        bonus = 13 if has_985211 else 10
+    elif is_bachelor:
+        bonus = 8 if has_985211 else 5
+
+    return bonus
+
+
 def filter_candidate(candidate_text, rule):
     """
     候选人筛选逻辑 - 返回评分结果
@@ -365,17 +395,18 @@ def filter_candidate(candidate_text, rule):
         - details: 详细信息
 
     筛选规则说明：
-    - min_exp: 最低工作年限要求
-    - edu: 最低学历要求（本科/硕士/博士等）
-    - keywords: 技能关键词，用于加权打分
-    - required_conditions: 必要条件列表，包含：
-        - {type: "or", items: ["activiti", "camunda"]} - OR 匹配，至少满足一项
-        - {type: "and", items: ["Java", "MySQL"]} - AND 匹配，全部满足
-        - "统招本科" - 字符串形式，直接匹配
-    - tech_conditions: [已废弃] 兼容旧格式，视为 OR 匹配
+    - 四维评分模型: 基础30 + 技能(0~35) + 经验超额(0~20) + 学历档次(0~15)
+    - 推荐等级: >=75强烈推荐, >=60推荐, >=45待定
+    - min_exp: 最低工作年限要求（门限），超额部分每年+4分，20分封顶
+    - edu: 最低学历要求（门限），985/211/硕士额外加分
+    - keywords: 技能关键词，按权重加权计分，英文词用\b边界避免子串误匹配
+    - required_conditions: 必要条件列表，支持 OR/AND 组合规则
     """
     try:
-        score = 100
+        # 四维评分模型: 基础分30 + 技能分(0~35) + 经验加分(0~20) + 学历加分(0~15)
+        SKILL_MAX = 35
+        EXP_MAX = 20
+
         details = {
             'exp_matched': True,
             'edu_matched': True,
@@ -383,83 +414,74 @@ def filter_candidate(candidate_text, rule):
             'tech_matched': True,
             'skill_matches': [],
             'skill_total': 0,
-            'skill_matched_count': 0
+            'skill_matched_count': 0,
+            'exp_bonus': 0,
+            'edu_bonus': 0
         }
 
-        # === 硬性条件检查（必须全部满足）===
+        # === 硬性条件检查 ===
 
-        # 1. 检查工作经验（支持中文数字）
-        if rule.get("min_exp", 0) > 0:
+        # 1. 工作经验（门限 + 超额加分）
+        min_exp = rule.get("min_exp", 0)
+        exp_years = None
+        if min_exp > 0:
             exp_years = parse_experience_years(candidate_text)
             if exp_years is not None:
-                if rule.get("min_exp", 0) > exp_years:
-                    return False, 0, {"reason": f"经验不足：要求{rule.get('min_exp')}年，实际{exp_years}年"}
-                details['exp_matched'] = True
-            else:
-                if rule.get("min_exp", 0) > 0:
-                    return False, 0, {"reason": '未找到工作经验信息'}
+                if min_exp > exp_years:
+                    return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
+                # 超额加分：超出部分每年+4，20分封顶
+                details['exp_bonus'] = min((exp_years - min_exp) * 4, EXP_MAX)
+            # 找不到经验不再淘汰，仅不加分
 
-        # 2. 检查学历
+        # 2. 学历（门限 + 额外加分）
+        edu_bonus = 0
         if rule.get("edu", "不限") != "不限":
             edu_keywords = {"博士": 6, "硕士": 5, "本科": 4, "大专": 3, "高中": 2, "中专": 1}
             candidate_edu_level = max([edu_keywords.get(word, 0) for word in edu_keywords if word in candidate_text])
             required_edu = edu_keywords.get(rule.get("edu", "不限"), 0)
 
-            # 统招本科特殊处理
             if rule.get("edu") == "本科":
                 non_regular = ["自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招"]
-
-                # 硕士及以上不需要检查统招，直接通过
                 if candidate_edu_level >= 5:
-                    details['edu_matched'] = True
+                    pass  # 硕士及以上直接通过
                 elif candidate_edu_level == 4:
-                    # 本科学历检查是否统招
                     is_non_regular = any(ne in candidate_text for ne in non_regular)
                     if is_non_regular:
-                        # 有 985/211/统招标记的，视为统招
                         if "985" in candidate_text or "211" in candidate_text or "统招" in candidate_text:
-                            details['edu_matched'] = True
+                            pass
                         else:
                             return False, 0, {"reason": "学历不符：要求统招本科"}
-                    else:
-                        details['edu_matched'] = True
                 else:
-                    # 低于本科（大专、高中等）
                     return False, 0, {"reason": "学历不足：要求本科"}
             elif required_edu > 0 and candidate_edu_level < required_edu:
                 return False, 0, {"reason": f"学历不足：要求{rule.get('edu')}，实际未达要求"}
 
-        # 3. 检查必要条件（支持复杂规则）
-        required_conditions = rule.get("required_conditions", [])
+            edu_bonus = _calc_edu_bonus(candidate_text)
+        details['edu_bonus'] = edu_bonus
 
+        # 3. 必要条件
+        required_conditions = rule.get("required_conditions", [])
         for condition in required_conditions:
             cond_result = check_required_condition(candidate_text, condition)
             if not cond_result['passed']:
                 return False, 0, {"reason": cond_result['reason']}
-
         details['required_conditions_matched'] = True
 
-        # 4. 检查技术关键词（兼容旧格式的 tech_conditions）
+        # 4. 技术关键词（旧格式兼容）
         tech_keywords_or = rule.get("tech_conditions", [])
         if tech_keywords_or:
-            tech_found = False
-            for tech in tech_keywords_or:
-                if tech.lower() in candidate_text.lower():
-                    tech_found = True
-                    break
+            tech_found = any(tech.lower() in candidate_text.lower() for tech in tech_keywords_or)
             if not tech_found:
                 return False, 0, {"reason": f"技术不匹配：需要{tech_keywords_or}中至少一项"}
-
         details['tech_matched'] = True
 
-        # === 软性条件评分 ===
+        # === 技能评分（用 word-boundary 匹配避免子串误匹配）===
         keywords = rule.get("keywords", [])
+        skill_score = 0
+        total_possible_weight = 0
+        matched_skills = []
 
         if keywords:
-            matched_skills = []
-            skill_score = 0
-            total_possible_weight = 0
-
             for keyword in keywords:
                 if isinstance(keyword, dict):
                     kw_name = keyword.get("name", "")
@@ -469,8 +491,7 @@ def filter_candidate(candidate_text, rule):
                     kw_weight = 1
 
                 total_possible_weight += kw_weight
-
-                if kw_name.lower() in candidate_text.lower():
+                if _keyword_found(candidate_text, kw_name):
                     matched_skills.append(kw_name)
                     skill_score += kw_weight
 
@@ -478,20 +499,17 @@ def filter_candidate(candidate_text, rule):
             details['skill_matches'] = matched_skills
             details['skill_total'] = total_possible_weight
 
-            # 计算匹配得分
-            if total_possible_weight > 0:
-                # 基础分 60 + 技能分 40，按权重比例计算
-                skill_score_normalized = int((skill_score / total_possible_weight) * 40)
-                score = 60 + skill_score_normalized
-            else:
-                score = 100
+        # === 四维总分 ===
+        if total_possible_weight > 0:
+            skill_score_normalized = int((skill_score / total_possible_weight) * SKILL_MAX)
         else:
-            score = 100
+            skill_score_normalized = SKILL_MAX
 
+        score = 30 + skill_score_normalized + details['exp_bonus'] + details['edu_bonus']
         return True, score, details
 
     except Exception as e:
-        return True, 100, {'error': str(e)}
+        return False, 0, {"reason": f"筛选异常: {str(e)[:50]}"}
 
 
 def check_required_condition(candidate_text, condition):
@@ -512,6 +530,9 @@ def check_required_condition(candidate_text, condition):
         # 字符串形式的必要条件
         # 特殊处理：统招本科 - 985/211 视为统招
         if condition == "统招本科":
+            # 硕士/博士自动满足（已具备本科学历）
+            if "硕士" in candidate_text or "博士" in candidate_text:
+                return {"passed": True, "reason": ""}
             has_regular = "统招" in candidate_text or "985" in candidate_text or "211" in candidate_text
             has_bachelor = "本科" in candidate_text
             if has_regular and has_bachelor:
@@ -734,10 +755,23 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
 
     all_candidates = []
     seen_geek_ids = set()
-    previous_geek_count = 0
     target = iframe if iframe else page
+    consecutive_empty = 0
 
     for scroll_round in range(max_rounds):
+        # 每轮先检测是否已到底（文本提示）
+        if scroll_round > 0:
+            bottom_hint = None
+            try:
+                bottom_hint = target.ele('@text():到底', timeout=0.3)
+                if not bottom_hint:
+                    bottom_hint = target.ele('@text():没有更多', timeout=0.3)
+            except Exception:
+                pass
+            if bottom_hint:
+                print(f"检测到'到底'提示，第 {scroll_round} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
+                break
+
         # 先滚动，再收集数据（除了第一轮）
         if scroll_round > 0:
             if iframe:
@@ -778,7 +812,7 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
                 candidates_in_round.append({'geek_id': geek_id, 'name': name, 'summary': text})
 
         except Exception as e:
-            pass
+            print(f"提取候选人元素失败(轮次{scroll_round + 1}): {e}")
 
         # 更新累计
         for c in candidates_in_round:
@@ -788,7 +822,16 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
         new_count = len(candidates_in_round)
         total_count = len(all_candidates)
 
-        # 每 10 轮打印进度（简洁格式）
+        # 连续空轮次检测（兜底策略，不依赖特定文案）
+        if new_count == 0:
+            consecutive_empty += 1
+            if consecutive_empty >= 5:
+                print(f"连续 {consecutive_empty} 轮无新候选人，第 {scroll_round + 1} 轮提前终止（累计 {total_count} 个候选人）")
+                break
+        else:
+            consecutive_empty = 0
+
+        # 每 10 轮或最后一轮打印进度
         if (scroll_round + 1) % 10 == 0 or (scroll_round + 1) == max_rounds:
             status = f"+{new_count}" if new_count > 0 else "无新增"
             print(f"轮次 {scroll_round + 1}/{max_rounds}: {status}, 累计 {total_count} 个")
@@ -882,9 +925,9 @@ def verify_greeting_success(page, geek_id, debug=False):
         
         # 默认成功
         return True, "点击已执行"
-        
-    except Exception as e:
-        return True, f"点击已执行"
+
+    except Exception:
+        return True, "点击已执行"
 
 def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False):
     """
@@ -955,9 +998,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         passed, score, details = filter_candidate(candidate['summary'], job_info['rule'])
         if passed:
             # 计算推荐等级
-            if score >= 80:
+            if score >= 75:
                 recommend_level = "强烈推荐"
-            elif score >= 70:
+            elif score >= 60:
                 recommend_level = "推荐"
             else:
                 recommend_level = "待定"
@@ -1169,7 +1212,7 @@ def run_smart_scan(args=None):
         greet_text = " + 自动打招呼 (强烈推荐 + 推荐)"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
-    print(f">>> BOSS 直聘候选人智能提取工具 v4 [{mode_text}{greet_text}]")
+    print(f">>> BOSS 直聘候选人智能提取工具 v3.0 [{mode_text}{greet_text}]")
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）
@@ -1257,8 +1300,6 @@ def run_smart_scan(args=None):
                     print(f"已保存 {success_count} 个成功打招呼的候选人状态")
                     raise
 
-                print(f"\n补打招呼完成：成功 {success_count} 人，失败 {fail_count} 人，待确认 {skip_count} 人")
-                print(f"已更新 candidates_all.json")
                 print(f"\n补打招呼完成：成功 {success_count} 人，失败 {fail_count} 人，待确认 {skip_count} 人")
                 print(f"已更新 candidates_all.json")
 

@@ -99,10 +99,6 @@
                 {
                     "name": "flowable",
                     "weight": 1
-                },
-                {
-                    "name": "数据库",
-                    "weight": 1
                 }
             ],
             "required_conditions": [
