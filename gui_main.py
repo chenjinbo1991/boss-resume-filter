@@ -277,15 +277,16 @@ class BossFilterGUI:
         sep = ttk.Separator(sidebar, orient='horizontal')
         sep.pack(fill="x", padx=0, pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 导航项 - "筛选结果"的 emoji 较窄，用 3 个空格对齐
+        # 导航项 - 使用 Frame 容器确保文字对齐（emoji 固定宽度）
         nav_items = [
-            ("🏠  首页", self.show_page_home),
-            ("⚙️  岗位配置", self.show_page_config),
-            ("▶️  运行控制", self.show_page_run),
-            ("📊   筛选结果", self.show_page_result),
+            ("🏠", "首页", self.show_page_home),
+            ("⚙️", "岗位配置", self.show_page_config),
+            ("▶️", "运行控制", self.show_page_run),
+            ("📊", "筛选结果", self.show_page_result),
         ]
 
         self.nav_labels = []
+        self.nav_components = []  # 保存所有导航组件引用，用于 hover 效果
         sidebar_nav_font_size = int(16 * self.dpi_scale * self.zoom_factor)
 
         # 设置导航项样式
@@ -299,30 +300,72 @@ class BossFilterGUI:
                        foreground='#FFFFFF',
                        background=self.colors['bg_sidebar'])
 
-        for idx, (text, command) in enumerate(nav_items):
-            label = ttk.Label(sidebar, text=text,
-                             style='SidebarNav.TLabel', cursor="hand2",
-                             padding=(int(20 * self.dpi_scale * self.zoom_factor), int(14 * self.dpi_scale * self.zoom_factor)))
-            label.pack(fill="x", padx=0, pady=1)
-            label.bind("<Button-1>", lambda e, c=command: c())
-            label.bind("<Enter>", lambda e, i=idx: self.on_nav_enter(i))
-            label.bind("<Leave>", lambda e, i=idx: self.on_nav_leave(i))
-            self.nav_labels.append(label)
+        # emoji 容器内边距（固定宽度，确保文字对齐）
+        emoji_padx = int(20 * self.dpi_scale * self.zoom_factor)
+        text_padx = int(10 * self.dpi_scale * self.zoom_factor)
+
+        for idx, (emoji, text, command) in enumerate(nav_items):
+            # 使用 Frame 容器
+            nav_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
+            nav_frame.pack(fill="x", padx=0, pady=1)
+
+            # emoji 标签 - 固定宽度
+            emoji_label = ttk.Label(nav_frame, text=emoji,
+                                   style='SidebarNav.TLabel', cursor="hand2",
+                                   width=2)  # 2 字符宽度
+            emoji_label.pack(side="left", padx=(emoji_padx, 0))
+
+            # 文字标签
+            text_label = ttk.Label(nav_frame, text=text,
+                                  style='SidebarNav.TLabel', cursor="hand2",
+                                  padding=(text_padx, int(14 * self.dpi_scale * self.zoom_factor)))
+            text_label.pack(side="left", fill="x", expand=True)
+
+            # 绑定点击事件 - 所有子组件绑定到同一个 command
+            for widget in [nav_frame, emoji_label, text_label]:
+                widget.bind("<Button-1>", lambda e, c=command: c())
+
+            # 保存所有组件引用，用于 hover 效果
+            self.nav_components.append({
+                'frame': nav_frame,
+                'emoji': emoji_label,
+                'text': text_label,
+                'command': command,
+                'index': idx
+            })
+
+            self.nav_labels.append(text_label)
 
         # 分隔线 - 导航与设置之间
         sep2 = ttk.Separator(sidebar, orient='horizontal')
         sep2.pack(fill="x", padx=0, pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 系统设置（独立导航项）
+        # 系统设置（独立导航项）- 使用 Frame 容器保持一致对齐
         settings_idx = len(nav_items)
-        settings_label = ttk.Label(sidebar, text="⚙️  系统设置",
+        settings_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
+        settings_frame.pack(fill="x", padx=0, pady=1)
+
+        settings_emoji = ttk.Label(settings_frame, text="⚙️",
                                   style='SidebarNav.TLabel', cursor="hand2",
-                                  padding=(int(20 * self.dpi_scale * self.zoom_factor), int(14 * self.dpi_scale * self.zoom_factor)))
-        settings_label.pack(fill="x", padx=0, pady=1)
-        settings_label.bind("<Button-1>", lambda e: self.show_page_api())
-        settings_label.bind("<Enter>", lambda e, i=settings_idx: self.on_nav_enter(i))
-        settings_label.bind("<Leave>", lambda e, i=settings_idx: self.on_nav_leave(i))
-        self.nav_labels.append(settings_label)
+                                  width=2)
+        settings_emoji.pack(side="left", padx=(emoji_padx, 0))
+
+        settings_text = ttk.Label(settings_frame, text="系统设置",
+                                 style='SidebarNav.TLabel', cursor="hand2",
+                                 padding=(text_padx, int(14 * self.dpi_scale * self.zoom_factor)))
+        settings_text.pack(side="left", fill="x", expand=True)
+
+        for widget in [settings_frame, settings_emoji, settings_text]:
+            widget.bind("<Button-1>", lambda e: self.show_page_api())
+
+        self.nav_components.append({
+            'frame': settings_frame,
+            'emoji': settings_emoji,
+            'text': settings_text,
+            'command': self.show_page_api,
+            'index': settings_idx
+        })
+        self.nav_labels.append(settings_text)
 
         # 底部信息 - 仅版本号 - 调大字体
         bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
@@ -1299,21 +1342,14 @@ class BossFilterGUI:
             page.pack_forget()
 
     def update_nav_highlight(self):
-        """更新导航高亮"""
-        for i, label in enumerate(self.nav_labels):
+        """更新导航高亮 - 当前页面使用选中样式，其他使用默认样式"""
+        for i, comp in enumerate(self.nav_components):
             if i == self.current_page_index:
-                label.configure(style='SidebarNavSelected.TLabel')
+                comp['emoji'].configure(style='SidebarNavSelected.TLabel')
+                comp['text'].configure(style='SidebarNavSelected.TLabel')
             else:
-                label.configure(style='SidebarNav.TLabel')
-
-    def on_nav_enter(self, index):
-        """鼠标移入导航项时高亮"""
-        self.nav_labels[index].configure(style='SidebarNavSelected.TLabel')
-
-    def on_nav_leave(self, index):
-        """鼠标移出导航项时恢复样式（当前页面除外）"""
-        if index != self.current_page_index:
-            self.nav_labels[index].configure(style='SidebarNav.TLabel')
+                comp['emoji'].configure(style='SidebarNav.TLabel')
+                comp['text'].configure(style='SidebarNav.TLabel')
 
     # ===== 右键菜单功能 =====
     def bind_entry_context_menu(self, entry_widget):
