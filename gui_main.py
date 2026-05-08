@@ -321,9 +321,11 @@ class BossFilterGUI:
                                   padding=(text_padx, int(14 * self.dpi_scale * self.zoom_factor)))
             text_label.pack(side="left", fill="x", expand=True)
 
-            # 绑定点击事件 - 所有子组件绑定到同一个 command
+            # 绑定点击和 hover 事件 - 所有子组件绑定到同一个 command
             for widget in [nav_frame, emoji_label, text_label]:
                 widget.bind("<Button-1>", lambda e, c=command: c())
+                widget.bind("<Enter>", lambda e, i=idx: self.on_nav_enter(i))
+                widget.bind("<Leave>", lambda e, i=idx: self.on_nav_leave(i))
 
             # 保存所有组件引用，用于 hover 效果
             self.nav_components.append({
@@ -357,6 +359,8 @@ class BossFilterGUI:
 
         for widget in [settings_frame, settings_emoji, settings_text]:
             widget.bind("<Button-1>", lambda e: self.show_page_api())
+            widget.bind("<Enter>", lambda e, i=settings_idx: self.on_nav_enter(i))
+            widget.bind("<Leave>", lambda e, i=settings_idx: self.on_nav_leave(i))
 
         self.nav_components.append({
             'frame': settings_frame,
@@ -1350,6 +1354,19 @@ class BossFilterGUI:
             else:
                 comp['emoji'].configure(style='SidebarNav.TLabel')
                 comp['text'].configure(style='SidebarNav.TLabel')
+
+    def on_nav_enter(self, index):
+        """鼠标移入导航项时高亮（只改变前景色，不影响布局）"""
+        comp = self.nav_components[index]
+        comp['emoji'].configure(foreground='#FFFFFF')
+        comp['text'].configure(foreground='#FFFFFF')
+
+    def on_nav_leave(self, index):
+        """鼠标移出导航项时恢复样式（当前页面除外）"""
+        if index != self.current_page_index:
+            comp = self.nav_components[index]
+            comp['emoji'].configure(foreground='#A0AEC0')
+            comp['text'].configure(foreground='#A0AEC0')
 
     # ===== 右键菜单功能 =====
     def bind_entry_context_menu(self, entry_widget):
