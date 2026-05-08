@@ -277,11 +277,11 @@ class BossFilterGUI:
         sep = ttk.Separator(sidebar, orient='horizontal')
         sep.pack(fill="x", padx=0, pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 导航项 - 统一使用 3 个空格
+        # 导航项 - "筛选结果"的 emoji 较窄，用 3 个空格对齐
         nav_items = [
-            ("🏠   首页", self.show_page_home),
-            ("⚙️   岗位配置", self.show_page_config),
-            ("▶️   运行控制", self.show_page_run),
+            ("🏠  首页", self.show_page_home),
+            ("⚙️  岗位配置", self.show_page_config),
+            ("▶️  运行控制", self.show_page_run),
             ("📊   筛选结果", self.show_page_result),
         ]
 
@@ -313,9 +313,9 @@ class BossFilterGUI:
         sep2 = ttk.Separator(sidebar, orient='horizontal')
         sep2.pack(fill="x", padx=0, pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 系统设置（独立导航项）- 使用样式，保持 3 个空格
+        # 系统设置（独立导航项）
         settings_idx = len(nav_items)
-        settings_label = ttk.Label(sidebar, text="⚙️   系统设置",
+        settings_label = ttk.Label(sidebar, text="⚙️  系统设置",
                                   style='SidebarNav.TLabel', cursor="hand2",
                                   padding=(int(20 * self.dpi_scale * self.zoom_factor), int(14 * self.dpi_scale * self.zoom_factor)))
         settings_label.pack(fill="x", padx=0, pady=1)
@@ -357,9 +357,9 @@ class BossFilterGUI:
         """创建首页"""
         self.home_page = ttk.Frame(self.pages_frame, style='TFrame')
 
-        # 欢迎标题
+        # 页面标题
         header_frame = ttk.Frame(self.home_page, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(40 * self.dpi_scale * self.zoom_factor)))
+        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
 
         title_label = ttk.Label(header_frame, text="欢迎使用 BOSS 简历筛选器",
                                font=self.font_title, foreground=self.colors['text_primary'])
@@ -391,7 +391,7 @@ class BossFilterGUI:
             icon_size = int(UI_CONFIG['stat_icon_size'] * self.dpi_scale * self.zoom_factor)
             icon_canvas = tk.Canvas(card_frame, width=icon_size, height=icon_size,
                                     bg=self.colors['bg_card'], highlightthickness=0)
-            icon_canvas.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor),
+            icon_canvas.pack(anchor="center",
                             pady=(int(20 * self.dpi_scale * self.zoom_factor), int(8 * self.dpi_scale * self.zoom_factor)))
 
             # 绘制彩色圆形背景
@@ -411,7 +411,7 @@ class BossFilterGUI:
                                    font=self.font_stat, foreground=color,
                                    background=self.colors['bg_card'],
                                    cursor="hand2")
-            value_label.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(0, int(8 * self.dpi_scale * self.zoom_factor)))
+            value_label.pack(anchor="center", pady=(0, int(8 * self.dpi_scale * self.zoom_factor)))
 
             # 绑定点击事件
             self.home_stats_labels[var_name] = (value_label, label_text)
@@ -421,7 +421,7 @@ class BossFilterGUI:
             text_label = ttk.Label(card_frame, text=label_text,
                                   font=self.font_stat_label, foreground=self.colors['text_secondary'],
                                   background=self.colors['bg_card'])
-            text_label.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(0, int(20 * self.dpi_scale * self.zoom_factor)))
+            text_label.pack(anchor="center", pady=(0, int(20 * self.dpi_scale * self.zoom_factor)))
 
         # 快速操作区
         quick_frame = ttk.LabelFrame(self.home_page, text="  快速操作  ", padding=int(UI_CONFIG['card_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
@@ -1131,7 +1131,7 @@ class BossFilterGUI:
 
         # 页面标题
         header_frame = ttk.Frame(self.result_page, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(30 * self.dpi_scale * self.zoom_factor)))
+        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
 
         title_label = ttk.Label(header_frame, text="筛选结果",
                                font=self.font_section, foreground=self.colors['text_primary'])
@@ -1141,48 +1141,72 @@ class BossFilterGUI:
         stats_container = ttk.Frame(self.result_page, style='TFrame')
         stats_container.pack(fill="x", pady=int(20 * self.dpi_scale * self.zoom_factor))
 
-        # 三个统计卡片 - 新的指标定义（颜色与首页同类指标保持一致）
-        # 首页：累计候选人=primary，强烈推荐=purple，推荐=success，已打招呼=warning
-        # 筛选结果页：通过筛选=primary（蓝色），强烈推荐=purple（紫色），推荐=success（绿色）
+        # 三个统计卡片 - 加彩色圆形图标（与首页风格统一）
         self.result_stats_vars = {}
-        self.result_stats_click = {}  # 存储点击事件
+        self.result_stats_greeted = {}
+        self.result_stats_click = {}
         stats_data = [
-            ("通过筛选", "passed", self.colors['primary']),       # 蓝色 - 与首页"累计候选人"一致
-            ("强烈推荐", "strong", self.colors['purple']),        # 紫色 - 与首页"强烈推荐"一致
-            ("推荐", "recommended", self.colors['success']),      # 绿色 - 与首页"推荐"一致
+            ("📋", "通过筛选", "passed", self.colors['primary']),
+            ("🏆", "强烈推荐", "strong", self.colors['purple']),
+            ("👍", "推荐", "recommended", self.colors['success']),
         ]
 
-        for label_text, var_name, color in stats_data:
+        for icon_emoji, label_text, var_name, color in stats_data:
             card = ttk.Frame(stats_container, style='Card.TFrame')
             card.pack(side="left", fill="x", expand=True, padx=int(15 * self.dpi_scale * self.zoom_factor), pady=int(12 * self.dpi_scale * self.zoom_factor))
 
-            # 数值标签（可点击）
-            var = tk.StringVar(value="0/0")
+            # 图标容器 - 彩色圆形背景
+            icon_size = int(UI_CONFIG['stat_icon_size'] * self.dpi_scale * self.zoom_factor)
+            icon_canvas = tk.Canvas(card, width=icon_size, height=icon_size,
+                                    bg=self.colors['bg_card'], highlightthickness=0)
+            icon_canvas.pack(pady=(int(15 * self.dpi_scale * self.zoom_factor), int(5 * self.dpi_scale * self.zoom_factor)))
+
+            # 绘制彩色圆形背景
+            margin = int(UI_CONFIG['icon_margin'] * self.dpi_scale * self.zoom_factor)
+            icon_canvas.create_oval(margin, margin, icon_size - margin, icon_size - margin,
+                                    fill=color, outline='')
+
+            # 在圆形上绘制白色图标
+            icon_canvas.create_text(icon_size // 2, icon_size // 2, text=icon_emoji,
+                                    font=('Segoe UI Emoji', int(UI_CONFIG['font_size_emoji'] * self.dpi_scale * self.zoom_factor)),
+                                    fill='white')
+
+            # 数值标签（可点击）- 显示总数
+            var = tk.StringVar(value="0")
             self.result_stats_vars[var_name] = var
-            self.result_stats_click[var_name] = label_text  # 存储类型用于点击时区分
 
             value_label = ttk.Label(card, textvariable=var,
                                    font=self.font_stat, foreground=color,
-                                   background=self.colors['bg_card'],
-                                   cursor="hand2")
-            value_label.pack(pady=(int(20 * self.dpi_scale * self.zoom_factor), int(8 * self.dpi_scale * self.zoom_factor)))
+                                   background=self.colors['bg_card'])
+            value_label.pack(pady=(0, int(4 * self.dpi_scale * self.zoom_factor)))
 
-            # 绑定点击事件
-            value_label.bind("<Button-1>", lambda e, vt=var_name: self.show_result_stat_detail(vt))
+            # 已打招呼标签 - 小字，用🤝图标
+            greeted_var = tk.StringVar(value="0 🤝")
+            self.result_stats_greeted[var_name] = greeted_var
 
-            # 标签
+            greeted_label = ttk.Label(card, textvariable=greeted_var,
+                                     font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor)),
+                                     foreground=self.colors['text_secondary'],
+                                     background=self.colors['bg_card'])
+            greeted_label.pack(pady=(0, int(8 * self.dpi_scale * self.zoom_factor)))
+
+            # 卡片标题
             text_label = ttk.Label(card, text=label_text,
                                   font=self.font_stat_label, foreground=self.colors['text_secondary'],
                                   background=self.colors['bg_card'])
-            text_label.pack(pady=(0, int(20 * self.dpi_scale * self.zoom_factor)))
+            text_label.pack(pady=(0, int(15 * self.dpi_scale * self.zoom_factor)))
+
+            # 绑定点击事件
+            self.result_stats_click[var_name] = label_text
+            value_label.bind("<Button-1>", lambda e, vt=var_name: self.show_result_stat_detail(vt))
 
         # 结果表格
         table_container = ttk.Frame(self.result_page, style='Card.TFrame')
         table_container.pack(fill="both", expand=True, pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-        # 表格 - 增加工作年限和薪资列
+        # 表格 - 增加工作年限和薪资列，高度从 8 减为 6 以适配图标
         columns = ("name", "exp", "salary", "score", "level", "status", "skills")
-        self.result_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=UI_CONFIG['treeview_height'])
+        self.result_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=6)
 
         self.result_tree.heading("name", text="姓名")
         self.result_tree.heading("exp", text="工作年限")
@@ -3110,10 +3134,14 @@ class BossFilterGUI:
                 passed_total = strong_total + recommended_total
                 passed_greeted = strong_greeted + recommended_greeted
 
-                # 更新统计卡片（格式：已打招呼/总数）
-                self.result_stats_vars['passed'].set(f"{passed_greeted}/{passed_total}")
-                self.result_stats_vars['strong'].set(f"{strong_greeted}/{strong_total}")
-                self.result_stats_vars['recommended'].set(f"{recommended_greeted}/{recommended_total}")
+                # 更新统计卡片
+                self.result_stats_vars['passed'].set(str(passed_total))
+                self.result_stats_vars['strong'].set(str(strong_total))
+                self.result_stats_vars['recommended'].set(str(recommended_total))
+                # 更新已打招呼数（用🤝图标）
+                self.result_stats_greeted['passed'].set(f"{passed_greeted} 🤝")
+                self.result_stats_greeted['strong'].set(f"{strong_greeted} 🤝")
+                self.result_stats_greeted['recommended'].set(f"{recommended_greeted} 🤝")
 
                 for item in self.result_tree.get_children():
                     self.result_tree.delete(item)
