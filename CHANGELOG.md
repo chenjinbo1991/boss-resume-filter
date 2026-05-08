@@ -1,5 +1,42 @@
 # 更新日志
 
+## 2026-05-08 - API Key 安全架构升级
+
+### 安全性
+
+1. **API Key 加密存储**
+   - 使用 `keyring` 库加密存储 API Key 到系统钥匙串（Windows DPAPI）
+   - `api_config.json` 不再保存明文 API Key
+   - 按服务商统一管理：同一服务商的所有模型共享一个 Key
+   - 新增 `security.py` 模块：`save_api_key()` / `get_api_key()` / `delete_api_key()`
+
+2. **API Key 集中管理**
+   - 移除 `.env` 和 `.env.example` 中的 API Key 配置
+   - 所有 API Key 统一通过 GUI 配置和管理
+   - `src/matcher/engine.py` / `src/web/app.py` 从 keyring 读取 API Key
+
+3. **新电脑部署检测**
+   - 首次在新电脑运行自动检测 API Key 缺失
+   - GUI 显示提示引导用户重新配置
+   - 新增 `DEPLOYMENT.md` 部署说明文档
+
+### 新增功能
+
+1. **API Key 迁移工具**
+   - `migrate_keys.py`：将旧版按模型存储的 API Key 迁移到按服务商存储
+   - 自动清理冗余的 keyring 条目
+
+### 修改文件
+- gui_main.py：keyring 集成、新电脑检测提示、按服务商存储
+- src/matcher/engine.py：从 keyring 读取 API Key
+- src/web/app.py：从 keyring 读取 API Key
+- tests/test_llm.py：从 keyring 读取 API Key
+- .env / .env.example：移除 API Key 字段
+- CLAUDE.md：更新项目结构和安全说明
+- README.md：更新 API Key 功能描述
+
+---
+
 ## 2026-05-07 - GUI v2.0 重大升级
 
 ### 新增功能

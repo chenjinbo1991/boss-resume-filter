@@ -7,8 +7,11 @@ boss-resume-filter/
 ├── gui_main.py           # 图形界面主程序（v2.0）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── main.py               # 命令行入口
+├── security.py           # API Key 安全存储模块（keyring 加密）
+├── migrate_keys.py       # API Key 迁移工具（明文→加密）
+├── build.py              # PyInstaller 打包脚本
 ├── job_config.json       # 岗位筛选规则配置
-├── api_config.json       # AI 模型配置（多服务商支持）
+├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── candidates_all.json   # 累积的候选人数据
 ├── candidates_all.xlsx   # Excel 导出文件
 ├── gui.bat               # GUI 启动脚本
@@ -19,7 +22,10 @@ boss-resume-filter/
 │   └── 简化需求模板.md
 ├── CLAUDE.md             # 本文件
 ├── README.md             # 项目主文档
+├── CHANGELOG.md          # 更新日志
 ├── GUI 使用说明.md        # 图形界面详细说明
+├── DEPLOYMENT.md         # 部署说明（新电脑配置）
+├── PACKAGING.md          # 打包指南
 ├── tests/                # 测试脚本目录
 └── scripts/              # 辅助脚本目录
 ```
@@ -44,7 +50,8 @@ boss-resume-filter/
 ## 敏感信息
 - .env 文件不进 git
 - 候选人数据含个人隐私，本地存储要加密
-- API Key 支持明文/密文切换显示
+- API Key 加密存储在系统钥匙串（Windows DPAPI / macOS Keychain），`api_config.json` 不含明文
+- API Key 按服务商统一管理，同一服务商的所有模型共享一个 Key
 
 ## 核心逻辑
 ### 打招呼机制
@@ -67,7 +74,9 @@ boss-resume-filter/
 qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic、custom
 
 ### 配置管理
-- api_config.json 存储多服务商配置
+- api_config.json 存储多服务商配置（不含明文 Key）
+- API Key 加密存储在系统钥匙串（通过 security.py 管理）
 - 支持双击切换已保存的模型
 - 支持根据 API Key 动态获取模型列表
 - 测试连接：高可用设计（全新 Session + 并行双策略 + 宽松超时）
+- 新电脑部署：首次启动检测 API Key 缺失并引导重新配置

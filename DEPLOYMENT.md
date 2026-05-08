@@ -32,9 +32,10 @@ job_config.json
 ## API Key 安全说明
 
 ### 加密存储
-- API Key 使用系统级加密（Windows DPAPI）
+- API Key 使用系统级加密（Windows DPAPI / macOS Keychain）
 - 加密绑定到当前用户账户
-- 配置文件 `api_config.json` 中只保存引用，不含明文
+- 按服务商统一管理（同一服务商的模型共享一个 Key）
+- 配置文件 `api_config.json` 中不含明文 Key
 
 ### 跨电脑迁移
 - ❌ **不支持**直接复制配置文件迁移 API Key
@@ -52,7 +53,7 @@ job_config.json
 ## 常见问题
 
 ### Q: 为什么不能直接复制 api_config.json？
-A: 配置文件中的 `api_key_ref` 是指向原电脑系统钥匙串的引用，复制到新电脑后无法解密。
+A: API Key 加密存储在原电脑的系统钥匙串中，与用户账户绑定，复制配置文件到新电脑后无法解密。
 
 ### Q: 重新配置后，之前的筛选数据会丢失吗？
 A: 不会。`candidates_all.json` 和 `candidates_all.xlsx` 独立存储，不受 API Key 影响。

@@ -15,11 +15,13 @@
 
 ### v2.0 新增功能
 - **多 AI 服务商支持**: qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
+- **API Key 加密存储**: 使用系统钥匙串（Windows DPAPI）加密，配置文件中不含明文 Key
 - **模型列表动态获取**: 根据 API Key 自动获取可用模型列表
 - **模型一键切换**: 双击已保存模型或点击按钮快速切换
 - **API Key 安全显示**: 支持明文/密文切换（👁️ 按钮）
 - **测试连接优化**: 高可用设计（全新 Session + 并行双策略），成功率近 100%
 - **高 DPI 自适应**: 支持 4K 屏幕，界面清晰锐利
+- **新电脑部署引导**: 自动检测并引导配置缺失的 API Key
 
 ### 筛选规则
 | 条件类型 | 说明 |
@@ -111,14 +113,17 @@ boss-resume-filter/
 ├── gui_main.py           # 图形界面主程序（v2.0）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── main.py               # 命令行入口
+├── security.py           # API Key 安全存储模块
 ├── gui.bat               # GUI 启动脚本
 ├── job_config.json       # 岗位筛选规则配置
-├── api_config.json       # AI 模型配置（多服务商支持）
+├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── candidates_all.json   # 累积的候选人数据（累积、去重）
 ├── candidates_all.xlsx   # Excel 导出文件（多工作表 + 统计摘要）
 ├── CLAUDE.md             # AI 协作规范
 ├── README.md             # 项目主文档
 ├── GUI 使用说明.md        # 图形界面详细说明
+├── DEPLOYMENT.md         # 部署说明
+├── PACKAGING.md          # 打包指南
 ├── requirements.txt      # Python 依赖
 ├── install.bat           # 安装脚本
 ├── templates/            # 模板文件
