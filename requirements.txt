@@ -11,3 +11,6 @@ requests>=2.31.0
 
 # 工具库
 python-dotenv>=1.0.0
+
+# 安全存储（Windows DPAPI / macOS Keychain / Linux Secret Service）
+keyring>=25.0.0

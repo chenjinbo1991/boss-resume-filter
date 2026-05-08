@@ -14,6 +14,7 @@ import socket
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
+from security import save_api_key, get_api_key, delete_api_key, generate_service_id
 
 # ========== 路径常量 - 解决相对路径问题 ==========
 # PyInstaller --onefile 模式下 __file__ 指向临时解压目录，需特殊处理
@@ -1688,7 +1689,7 @@ class BossFilterGUI:
                     self.job_rules = {}
 
     def load_api_config(self):
-        """加载 API 配置"""
+        """加载 API 配置 - 从系统钥匙串读取加密的 API Key"""
         if API_CONFIG_PATH.exists():
             try:
                 with open(API_CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -1702,6 +1703,23 @@ class BossFilterGUI:
                         "saved_models": config.get("saved_models", []),
                         "providers": config.get("providers", {})
                     }
+
+                    # 从 keyring 读取当前模型的 API Key
+                    current_model = self.api_config.get("model", "")
+                    current_provider = self.api_config.get("api_provider", "")
+                    if current_model and current_provider:
+                        service_id = generate_service_id(current_provider, current_model)
+                        encrypted_key = get_api_key(service_id)
+                        if encrypted_key:
+                            self.api_config["api_key"] = encrypted_key
+
+                    # 从 keyring 读取所有 saved_models 的 API Key
+                    for model_config in self.api_config["saved_models"]:
+                        service_id = model_config.get("api_key_ref")
+                        if service_id:
+                            api_key = get_api_key(service_id)
+                            if api_key:
+                                model_config["api_key"] = api_key
             except Exception as e:
                 print(f"加载 API 配置失败：{e}")
                 self.api_config = self._default_api_config()
@@ -1720,7 +1738,7 @@ class BossFilterGUI:
         }
 
     def delete_selected_model(self):
-        """删除选中的模型"""
+        """删除选中的模型 - 同时从系统钥匙串删除加密的 API Key"""
         selection = self.model_list_tree.selection()
         if not selection:
             messagebox.showwarning("警告", "请先选择要删除的模型")
@@ -1732,6 +1750,19 @@ class BossFilterGUI:
         # 获取选中的模型信息
         item = self.model_list_tree.item(selection[0])
         model_name = item['values'][0]
+        provider = item['values'][1]
+
+        # 查找配置以获取 service_id
+        model_config = None
+        for saved in self.saved_models:
+            if saved.get("model") == model_name and saved.get("api_provider") == provider:
+                model_config = saved
+                break
+
+        # 从系统钥匙串删除 API Key
+        if model_config and model_config.get("api_key_ref"):
+            service_id = model_config.get("api_key_ref")
+            delete_api_key(service_id)
 
         # 从列表移除
         if hasattr(self, 'saved_models'):
@@ -1765,7 +1796,7 @@ class BossFilterGUI:
         self.api_status_label.config(text=f"✓ 已删除模型 {model_name}", foreground=self.colors['success'])
 
     def use_selected_model(self):
-        """使用选中的模型 - 同时切换 API Key 等配置"""
+        """使用选中的模型 - 从系统钥匙串读取加密的 API Key"""
         selection = self.model_list_tree.selection()
         if not selection:
             messagebox.showwarning("警告", "请先选择要使用的模型")
@@ -1784,16 +1815,33 @@ class BossFilterGUI:
                 break
 
         if model_config:
-            # 检查 API Key 是否存在
-            saved_api_key = model_config.get("api_key", "")
+            # 从系统钥匙串读取加密的 API Key
+            service_id = model_config.get("api_key_ref")
+            saved_api_key = None
+
+            if service_id:
+                # 从 keyring 读取加密的 API Key
+                saved_api_key = get_api_key(service_id)
+
+            # 兼容旧配置（明文存储）- 迁移到加密存储
+            if not saved_api_key and model_config.get("api_key"):
+                old_api_key = model_config.get("api_key")
+                if service_id:
+                    save_api_key(service_id, old_api_key)
+                    saved_api_key = old_api_key
+                    # 清理明文，只保留引用
+                    model_config["api_key_ref"] = service_id
+                    if "api_key" in model_config:
+                        del model_config["api_key"]
+
             if not saved_api_key:
-                # 已保存的配置中没有 API Key，使用当前输入的
-                saved_api_key = self.api_key_var.get().strip()
-                if not saved_api_key:
-                    messagebox.showwarning("警告",
-                        f"模型 '{model_name}' 的配置中没有保存 API Key\n\n"
-                        f"请在上方输入 API Key 后重新保存该模型")
-                    return
+                messagebox.showwarning("警告",
+                    f"模型 '{model_name}' 的 API Key 未在系统钥匙串中找到\n\n"
+                    f"可能原因：\n"
+                    f"1. 系统钥匙串被清理\n"
+                    f"2. 配置文件来自其他电脑\n\n"
+                    f"请重新输入 API Key 并保存该模型")
+                return
 
             # 更新当前使用的模型配置（包括 API Key）
             self.api_provider_var.set(model_config.get("api_provider", ""))
@@ -1828,7 +1876,7 @@ class BossFilterGUI:
             messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
 
     def save_api_config(self):
-        """保存 API 配置并添加到模型列表 - 更新已存在模型的配置"""
+        """保存 API 配置并添加到模型列表 - API Key 加密存储到系统钥匙串"""
         try:
             provider = self.api_provider_var.get().strip()
             model_name = self.api_model_var.get().strip()
@@ -1844,6 +1892,9 @@ class BossFilterGUI:
             if not base_url:
                 messagebox.showwarning("警告", "请输入 Base URL")
                 return
+
+            # 生成唯一服务 ID（用于 keyring 存储）
+            service_id = generate_service_id(provider, model_name)
 
             # 构建当前配置 - 只更新 saved_models，不切换当前使用的模型
             self.api_config = {
@@ -1861,18 +1912,21 @@ class BossFilterGUI:
                 if m.get("model") == model_name and m.get("api_provider") == provider:
                     # 更新已存在模型的配置（关键修复！）
                     m["api_provider"] = provider
-                    m["api_key"] = api_key  # 更新 API Key
                     m["base_url"] = base_url
+                    # 更新 keyring 中的 API Key
+                    save_api_key(service_id, api_key)
+                    m["api_key_ref"] = service_id  # 存储引用而非明文
                     model_exists = True
                     break
 
             if not model_exists:
-                # 添加新模型
+                # 添加新模型 - API Key 加密存储到系统钥匙串
+                save_api_key(service_id, api_key)
                 self.api_config["saved_models"].append({
                     "api_provider": provider,
-                    "api_key": api_key,
                     "base_url": base_url,
-                    "model": model_name
+                    "model": model_name,
+                    "api_key_ref": service_id  # 存储 keyring 引用，不存明文
                 })
 
             with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
@@ -1888,7 +1942,7 @@ class BossFilterGUI:
             self.update_current_model_display()
 
             self.api_status_label.config(text="✓ 配置已保存并添加到列表", foreground=self.colors['success'])
-            messagebox.showinfo("成功", f"API 配置已保存\n模型 {provider}/{model_name} 已添加到已保存模型列表")
+            messagebox.showinfo("成功", f"API 配置已保存\n模型 {provider}/{model_name} 已添加到已保存模型列表\n\nAPI Key 已加密存储到系统钥匙串")
         except Exception as e:
             self.api_status_label.config(text=f"✗ 保存失败：{e}", foreground=self.colors['danger'])
             messagebox.showerror("错误", f"保存 API 配置失败：{e}")
