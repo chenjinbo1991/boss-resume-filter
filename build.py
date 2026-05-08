@@ -4,7 +4,6 @@ BOSS 简历筛选器 - 打包脚本
 """
 import subprocess
 import sys
-import shutil
 import time
 from pathlib import Path
 
@@ -28,23 +27,22 @@ def run_in_venv():
 
 
 def clean_dist():
-    """清理 dist 目录，带重试逻辑"""
-    if not DIST_DIR.exists():
-        return
-
-    for attempt in range(3):
-        try:
-            shutil.rmtree(DIST_DIR)
-            print(f"  清理：{DIST_DIR}")
-            return
-        except PermissionError as e:
-            if attempt < 2:
-                print(f"  等待文件释放... ({attempt + 1}/3)")
-                time.sleep(2)
-            else:
-                print(f"[警告] 无法清理 dist (可能被占用): {e}")
-                print("  请手动关闭占用进程或删除 dist 目录后重试")
-                sys.exit(1)
+    """只删除旧的 EXE 文件，保留用户数据和配置文件"""
+    exe_path = DIST_DIR / "BOSS_简历筛选器.exe"
+    if exe_path.exists():
+        for attempt in range(3):
+            try:
+                exe_path.unlink()
+                print(f"  删除旧 EXE: {exe_path}")
+                return
+            except PermissionError as e:
+                if attempt < 2:
+                    print(f"  等待文件释放... ({attempt + 1}/3)")
+                    time.sleep(2)
+                else:
+                    print(f"[警告] 无法删除旧 EXE (可能被占用): {e}")
+                    print("  请手动关闭占用进程后重试")
+                    sys.exit(1)
 
 
 def main():
@@ -89,12 +87,16 @@ def main():
     size_mb = exe_path.stat().st_size / (1024 * 1024)
     print(f"\n[成功] {exe_path} ({size_mb:.1f} MB)")
 
-    print("\n  复制辅助文件...")
+    print("\n  复制辅助文件（仅缺失文件）...")
     for file in ["README.md", "requirements.txt", "job_config.json", "gui.bat"]:
         src = BASE_DIR / file
+        dst = DIST_DIR / file
         if src.exists():
-            shutil.copy2(src, DIST_DIR / file)
-            print(f"    + {file}")
+            if not dst.exists():
+                shutil.copy2(src, dst)
+                print(f"    + {file}")
+            else:
+                print(f"    = {file} (已存在，跳过)")
 
     print("""
 ╔══════════════════════════════════════════════════════════════╗
