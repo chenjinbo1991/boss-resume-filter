@@ -1,9 +1,22 @@
 """
 测试 LLM 连接
+
+API Key 优先从系统钥匙串读取，环境变量作为后备。
 """
 import os
 import sys
+from pathlib import Path
 from dotenv import load_dotenv
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# 尝试导入 security 模块（用于从 keyring 读取 API Key）
+try:
+    from security import get_api_key, generate_service_id
+    HAS_SECURITY = True
+except (ImportError, Exception):
+    HAS_SECURITY = False
 
 load_dotenv()
 
@@ -15,12 +28,22 @@ print("=" * 50)
 llm_type = os.getenv("LOCAL_LLM_TYPE", "openai").lower()
 base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:8000/v1")
 model = os.getenv("LOCAL_LLM_MODEL", "qwen-plus")
-api_key = os.getenv("LOCAL_LLM_API_KEY", "ollama")
+
+# 优先从 keyring 读取 API Key
+api_key = None
+if HAS_SECURITY:
+    provider = os.getenv("LOCAL_LLM_PROVIDER", "qwen")
+    api_key = get_api_key(generate_service_id(provider, model))
+
+# 降级到环境变量
+if not api_key:
+    api_key = os.getenv("LOCAL_LLM_API_KEY", "ollama")
 
 print(f"\n配置信息:")
 print(f"  LLM 类型：{llm_type}")
 print(f"  基础地址：{base_url}")
 print(f"  模型名称：{model}")
+print(f"  API Key 来源：{'系统钥匙串' if HAS_SECURITY and api_key != os.getenv('LOCAL_LLM_API_KEY') else '环境变量'}")
 
 # 测试连接
 print(f"\n正在测试连接...")

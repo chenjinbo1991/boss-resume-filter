@@ -3,8 +3,20 @@
 硬条件过滤 + 软条件打分 + 综合排序
 """
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Literal
+from pathlib import Path
+
+# 尝试导入项目根目录的 security 模块（用于从 keyring 读取 API Key）
+try:
+    # 添加项目根目录到路径
+    root_dir = Path(__file__).parent.parent.parent
+    sys.path.insert(0, str(root_dir))
+    from security import get_api_key, generate_service_id
+    HAS_SECURITY = True
+except (ImportError, Exception):
+    HAS_SECURITY = False
 
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
@@ -33,6 +45,17 @@ except ImportError:
 from ..parser import JobRequirement, ResumeInfo
 
 load_dotenv()
+
+
+def _get_api_key_from_keyring(provider: str, model: str) -> str | None:
+    """从系统钥匙串读取 API Key"""
+    if not HAS_SECURITY:
+        return None
+    try:
+        service_id = generate_service_id(provider, model)
+        return get_api_key(service_id)
+    except Exception:
+        return None
 
 
 @dataclass
@@ -110,13 +133,33 @@ class MatchEngine:
         Args:
             use_claude: 是否使用 Claude API，False 则使用本地 LLM
         """
-        self.use_claude = use_claude and HAS_ANTHROPIC and os.getenv("ANTHROPIC_API_KEY")
+        # 优先从 keyring 读取 API Key，环境变量作为后备
+        self.use_claude = use_claude and HAS_ANTHROPIC
 
-        # 读取本地 LLM 配置
+        if self.use_claude:
+            # 从 keyring 读取 Claude API Key
+            claude_api_key = _get_api_key_from_keyring("anthropic", "claude-sonnet-4-20250514")
+            if not claude_api_key:
+                # 降级到环境变量
+                claude_api_key = os.getenv("ANTHROPIC_API_KEY")
+            self.use_claude = bool(claude_api_key)
+
+        # 读取本地 LLM 配置 - 从 keyring 读取 API Key
         self.local_llm_type = os.getenv("LOCAL_LLM_TYPE", "openai").lower()  # openai / ollama
         self.local_base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
         self.local_model_name = os.getenv("LOCAL_LLM_MODEL", "qwen2.5:7b")
-        self.local_api_key = os.getenv("LOCAL_LLM_API_KEY", "ollama")  # Ollama 默认不需要 key
+
+        # 从 keyring 读取 API Key（优先）或环境变量（后备）
+        self.local_api_key = None
+        if HAS_SECURITY:
+            # 尝试从 keyring 读取当前配置的 API Key
+            provider = os.getenv("LOCAL_LLM_PROVIDER", "qwen")
+            model = self.local_model_name
+            self.local_api_key = _get_api_key_from_keyring(provider, model)
+
+        # 降级到环境变量
+        if not self.local_api_key:
+            self.local_api_key = os.getenv("LOCAL_LLM_API_KEY", "ollama")
 
         if self.use_claude:
             # 使用 Claude API
