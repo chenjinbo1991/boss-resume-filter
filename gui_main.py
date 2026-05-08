@@ -795,6 +795,17 @@ class BossFilterGUI:
                                       font=self.font_subtitle, foreground=self.colors['text_secondary'])
         api_subtitle_label.pack(anchor="w", pady=(int(10 * self.dpi_scale * self.zoom_factor), 0))
 
+        # 新电脑提示：检测到已保存配置但 API Key 丢失
+        if hasattr(self, 'api_config') and self.api_config.get("needs_reconfigure"):
+            reconfig_card = ttk.LabelFrame(api_container, text="  ⚠️  提示  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
+            reconfig_card.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+            ttk.Label(reconfig_card, text="检测到已保存的模型配置，但 API Key 未配置（可能是新电脑）",
+                     font=self.font_label, foreground=self.colors['warning'],
+                     background=self.colors['bg_card']).pack(anchor="w")
+            ttk.Label(reconfig_card, text="请在下方重新输入 API Key 并点击「保存并添加到列表」",
+                     font=self.font_label, foreground=self.colors['text_secondary'],
+                     background=self.colors['bg_card']).pack(anchor="w", pady=(5, 0))
+
         # API 配置卡片
         config_card = ttk.LabelFrame(api_container, text="  API 配置  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
         config_card.pack(fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
@@ -1720,6 +1731,19 @@ class BossFilterGUI:
                             api_key = get_api_key(service_id)
                             if api_key:
                                 model_config["api_key"] = api_key
+
+                    # 检测是否有 saved_models 但 API Key 读取失败（新电脑场景）
+                    if self.api_config["saved_models"]:
+                        has_missing_key = False
+                        for m in self.api_config["saved_models"]:
+                            if not m.get("api_key"):
+                                has_missing_key = True
+                                break
+                        if has_missing_key:
+                            # 标记需要重新配置
+                            self.api_config["needs_reconfigure"] = True
+                            print("[提示] 检测到已保存的模型配置，但 API Key 未配置（可能是新电脑）")
+                            print("[提示] 请在「岗位配置」->「API 配置」中重新输入 API Key 并保存")
             except Exception as e:
                 print(f"加载 API 配置失败：{e}")
                 self.api_config = self._default_api_config()
