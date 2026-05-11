@@ -828,12 +828,12 @@ class BossFilterGUI:
 
     def _on_rounds_mousewheel(self, event):
         """滚动轮次 Spinbox 的鼠标滚轮处理"""
-        delta = event.delta // 120  # 正=向上滚，负=向下滚
+        step = 10 if event.delta > 0 else -10
         try:
             current = int(self.rounds_var.get())
         except ValueError:
             current = 100
-        new_val = current + delta * 10
+        new_val = current + step
         new_val = max(UI_CONFIG['spinbox_rounds_min'],
                       min(UI_CONFIG['spinbox_rounds_max'], new_val))
         self.rounds_var.set(str(new_val))
