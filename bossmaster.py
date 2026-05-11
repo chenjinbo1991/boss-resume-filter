@@ -847,54 +847,57 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
 
 def send_greeting_on_list_page(page, geek_id, retry=0):
     """
-    在列表页直接向候选人打招呼（XPath 优化版）
+    在列表页直接向候选人打招呼（极速优化版）
+
+    优化要点：
+    - 移除 scrollTo(0,0)，避免破坏虚拟列表 DOM
+    - CSS 选择器替代 //* 全局 XPath 扫描
+    - 合并按钮文本查询为单次 XPath OR 表达式，消灭循环等待叠加
+    - 所有 ele() 调用设短超时，不再死等默认 10s
+
     返回：(是否成功，消息)
     """
     try:
-        # 1. 滚动回顶部
-        page.run_js('window.scrollTo(0, 0)')
-        time.sleep(0.2)
-
-        # 2. 获取 iframe
         iframe = get_iframe(page)
         target = iframe if iframe else page
 
-        # 3. 查找候选人卡片
-        card = target.ele('xpath://*[@data-geekid="{}"]'.format(geek_id))
-        if not card:
-            time.sleep(0.2)
-            card = target.ele('xpath://*[@data-geekid="{}"]'.format(geek_id))
+        # CSS 选择器按 data-geekid 属性定位卡片，比 //* 快几个数量级
+        card_css = f'css:[data-geekid="{geek_id}"]'
+        card = target.ele(card_css, timeout=2)
 
         if not card:
-            return False, "未找到卡片"
+            # 虚拟列表可能未渲染到可视区，微微滚动触发渲染后重试
+            target.run_js('window.scrollBy(0, 300)')
+            time.sleep(0.3)
+            card = target.ele(card_css, timeout=2)
+
+        if not card:
+            return False, "未找到卡片(可能在虚拟列表可视区外)"
 
         parent = card.parent()
+        if not parent:
+            return False, "未找到卡片父容器"
 
-        # 4. 查找按钮 - 精确匹配优先，模糊匹配备用
-        greet_btn = None
-        if parent:
-            for btn_text in ['继续沟通', '立即沟通', '打招呼']:
-                greet_btn = parent.ele('xpath:.//*[text()="{}"]'.format(btn_text))
-                if greet_btn:
-                    break
-            if not greet_btn:
-                for btn_text in ['继续沟通', '立即沟通', '打招呼']:
-                    greet_btn = parent.ele('xpath:.//*[contains(text(), "{}")]'.format(btn_text))
-                    if greet_btn:
-                        break
+        # 合并 XPath：单次查询匹配三种按钮文本，彻底消灭 for 循环 + 默认超时叠加
+        xpath_query = (
+            'xpath:.//*[text()="继续沟通" or text()="立即沟通" or text()="打招呼" '
+            'or contains(text(), "继续沟通") or contains(text(), "立即沟通") '
+            'or contains(text(), "打招呼")]'
+        )
+        greet_btn = parent.ele(xpath_query, timeout=2)
 
         if not greet_btn:
             return False, "未找到按钮"
 
-        # 5. 点击按钮
+        # 滚到可见区域再点击，防止被悬浮头部遮挡
         try:
+            greet_btn.scroll.to_see(center=True)
+            time.sleep(0.1)
             greet_btn.click()
         except Exception:
             greet_btn.run_js('this.click()')
 
-        # 6. 等待
-        time.sleep(0.2)
-
+        time.sleep(0.3)
         return True, "成功"
 
     except Exception as e:
@@ -1061,20 +1064,13 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         print("\n=== 阶段 2: 按分数排序打招呼 ===")
         print("正在刷新候选人列表...")
 
-        # 先向下滚动再滚回顶部，强制触发懒加载重新加载所有卡片
+        # 温和刷新：小幅度滚动触发懒加载渲染，不滚回顶部破坏虚拟列表
         iframe = get_iframe(page)
-        if iframe:
-            # 在 iframe 内滚动
-            iframe.run_js('window.scrollTo(0, 3000)')
-            time.sleep(0.5)
-            iframe.run_js('window.scrollTo(0, 0)')
-            time.sleep(1.0)
-        else:
-            # 直接在页面滚动
-            page.run_js('window.scrollTo(0, 800)')
-            time.sleep(0.5)
-            page.run_js('window.scrollTo(0, 0)')
-            time.sleep(1.0)
+        target = iframe if iframe else page
+        target.run_js('window.scrollBy(0, 200)')
+        time.sleep(0.3)
+        target.run_js('window.scrollBy(0, -100)')
+        time.sleep(0.3)
 
         # 筛选需要打招呼的候选人
         if point_to_point_mode:
@@ -1114,6 +1110,12 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                     time.sleep(0.5)
 
                 print(f"  [{i+1}/{len(to_greet_list)}] {candidate['name']} ({candidate['recommend_level']}, {candidate['match_score']}分) {action}...", end=" ")
+
+                # 每 5 个招呼间歇性滚一下，保持虚拟列表持续渲染后续卡片
+                if i > 0 and i % 5 == 0:
+                    iframe = get_iframe(page)
+                    (iframe if iframe else page).run_js('window.scrollBy(0, 400)')
+                    time.sleep(0.2)
 
                 success, msg = send_greeting_on_list_page(page, candidate['geek_id'])
 
