@@ -1,13 +1,19 @@
 """
-BOSS 直聘候选人智能提取工具 v3.1
+BOSS 直聘候选人智能提取工具 v3.2
 支持 Excel 导出
 """
 import time
 import json
 import re
+import threading
 from datetime import datetime
 from DrissionPage import ChromiumPage
 import os
+
+
+class StopRequested(Exception):
+    """停止请求异常 — 用于立即终止扫描流程"""
+    pass
 
 try:
     import pandas as pd
@@ -698,24 +704,26 @@ def save_candidates_all(candidates_all):
     """保存 candidates_all.json（覆盖旧文件）- 支持去重和中断恢复
 
     去重规则：
-        - 基于 geek_id 去重
-        - 保留分数高的记录
+        - 基于 (geek_id, job_name) 组合去重，同一人在不同岗位各保留一条记录
+        - 同一岗位内保留分数高的记录
         - 合并打招呼状态
         - 清理 greeting_in_progress 标记（如果已保存成功）
     """
     all_file = "candidates_all.json"
 
-    # 去重：基于 geek_id，保留最新记录（分数高的）- O(n) 优化
-    seen_geek_ids = {}
+    # 去重：基于 (geek_id, job_name)，保留最新记录（分数高的）- O(n) 优化
+    seen = {}
 
     for c in candidates_all:
         geek_id = c.get('geek_id')
+        job_name = c.get('job_name', '')
         if geek_id:
-            if geek_id not in seen_geek_ids:
-                seen_geek_ids[geek_id] = c
+            key = (geek_id, job_name)
+            if key not in seen:
+                seen[key] = c
             else:
-                # 如果新记录分数更高或打过招呼，更新
-                old_c = seen_geek_ids[geek_id]
+                # 同岗位同一人：如果新记录分数更高或打过招呼，更新
+                old_c = seen[key]
                 if c.get('match_score', 0) > old_c.get('match_score', 0) or c.get('greet_sent', False):
                     # 合并数据：保留打招呼状态
                     if old_c.get('greet_sent', False) and not c.get('greet_sent', False):
@@ -723,10 +731,10 @@ def save_candidates_all(candidates_all):
                     # 保留 greeting_in_progress 标记
                     if old_c.get('greeting_in_progress', False):
                         c['greeting_in_progress'] = True
-                    seen_geek_ids[geek_id] = c
+                    seen[key] = c
 
     # 直接从字典生成列表（避免 O(n²) 的列表查找）
-    unique_candidates = list(seen_geek_ids.values())
+    unique_candidates = list(seen.values())
 
     # 清理 completed 的 greeting_in_progress 标记（已打过招呼的不再需要标记）
     for c in unique_candidates:
@@ -746,13 +754,15 @@ def is_already_greeted(candidates_all, geek_id):
     return False
 
 
-def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_rounds=30):
+def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_rounds=30, progress_callback=None, stop_event=None):
     """通过全面分析提取候选人
 
     Args:
         page: 页面对象
         existing_ids: 已存在的候选人 ID 集合
         max_rounds: 最大滚动轮次（默认 100）
+        progress_callback: 进度回调 callable(percentage, description)，percentage 0-100
+        stop_event: threading.Event，设位时立即停止扫描
     """
     print("正在提取候选人...")
     time.sleep(1.0)
@@ -765,6 +775,14 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
     consecutive_empty = 0
 
     for scroll_round in range(max_rounds):
+        # 检查停止信号
+        if stop_event and stop_event.is_set():
+            raise StopRequested()
+
+        # 进度上报
+        if progress_callback:
+            pct = int((scroll_round + 1) / max_rounds * 100)
+            progress_callback(pct, f"正在扫描候选人... 第{scroll_round + 1}/{max_rounds}轮")
         # 先滚动（第一轮跳过）
         if scroll_round > 0:
             if iframe:
@@ -993,7 +1011,7 @@ def verify_greeting_success(page, geek_id, debug=False):
     except Exception:
         return True, "点击已执行"
 
-def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False):
+def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None):
     """
     智能扫描候选人 - 两阶段模式
 
@@ -1009,6 +1027,8 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         greet_level: 打招呼等级 'strong'=仅强烈推荐，'normal'=强烈推荐 + 推荐
         greet_names_list: 点对点打招呼的姓名列表（如果指定，只给这些候选人打招呼）
         list_candidates: 是否仅列出候选人，不打招呼
+        progress_callback: 进度回调 callable(percentage, description)，percentage 0-100
+        stop_event: threading.Event，设位时立即停止
     """
     job_name = job_info['job_name']
 
@@ -1044,7 +1064,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         print(f"已加载 candidates_all.json：累计 {len(all_existing_ids)} 个候选人，{len(greeted_geek_ids)} 人已打招呼")
 
     # === 阶段 1: 滚动收集所有候选人 ===
-    raw_candidates = extract_candidates_by_comprehensive_analysis(page, existing_ids_for_job_and_greeted, max_rounds=max_rounds)
+    raw_candidates = extract_candidates_by_comprehensive_analysis(page, existing_ids_for_job_and_greeted, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event)
     print(f"原始提取到 {len(raw_candidates)} 个唯一候选人")
 
     # 过滤当前岗位已匹配且打过招呼的候选人
@@ -1071,6 +1091,8 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
     edu_requirement = f"学历不符/不足（{edu_requirement}）"
 
     for i, candidate in enumerate(raw_candidates):
+        if stop_event and stop_event.is_set():
+            raise StopRequested()
         passed, score, details = filter_candidate(candidate['summary'], job_info['rule'])
         if passed and score >= 55:
             # 计算推荐等级
@@ -1121,6 +1143,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
 
         if (i + 1) % 20 == 0:
             print(f"  已筛选 {i + 1}/{len(raw_candidates)} 个，通过 {len(passed_candidates)} 个")
+            if progress_callback:
+                pct = int((i + 1) / len(raw_candidates) * 100)
+                progress_callback(pct, f"正在智能筛选... {i + 1}/{len(raw_candidates)}")
 
     # 按分数从高到低排序
     passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
@@ -1198,12 +1223,19 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
 
         try:
             for i, candidate in enumerate(to_greet_list):
+                if stop_event and stop_event.is_set():
+                    raise StopRequested()
                 action = "补打招呼" if candidate['geek_id'] in all_existing_ids else "打招呼"
 
                 # 检查连续失败，如果连续失败 3 次则停止
                 if consecutive_failures >= 3:
                     print(f"\n⚠️  连续 {consecutive_failures} 次失败，停止打招呼")
                     break
+
+                # 打招呼进度
+                if progress_callback:
+                    pct = int((i + 1) / len(to_greet_list) * 100)
+                    progress_callback(pct, f"正在打招呼... {i + 1}/{len(to_greet_list)}")
 
                 # 每个打招呼间隔 0.5 秒
                 if i > 0:
@@ -1283,11 +1315,56 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
     return passed_candidates
 
 
-def run_smart_scan(args=None):
+def _show_job_navigation_prompt(current_idx, total, next_job_name, confirm_callback=None):
+    """多岗位间页面导航提示
+
+    在切换到下一个岗位之前，提示用户手动导航到新岗位的推荐页面。
+    - CLI 模式：等待用户按 Enter 确认
+    - GUI 模式：通过 confirm_callback 等待用户确认（无倒计时）
+    """
+    banner = f"""
+╔══════════════════════════════════════════════════════════════╗
+║  🔄 岗位切换：请导航到下一个岗位的推荐页面                      ║
+╠══════════════════════════════════════════════════════════════╣
+║  进度：{current_idx}/{total}                                       ║
+║  下一个岗位：{next_job_name}
+╠══════════════════════════════════════════════════════════════╣
+║  BOSS 直聘每个岗位有独立的推荐页面 URL，请手动切换              ║
+║  例如：https://www.zhipin.com/web/geek/recommend?jobId=xxxx  ║
+╚══════════════════════════════════════════════════════════════╝
+"""
+    print(banner)
+
+    if confirm_callback:
+        # GUI 模式：通过回调等待用户确认（阻塞式，无倒计时）
+        confirmed = confirm_callback(current_idx, total, next_job_name)
+        if confirmed:
+            print("已确认，继续处理...\n")
+        else:
+            print("用户取消岗位切换\n")
+            raise KeyboardInterrupt
+    else:
+        # CLI 模式：等待 Enter，失败则倒计时
+        try:
+            input("请导航到新页面后按 Enter 继续...")
+            print("已确认，继续处理...\n")
+        except (EOFError, OSError):
+            # GUI 模式或无终端环境，给用户 15 秒切换页面
+            print("(GUI 模式) 请在 15 秒内手动切换到新岗位的推荐页面...")
+            for remaining in range(15, 0, -1):
+                print(f"  {remaining} 秒后自动继续...", end="\r")
+                time.sleep(1)
+            print("  继续处理...\n")
+
+
+def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None):
     """运行智能扫描（支持多岗位）
 
     参数：
         args: argparse.Namespace 对象，如果为 None 则从命令行解析
+        progress_callback: 进度回调 callable(percentage, description)，GUI 模式使用
+        confirm_callback: 岗位切换确认回调 callable(current_idx, total, next_job_name) -> bool，GUI 模式使用
+        stop_event: threading.Event，设置时立即停止扫描
     """
     import argparse
 
@@ -1331,7 +1408,7 @@ def run_smart_scan(args=None):
         greet_text = f" + 自动打招呼 ({greet_level_display})"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
-    print(f">>> BOSS 直聘候选人智能提取工具 v3.1 [{mode_text}{greet_text}]")
+    print(f">>> BOSS 直聘候选人智能提取工具 v3.2 [{mode_text}{greet_text}]")
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）
@@ -1466,6 +1543,10 @@ def run_smart_scan(args=None):
 
         # 逐个岗位处理
         for idx, job_name in enumerate(jobs_to_run, 1):
+            # 多岗位间页面导航提示（第一个岗位之前不需要）
+            if idx > 1:
+                _show_job_navigation_prompt(idx, len(jobs_to_run), job_name, confirm_callback=confirm_callback)
+
             print(f"\n{'='*50}")
             print(f">>> 处理岗位 {idx}/{len(jobs_to_run)}: {job_name}")
             print(f"{'='*50}")
@@ -1484,7 +1565,9 @@ def run_smart_scan(args=None):
             candidates = smart_scan_candidates(page, job_info, auto_greet=auto_greet_scan,
                                                max_rounds=args.rounds, verbose=args.verbose,
                                                greet_level=args.greet_level, greet_names_list=None,
-                                               list_candidates=args.list_candidates)
+                                               list_candidates=args.list_candidates,
+                                               progress_callback=progress_callback,
+                                               stop_event=stop_event)
             all_candidates.extend(candidates)
             # smart_scan_candidates 已经即时保存了，这里不需要重复保存
 
@@ -1495,6 +1578,14 @@ def run_smart_scan(args=None):
             print(f"[SAVE] Excel 文件：{excel_file}")
         else:
             print("[WARN] Excel 导出失败")
+
+    except StopRequested:
+        print(f"\n\n⏹ 用户停止，保存当前进度...")
+        existing_all = load_candidates_all()
+        excel_file = "candidates_all.xlsx"
+        if export_to_excel(existing_all, excel_file):
+            print(f"[SAVE] Excel 文件：{excel_file}")
+        print(f"已保存 {len(existing_all)} 个候选人的状态")
 
     except KeyboardInterrupt:
         print(f"\n\n检测到中断，保存当前进度...")

@@ -1,5 +1,5 @@
 """
-BOSS 简历筛选器 - 图形界面版本 v2
+BOSS 简历筛选器 - 图形界面版本 v3.2
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 import tkinter as tk
@@ -103,7 +103,7 @@ class BossFilterGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("BOSS 简历筛选器 v3.1 - 智能候选人筛选工具")
+        self.root.title("BOSS 简历筛选器 v3.2 - 智能候选人筛选工具")
 
         # 高 DPI 支持 - 启用系统 DPI 缩放
         try:
@@ -148,6 +148,8 @@ class BossFilterGUI:
         self.is_running = False
         self.log_queue = queue.Queue()
         self.progress_queue = queue.Queue()  # 进度条队列
+        self.confirm_queue = queue.Queue()  # 岗位切换确认队列
+        self.stop_event = threading.Event()  # 停止信号
 
         # 浏览器状态
         self.browser_connected = False
@@ -386,7 +388,7 @@ class BossFilterGUI:
         bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         bottom_frame.pack(side="bottom", fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
-        version_label = ttk.Label(bottom_frame, text="v3.1",
+        version_label = ttk.Label(bottom_frame, text="v3.2",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
                                   foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
                                   cursor="hand2")
@@ -428,6 +430,18 @@ class BossFilterGUI:
         subtitle_label = ttk.Label(header_frame, text="基于 DrissionPage 的智能候选人筛选工具，自动滚动、智能匹配、自动打招呼",
                                    font=self.font_subtitle, foreground=self.colors['text_secondary'])
         subtitle_label.pack(anchor="w", pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
+
+        # 岗位过滤
+        home_filter_frame = ttk.Frame(self.home_page, style='TFrame')
+        home_filter_frame.pack(fill="x", pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
+        ttk.Label(home_filter_frame, text="岗位过滤:", font=self.font_label,
+                 background=self.colors['bg_main']).pack(side="left")
+        self.home_job_var = tk.StringVar(value="全部岗位")
+        self.home_job_combo = ttk.Combobox(home_filter_frame, textvariable=self.home_job_var,
+                                            values=["全部岗位"], width=28, state="readonly",
+                                            font=self.font_combo)
+        self.home_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        self.home_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_home_stats())
 
         # 统计卡片区
         stats_container = ttk.Frame(self.home_page, style='TFrame')
@@ -534,9 +548,9 @@ class BossFilterGUI:
 
         ttk.Label(select_frame, text="选择岗位:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
-        self.job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=UI_CONFIG['combobox_width_job'], font=self.font_combo)
-        self.job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        self.job_combo.bind("<<ComboboxSelected>>", self.on_job_selected)
+        self.config_job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=UI_CONFIG['combobox_width_job'], font=self.font_combo)
+        self.config_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        self.config_job_combo.bind("<<ComboboxSelected>>", self.on_job_selected)
 
         ttk.Button(select_frame, text="➕ 新建", command=self.add_job).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
         ttk.Button(select_frame, text="🗑 删除", command=self.delete_job).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
@@ -782,12 +796,12 @@ class BossFilterGUI:
         self.greet_template = ""  # 打招呼话术模板
 
         # 设置下拉框的值
-        self.job_combo['values'] = list(self.job_rules.keys())
+        self.config_job_combo['values'] = list(self.job_rules.keys())
 
         # 如果有已存在的岗位，自动加载第一个并显示详细结果区域
         if self.job_rules:
             first_job = list(self.job_rules.keys())[0]
-            self.job_combo.set(first_job)
+            self.config_job_combo.set(first_job)
             rule = self.job_rules[first_job]
             self.load_job_to_form(rule)
             # 注意：这里不 pack result_detail_frame，因为 config_page 还没有被显示
@@ -1072,11 +1086,37 @@ class BossFilterGUI:
         self.model_list_tree.bind("<Double-1>", lambda e: self.use_selected_model())
 
     def create_run_page(self):
-        """创建运行控制页面 - 增强版：浏览器状态检测 + 进度条"""
+        """创建运行控制页面 - 增强版：浏览器状态检测 + 进度条 + 滚动支持"""
         self.run_page = ttk.Frame(self.pages_frame, style='TFrame')
 
+        # Canvas 包装以支持垂直滚动
+        canvas_frame = ttk.Frame(self.run_page, style='TFrame')
+        canvas_frame.pack(fill="both", expand=True)
+
+        self.run_canvas = tk.Canvas(canvas_frame, bg=self.colors['bg_main'], highlightthickness=0)
+        run_scroll = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.run_canvas.yview)
+        scrollable_frame = ttk.Frame(self.run_canvas, style='TFrame')
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.run_canvas.configure(scrollregion=self.run_canvas.bbox("all"))
+        )
+
+        self.run_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        self.run_scrollable_frame = scrollable_frame  # 保存引用，供 mousewheel 绑定使用
+        self.run_canvas.configure(yscrollcommand=run_scroll.set)
+
+        self.run_canvas.pack(side="left", fill="both", expand=True)
+        run_scroll.pack(side="right", fill="y")
+
+        # Canvas 内部窗口宽度跟随 canvas 宽度
+        self._bind_run_canvas_width(canvas_frame)
+
+        # 所有内容放入 scrollable_frame
+        content = scrollable_frame
+
         # 页面标题
-        header_frame = ttk.Frame(self.run_page, style='TFrame')
+        header_frame = ttk.Frame(content, style='TFrame')
         header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
 
         title_label = ttk.Label(header_frame, text="运行控制",
@@ -1084,7 +1124,7 @@ class BossFilterGUI:
         title_label.pack(anchor="w")
 
         # 控制卡片
-        control_container = ttk.Frame(self.run_page, style='Card.TFrame')
+        control_container = ttk.Frame(content, style='Card.TFrame')
         control_container.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # === 浏览器连接状态检测 ===
@@ -1132,14 +1172,29 @@ class BossFilterGUI:
         ttk.Label(row1, text="(推荐 50-200 轮次)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
                  foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
+        # 选择岗位（多岗位运行时指定处理哪个岗位）
+        row_job = ttk.Frame(param_frame, style='TFrame')
+        row_job.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(row_job, text="选择岗位:", font=self.font_label, width=12,
+                 background=self.colors['bg_card']).pack(side="left")
+        self.job_select_var = tk.StringVar(value="全部岗位")
+        self.job_combo = ttk.Combobox(row_job, textvariable=self.job_select_var,
+                                       values=["全部岗位"], width=28, state="readonly",
+                                       font=self.font_combo)
+        self.job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(row_job, text="(选择要处理的岗位，\"全部岗位\"依次处理)",
+                 font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
+                 foreground=self.colors['text_muted'],
+                 background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+
         # 打招呼等级
         row2 = ttk.Frame(param_frame, style='TFrame')
         row2.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
-        ttk.Label(row2, text="打招呼等级:", font=self.font_label, width=12,
+        ttk.Label(row2, text="自动打招呼:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
         self.greet_level_var = tk.StringVar(value="仅强烈推荐")
         greet_combo = ttk.Combobox(row2, textvariable=self.greet_level_var,
-                                    values=["仅强烈推荐", "强烈推荐 + 推荐"],
+                                    values=["不打招呼（仅筛选）", "仅强烈推荐", "强烈推荐 + 推荐"],
                                     width=20, state="readonly", font=self.font_combo)
         greet_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row2, text="(自动打招呼的推荐等级)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
@@ -1149,7 +1204,7 @@ class BossFilterGUI:
         progress_frame = ttk.Frame(param_frame, style='TFrame')
         progress_frame.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-        ttk.Label(progress_frame, text="扫描进度:", font=self.font_label,
+        ttk.Label(progress_frame, text="筛选进度:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
 
         self.progress_var = tk.DoubleVar(value=0)
@@ -1159,7 +1214,7 @@ class BossFilterGUI:
 
         self.progress_label = ttk.Label(progress_frame, text="0%",
                                        font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
-                                       foreground=self.colors['primary'], width=6)
+                                       foreground=self.colors['primary'], width=45)
         self.progress_label.pack(side="left")
 
         # 控制按钮区
@@ -1178,18 +1233,22 @@ class BossFilterGUI:
                                       font=(FONT_FAMILY, int(13 * self.dpi_scale * self.zoom_factor)), foreground=self.colors['success'])
         self.status_label.pack(side="left", padx=int(50 * self.dpi_scale * self.zoom_factor))
 
-        # 日志区域
-        log_label = ttk.Label(control_container, text="运行日志",
+        # 日志区域 — 独立于控制卡片，撑满剩余高度
+        log_label = ttk.Label(content, text="运行日志",
                              font=self.font_section, foreground=self.colors['text_primary'])
         log_label.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
 
-        log_container = ttk.Frame(control_container, style='Card.TFrame')
-        log_container.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor))
+        log_wrapper = ttk.Frame(content, style='TFrame')
+        log_wrapper.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(0, int(15 * self.dpi_scale * self.zoom_factor)))
+
+        log_container = ttk.Frame(log_wrapper, style='Card.TFrame')
+        log_container.pack(fill="x")
 
         # 日志文本框 - 等宽字体
         log_font = font.Font(family='Consolas', size=int(12 * self.dpi_scale * self.zoom_factor))
         self.log_text = tk.Text(log_container, wrap="word", state="disabled",
-                               font=log_font, bg=self.colors['bg_input'], borderwidth=0, highlightthickness=0)
+                               font=log_font, bg=self.colors['bg_input'], borderwidth=0,
+                               highlightthickness=0, height=20)
         self.log_text.pack(side="left", fill="both", expand=True)
         self.bind_text_context_menu(self.log_text, editable=False)
 
@@ -1197,14 +1256,16 @@ class BossFilterGUI:
         log_scroll.pack(side="right", fill="y")
         self.log_text.config(yscrollcommand=log_scroll.set)
 
-        # 日志工具栏
-        log_toolbar = ttk.Frame(log_container, style='TFrame')
-        log_toolbar.pack(side="bottom", fill="x", pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
+        # 日志工具栏 — 独立于 log_container，避免撑出空白
+        log_toolbar = ttk.Frame(log_wrapper, style='TFrame')
+        log_toolbar.pack(fill="x", pady=(int(8 * self.dpi_scale * self.zoom_factor), 0))
 
         ttk.Button(log_toolbar, text="🗑 清空日志", command=self.clear_log).pack()
 
         # 启动进度条更新循环
         self.update_progress()
+        # 鼠标滚轮 — 在所有内容创建完毕后绑定，递归覆盖整个可滚动区域
+        self._bind_mousewheel(self.run_canvas, self.run_scrollable_frame)
 
     def create_result_page(self):
         """创建筛选结果页面"""
@@ -1217,6 +1278,18 @@ class BossFilterGUI:
         title_label = ttk.Label(header_frame, text="筛选结果",
                                font=self.font_section, foreground=self.colors['text_primary'])
         title_label.pack(anchor="w")
+
+        # 岗位过滤
+        filter_frame = ttk.Frame(self.result_page, style='TFrame')
+        filter_frame.pack(fill="x", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
+        ttk.Label(filter_frame, text="岗位过滤:", font=self.font_label,
+                 background=self.colors['bg_main']).pack(side="left")
+        self.result_job_var = tk.StringVar(value="全部岗位")
+        self.result_job_combo = ttk.Combobox(filter_frame, textvariable=self.result_job_var,
+                                              values=["全部岗位"], width=28, state="readonly",
+                                              font=self.font_combo)
+        self.result_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        self.result_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_results())
 
         # 统计卡片区
         stats_container = ttk.Frame(self.result_page, style='TFrame')
@@ -1320,7 +1393,7 @@ class BossFilterGUI:
 
         # 操作按钮 - 放在表格下方
         btn_frame = ttk.Frame(self.result_page, style='TFrame')
-        btn_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
+        btn_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
 
         ttk.Button(btn_frame, text="🔄 刷新结果", command=self.refresh_results).pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
         ttk.Button(btn_frame, text="📊 导出 Excel", command=self.export_excel).pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
@@ -1332,6 +1405,14 @@ class BossFilterGUI:
         self.home_page.pack(fill="both", expand=True)
         self.current_page_index = 0
         self.update_nav_highlight()
+        # 刷新岗位过滤列表
+        try:
+            from bossmaster import load_job_config
+            job_rules, _ = load_job_config()
+            jobs = ["全部岗位"] + list(job_rules.keys())
+            self.home_job_combo['values'] = jobs
+        except Exception:
+            pass
         self.refresh_home_stats()
 
     def show_page_config(self):
@@ -1353,7 +1434,16 @@ class BossFilterGUI:
         self.run_page.pack(fill="both", expand=True)
         self.current_page_index = 2
         self.update_nav_highlight()
+        # 恢复浏览器自动检测（仅检测连接，不启动浏览器）
         self._start_browser_auto_check()
+        # 刷新岗位选择列表
+        try:
+            from bossmaster import load_job_config
+            job_rules, _ = load_job_config()
+            jobs = ["全部岗位"] + list(job_rules.keys())
+            self.job_combo['values'] = jobs
+        except Exception:
+            pass
 
     def show_page_result(self):
         """显示结果页面"""
@@ -1361,6 +1451,14 @@ class BossFilterGUI:
         self.result_page.pack(fill="both", expand=True)
         self.current_page_index = 3
         self.update_nav_highlight()
+        # 刷新岗位过滤列表
+        try:
+            from bossmaster import load_job_config
+            job_rules, _ = load_job_config()
+            jobs = ["全部岗位"] + list(job_rules.keys())
+            self.result_job_combo['values'] = jobs
+        except Exception:
+            pass
         self.refresh_results()
 
     def show_page_api(self):
@@ -1382,14 +1480,14 @@ class BossFilterGUI:
             page.pack_forget()
 
     def update_nav_highlight(self):
-        """更新导航高亮 - 当前页面使用选中样式，其他使用默认样式"""
+        """更新导航高亮 - 当前页面使用选中颜色，其他使用默认颜色"""
         for i, comp in enumerate(self.nav_components):
             if i == self.current_page_index:
-                comp['emoji'].configure(style='SidebarNavSelected.TLabel')
-                comp['text'].configure(style='SidebarNavSelected.TLabel')
+                comp['emoji'].configure(foreground=self.colors['text_sidebar_active'])
+                comp['text'].configure(foreground=self.colors['text_sidebar_active'])
             else:
-                comp['emoji'].configure(style='SidebarNav.TLabel')
-                comp['text'].configure(style='SidebarNav.TLabel')
+                comp['emoji'].configure(foreground=self.colors['text_sidebar'])
+                comp['text'].configure(foreground=self.colors['text_sidebar'])
 
     def on_nav_enter(self, index):
         """鼠标移入导航项时高亮（只改变前景色，不影响布局）"""
@@ -1497,12 +1595,17 @@ class BossFilterGUI:
                 with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                     candidates = json.load(f)
 
+                # 岗位过滤
+                selected_job = self.home_job_var.get()
+                if selected_job != "全部岗位":
+                    candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
+
                 total = len(candidates)
                 greeted = sum(1 for c in candidates if c.get('greet_sent', False))
-                # 强烈推荐：匹配分>=80
+                # 强烈推荐：匹配分>=75
                 strong = sum(1 for c in candidates if c.get('match_score', 0) >= 75)
-                # 推荐：匹配分>=70 且<80
-                recommended = sum(1 for c in candidates if 60 <= c.get('match_score', 0) < 75)
+                # 推荐：匹配分>=65 且<75
+                recommended = sum(1 for c in candidates if 65 <= c.get('match_score', 0) < 75)
 
                 self.home_stats_vars['total_home'].set(str(total))
                 self.home_stats_vars['recommended_home'].set(str(recommended))
@@ -1510,6 +1613,13 @@ class BossFilterGUI:
                 self.home_stats_vars['strong_home'].set(str(strong))
         except Exception as e:
             print(f"刷新首页统计失败：{e}")
+
+    def _center_window(self, window, width, height):
+        """将子窗口相对于主窗口居中"""
+        self.root.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - width) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - height) // 2
+        window.geometry(f"+{x}+{y}")
 
     def show_stat_detail(self, stat_type):
         """显示统计详情"""
@@ -1521,6 +1631,12 @@ class BossFilterGUI:
             with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                 candidates = json.load(f)
 
+            # 岗位过滤
+            if hasattr(self, 'home_job_var'):
+                selected_job = self.home_job_var.get()
+                if selected_job != "全部岗位":
+                    candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
+
             # 根据类型筛选候选人
             if stat_type == 'total_home':
                 title = "累计候选人"
@@ -1530,7 +1646,7 @@ class BossFilterGUI:
                 filtered = [c for c in candidates if c.get('match_score', 0) >= 75]
             elif stat_type == 'recommended_home':
                 title = "推荐"
-                filtered = [c for c in candidates if 60 <= c.get('match_score', 0) < 75]
+                filtered = [c for c in candidates if 65 <= c.get('match_score', 0) < 75]
             elif stat_type == 'greeted_home':
                 title = "已打招呼"
                 filtered = [c for c in candidates if c.get('greet_sent', False)]
@@ -1545,10 +1661,11 @@ class BossFilterGUI:
             detail_window = tk.Toplevel(self.root)
             detail_window.title(title)
 
-            # 设置固定大小
+            # 设置固定大小并居中
             window_width = 900
             window_height = 650
             detail_window.geometry(f"{window_width}x{window_height}")
+            self._center_window(detail_window, window_width, window_height)
 
             # 标题 - 加大加粗
             title_label = ttk.Label(detail_window, text=title,
@@ -1627,15 +1744,7 @@ class BossFilterGUI:
                 ))
 
             # 窗口居中显示 - 延迟执行确保窗口已完全渲染
-            def center_window():
-                detail_window.update_idletasks()
-                width = detail_window.winfo_width()
-                height = detail_window.winfo_height()
-                x = (detail_window.winfo_screenwidth() - width) // 2
-                y = (detail_window.winfo_screenheight() - height) // 2
-                detail_window.geometry(f"+{x}+{y}")
-
-            detail_window.after(100, center_window)
+            self._center_window(detail_window, window_width, window_height)
 
         except Exception as e:
             messagebox.showerror("错误", f"显示详情失败：{e}")
@@ -1649,6 +1758,12 @@ class BossFilterGUI:
 
             with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                 candidates = json.load(f)
+
+            # 岗位过滤
+            if hasattr(self, 'result_job_var'):
+                selected_job = self.result_job_var.get()
+                if selected_job != "全部岗位":
+                    candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
 
             # 根据类型筛选候选人
             if stat_type == 'passed':
@@ -1665,7 +1780,7 @@ class BossFilterGUI:
             elif stat_type == 'recommended':
                 # 推荐
                 title = "推荐"
-                filtered = [c for c in candidates if 60 <= c.get('match_score', 0) < 75]
+                filtered = [c for c in candidates if 65 <= c.get('match_score', 0) < 75]
                 detail_type = 'all'
             else:
                 return
@@ -1683,10 +1798,11 @@ class BossFilterGUI:
             detail_window = tk.Toplevel(self.root)
             detail_window.title(title)
 
-            # 设置固定大小
+            # 设置固定大小并居中
             window_width = 1000
             window_height = 650
             detail_window.geometry(f"{window_width}x{window_height}")
+            self._center_window(detail_window, window_width, window_height)
 
             # 标题
             title_label = ttk.Label(detail_window, text=title,
@@ -2616,7 +2732,7 @@ class BossFilterGUI:
 
     def on_job_selected(self, event):
         """岗位选择改变"""
-        job_name = self.job_combo.get()
+        job_name = self.config_job_combo.get()
         if job_name in self.job_rules:
             rule = self.job_rules[job_name]
             self.load_job_to_form(rule)
@@ -2626,7 +2742,7 @@ class BossFilterGUI:
     def load_job_to_form(self, rule):
         """将岗位配置加载到表单（包含话术模板）"""
         # 岗位名称使用 combo 中选中的名称（而不是 rule 中的 job_title）
-        job_name = self.job_combo.get()
+        job_name = self.config_job_combo.get()
         self.job_name_var.set(job_name)
         self.min_exp_var.set(str(rule.get("min_exp", 0)))
         self.edu_var.set(rule.get("edu", "不限"))
@@ -2822,6 +2938,8 @@ class BossFilterGUI:
             # 规范化岗位名称：去除多余空格
             job_title = re.sub(r'\s+', ' ', job_title).strip()
             self.job_name_var.set(job_title)
+            # 更新选择岗位下拉框，显示提取到的新岗位名称
+            self.config_job_combo.set(job_title)
 
             # 设置经验
             self.min_exp_var.set(str(job_config.get("min_exp", 0)))
@@ -2874,16 +2992,16 @@ class BossFilterGUI:
         """新建岗位"""
         self.reset_job_form()
         self.job_name_var.set("新岗位")
-        self.job_combo.set("")  # 清空岗位选择
+        self.config_job_combo.set("")  # 清空岗位选择
 
     def delete_job(self):
         """删除岗位"""
-        job_name = self.job_combo.get()
+        job_name = self.config_job_combo.get()
         if job_name in self.job_rules:
             if messagebox.askyesno("确认", f"确定要删除岗位 '{job_name}' 吗？"):
                 del self.job_rules[job_name]
                 self.save_config()
-                self.job_combo['values'] = list(self.job_rules.keys())
+                self.config_job_combo['values'] = list(self.job_rules.keys())
                 self.reset_job_form()
 
     def save_current_job(self):
@@ -2941,8 +3059,8 @@ class BossFilterGUI:
         }
 
         self.save_config()
-        self.job_combo['values'] = list(self.job_rules.keys())
-        self.job_combo.set(normalized_job_name)
+        self.config_job_combo['values'] = list(self.job_rules.keys())
+        self.config_job_combo.set(normalized_job_name)
         messagebox.showinfo("成功", "岗位配置已保存")
 
     def reset_job_form(self):
@@ -2974,7 +3092,7 @@ class BossFilterGUI:
                 else:
                     self.job_rules = {}
                 self.save_config()
-                self.job_combo['values'] = list(self.job_rules.keys())
+                self.config_job_combo['values'] = list(self.job_rules.keys())
                 messagebox.showinfo("成功", "配置已加载")
             except Exception as e:
                 messagebox.showerror("错误", f"加载配置失败：{e}")
@@ -3032,6 +3150,23 @@ class BossFilterGUI:
             try:
                 if not silent:
                     self.append_log("正在检测浏览器连接...")
+
+                # 先检查 Chrome 调试端口是否在监听，避免 ChromiumPage() 自动启动浏览器
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1)
+                port_open = s.connect_ex(('127.0.0.1', 9222)) == 0
+                s.close()
+
+                if not port_open:
+                    prev_state = self.browser_status_indicator.cget("text")
+                    self.browser_connected = False
+                    self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
+                    self.browser_status_help.config(text="未检测到 Chrome 浏览器，请确保浏览器已启动")
+                    self.start_btn.config(state="disabled")
+                    if not silent or prev_state != "🔴 未连接":
+                        self.append_log("❌ 未检测到 Chrome 调试端口，请先启动 Chrome 浏览器")
+                    return
+
                 from DrissionPage import ChromiumPage
 
                 try:
@@ -3109,10 +3244,62 @@ class BossFilterGUI:
                 total = progress_data.get('total', 100)
                 percentage = min(100, int((current / total) * 100)) if total > 0 else 0
                 self.progress_var.set(percentage)
-                self.progress_label.config(text=f"{percentage}%")
+                desc = progress_data.get('desc', '')
+                self.progress_label.config(text=f"{percentage}%  {desc}")
         except queue.Empty:
             pass
+
+        # 处理岗位切换确认队列
+        try:
+            confirm_data = self.confirm_queue.get_nowait()
+            event = confirm_data['event']
+            current_idx = confirm_data['current_idx']
+            total = confirm_data['total']
+            next_job_name = confirm_data['next_job_name']
+
+            result = messagebox.askokcancel(
+                "岗位切换确认",
+                f"请手动切换到下一个岗位的推荐页面\n\n"
+                f"进度：{current_idx}/{total}\n"
+                f"下一个岗位：{next_job_name}\n\n"
+                f"请在 BOSS 直聘页面手动切换到该岗位的推荐页面后，\n"
+                f"点击「确定」继续，或点击「取消」停止扫描。"
+            )
+            event.result = result
+            event.set()
+        except queue.Empty:
+            pass
+
         self.root.after(200, self.update_progress)
+
+    def _bind_run_canvas_width(self, canvas_frame):
+        """绑定 run_canvas 内部窗口宽度，使其跟随 canvas 宽度"""
+        def on_resize(event):
+            if self.run_canvas.winfo_children():
+                self.run_canvas.itemconfig(self.run_canvas.winfo_children()[0], width=event.width)
+        canvas_frame.bind("<Configure>", on_resize)
+
+    @staticmethod
+    def _bind_mousewheel(canvas, parent_frame):
+        """绑定鼠标滚轮 — Canvas 及所有非交互控件的子控件上均可滚动"""
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        # Canvas 自身
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+
+        # 递归绑定到所有子控件，跳过自身处理滚轮的控件
+        _skip_types = (ttk.Spinbox, ttk.Combobox, ttk.Scrollbar)
+
+        def _bind_recursive(widget):
+            if isinstance(widget, _skip_types):
+                return
+            widget.bind("<MouseWheel>", _on_mousewheel)
+            for child in widget.winfo_children():
+                _bind_recursive(child)
+
+        _bind_recursive(parent_frame)
 
     def start_run(self):
         """开始运行"""
@@ -3120,6 +3307,7 @@ class BossFilterGUI:
             return
 
         self.is_running = True
+        self.stop_event.clear()
         self.status_label.config(text="🟡 运行中...", foreground=self.colors['warning'])
         self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
@@ -3133,6 +3321,7 @@ class BossFilterGUI:
     def stop_run(self):
         """停止运行"""
         self.is_running = False
+        self.stop_event.set()
         self.status_label.config(text="🔴 已停止", foreground=self.colors['danger'])
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
@@ -3166,22 +3355,27 @@ class BossFilterGUI:
             rounds = int(self.rounds_var.get())
             # 将中文打招呼等级映射为程序参数
             greet_level_text = self.greet_level_var.get()
+            no_greet = greet_level_text == "不打招呼（仅筛选）"
             greet_level = "strong" if greet_level_text == "仅强烈推荐" else "normal"
 
             from bossmaster import load_job_config, ChromiumPage, time, run_smart_scan
             import argparse
 
-            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v3.1 [图形界面模式]")
-            self.append_log(f"滚动轮次：{rounds}, 打招呼等级：{greet_level_text}({greet_level})")
+            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v3.2 [图形界面模式]")
+            self.append_log(f"滚动轮次：{rounds}, 自动打招呼：{greet_level_text}")
 
             job_rules, _ = load_job_config()
             self.append_log(f"已加载 {len(job_rules)} 个岗位配置")
 
+            # 获取选择的岗位
+            selected_job = self.job_select_var.get()
+            job_arg = None if selected_job == "全部岗位" else selected_job
+
             # 构造命令行参数
             args = argparse.Namespace(
                 clear=False,
-                job=None,
-                greet=True,  # 自动打招呼
+                job=job_arg,
+                greet=not no_greet,
                 re_greet=False,
                 greet_level=greet_level,
                 greet_names=None,
@@ -3190,29 +3384,65 @@ class BossFilterGUI:
                 verbose=False
             )
 
-            self.append_log("[初次扫描模式] 请手动导航到 BOSS 直聘推荐页面...")
+            if job_arg:
+                self.append_log(f"[初次扫描模式] 指定岗位：{job_arg}")
+            else:
+                self.append_log("[初次扫描模式] 处理全部岗位")
+            self.append_log("请手动导航到 BOSS 直聘推荐页面...")
             self.append_log("等待 3 秒...")
             time.sleep(3)
 
             self.append_log("开始扫描候选人...")
 
-            # 调用 run_smart_scan 并传入参数
-            run_smart_scan(args)
+            # 进度回调 — 将 bossmaster 的进度报告送入队列
+            def on_progress(percentage, description):
+                self.progress_queue.put({
+                    'current': percentage,
+                    'total': 100,
+                    'desc': description,
+                })
 
-            sys.stdout = old_stdout
+            def confirm_callback(current_idx, total, next_job_name):
+                """岗位切换确认 — 阻塞工作线程直到用户在 GUI 中确认"""
+                event = threading.Event()
+                event.result = False
+                self.confirm_queue.put({
+                    'event': event,
+                    'current_idx': current_idx,
+                    'total': total,
+                    'next_job_name': next_job_name,
+                })
+                # 轮询等待，支持 stop_event 中断
+                while not event.is_set():
+                    if self.stop_event.is_set():
+                        event.result = False
+                        break
+                    event.wait(timeout=0.5)
+                return event.result
 
+            # 调用 run_smart_scan 并传入参数和进度回调
+            run_smart_scan(args, progress_callback=on_progress, confirm_callback=confirm_callback,
+                           stop_event=self.stop_event)
+
+        except KeyboardInterrupt:
+            self.append_log("用户取消岗位切换，已停止")
         except Exception as e:
             self.append_log(f"运行出错：{e}")
             import traceback
             self.append_log(traceback.format_exc())
+        finally:
+            sys.stdout = old_stdout
+            self.is_running = False
+            self.status_label.config(text="🟢 就绪", foreground=self.colors['success'])
+            self.start_btn.config(state="normal")
+            self.stop_btn.config(state="disabled")
+            self.append_log(f"[{datetime.now().strftime('%H:%M:%S')}] ✔ 运行完成")
 
-        self.is_running = False
-        self.status_label.config(text="🟢 就绪", foreground=self.colors['success'])
-        self.start_btn.config(state="normal")
-        self.stop_btn.config(state="disabled")
-        self.append_log(f"[{datetime.now().strftime('%H:%M:%S')}] ✔ 运行完成")
+            # 重置进度条
+            self.root.after(0, lambda: self.progress_var.set(0))
+            self.root.after(0, lambda: self.progress_label.config(text="就绪"))
 
-        self.root.after(100, self.refresh_results)
+            self.root.after(100, self.refresh_results)
 
     def on_closing(self):
         """窗口关闭处理 - 安全等待工作线程结束"""
@@ -3227,22 +3457,27 @@ class BossFilterGUI:
             self.root.destroy()
 
     def refresh_results(self):
-        """刷新结果 - 增强版：支持表头排序和颜色标记"""
+        """刷新结果 - 增强版：支持表头排序、颜色标记和岗位过滤"""
         try:
             if CANDIDATES_PATH.exists():
                 with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                     candidates = json.load(f)
 
+                # 岗位过滤
+                selected_job = self.result_job_var.get()
+                if selected_job != "全部岗位":
+                    candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
+
                 # 计算新的指标
                 total = len(candidates)
 
-                # 强烈推荐：匹配分>=80
+                # 强烈推荐：匹配分>=75
                 strong_list = [c for c in candidates if c.get('match_score', 0) >= 75]
                 strong_total = len(strong_list)
                 strong_greeted = sum(1 for c in strong_list if c.get('greet_sent', False))
 
-                # 推荐：匹配分>=70 且<80
-                recommended_list = [c for c in candidates if 60 <= c.get('match_score', 0) < 75]
+                # 推荐：匹配分>=65 且<75
+                recommended_list = [c for c in candidates if 65 <= c.get('match_score', 0) < 75]
                 recommended_total = len(recommended_list)
                 recommended_greeted = sum(1 for c in recommended_list if c.get('greet_sent', False))
 
@@ -3552,7 +3787,7 @@ class BossFilterGUI:
 
     def show_about(self):
         """显示关于"""
-        messagebox.showinfo("关于", "BOSS 简历筛选器 v3.1\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+        messagebox.showinfo("关于", "BOSS 简历筛选器 v3.2\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
 
     def show_changelog(self):
         """显示更新日志"""
@@ -3573,10 +3808,7 @@ class BossFilterGUI:
         dialog.configure(bg=self.colors['bg_main'])
 
         # 居中窗口
-        dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 780) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 580) // 2
-        dialog.geometry(f"+{x}+{y}")
+        self._center_window(dialog, 780, 580)
 
         text_widget = tk.Text(dialog, wrap="word", borderwidth=0,
                               font=('Microsoft YaHei UI', int(11 * self.dpi_scale * self.zoom_factor)),
