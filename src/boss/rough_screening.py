@@ -355,7 +355,7 @@ class RoughScreeningEngine:
             return "A"
         elif score >= 70:
             return "B"
-        elif score >= 60:
+        elif score >= 65:
             return "C"
         else:
             return "D"

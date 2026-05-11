@@ -179,7 +179,7 @@ def export_to_excel(candidates, filename):
             # 根据匹配分计算推荐指数
             if score >= 75:
                 recommend_level = "强烈推荐"
-            elif score >= 60:
+            elif score >= 65:
                 recommend_level = "推荐"
             else:
                 recommend_level = "待定"
@@ -400,7 +400,7 @@ def filter_candidate(candidate_text, rule):
 
     筛选规则说明：
     - 四维评分模型: 基础30 + 技能(0~35) + 经验超额(0~20) + 学历档次(0~15)
-    - 推荐等级: >=75强烈推荐, >=60推荐, >=45待定
+    - 推荐等级: >=75强烈推荐, >=65推荐, >=45待定
     - min_exp: 最低工作年限要求（门限），超额部分每年+4分，20分封顶
     - edu: 最低学历要求（门限），985/211/硕士额外加分
     - keywords: 技能关键词，按权重加权计分，英文词用\b边界避免子串误匹配
@@ -1007,7 +1007,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
             # 计算推荐等级
             if score >= 75:
                 recommend_level = "强烈推荐"
-            elif score >= 60:
+            elif score >= 65:
                 recommend_level = "推荐"
             else:
                 recommend_level = "待定"

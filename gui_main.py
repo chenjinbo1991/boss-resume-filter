@@ -1639,7 +1639,7 @@ class BossFilterGUI:
             if stat_type == 'passed':
                 # 通过筛选：强烈推荐 + 推荐
                 title = "通过筛选"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 60]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= 65]
                 # 只显示已打招呼的
                 detail_type = 'greeted'
             elif stat_type == 'strong':
@@ -3229,13 +3229,13 @@ class BossFilterGUI:
 
                 for c in sorted_candidates[:100]:
                     score = c.get('match_score', 0)
-                    level = "强烈推荐" if score >= 75 else ("推荐" if score >= 60 else "待定")
+                    level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
                     status = "已招呼" if c.get('greet_sent', False) else "未招呼"
 
                     # 根据推荐等级设置颜色标记
                     if score >= 75:
                         tag = 'strong_recommend'
-                    elif score >= 60:
+                    elif score >= 65:
                         tag = 'recommend'
                     else:
                         tag = 'pending'
