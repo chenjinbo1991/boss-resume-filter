@@ -33,6 +33,7 @@ boss-resume-filter/
 - 自动打招呼：`python bossmaster.py --greet`
 - 指定岗位：`python bossmaster.py --job "高级 Java 工程师" --greet`
 - 补打招呼：`python bossmaster.py --re-greet`
+- 打招呼等级：`python bossmaster.py --greet --greet-level strong`（仅强烈推荐）或 `normal`（默认，强烈推荐+推荐）
 - 清空历史：`python bossmaster.py --clear --greet`
 - 输出详细评分：`python bossmaster.py --greet --verbose`
 
@@ -56,6 +57,8 @@ boss-resume-filter/
 - 按钮文本："继续沟通"（已匹配）、"立即沟通"（新候选人）
 - 每成功一个招呼立即保存，支持中断恢复
 - 过滤规则：只过滤「当前岗位已匹配且打过招呼」的候选人
+- 打招呼等级：`--greet-level strong`（仅强烈推荐 ≥75）或 `normal`（默认，强烈推荐+推荐 ≥60）
+- GUI 中「打招呼等级」下拉框对初次扫描和补打招呼均生效
 
 ### 去重机制
 - 基于 `geek_id` 去重，保留分数高的记录

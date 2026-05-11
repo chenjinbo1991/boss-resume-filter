@@ -1,5 +1,28 @@
 # 更新日志
 
+## 2026-05-11 - Bug 修复：打招呼等级过滤 + Excel 导出
+
+### Bug 修复
+
+1. **打招呼等级过滤在初次扫描时无效**
+   - 现象：GUI 中选择"仅强烈推荐"，实际对强烈推荐和推荐候选人都打了招呼
+   - 根因：`run_smart_scan()` 调用 `smart_scan_candidates()` 时 `greet_level` 参数硬编码为 `'normal'`，且有一行误导性注释"初次扫描时 greet_level 不生效"
+   - 修复：将 `greet_level='normal'` 改为 `greet_level=args.greet_level`，透传用户在 GUI 中的选择
+   - 影响范围：初次扫描模式的 `--greet-level` 参数现在生效（补打招呼模式原本就有效）
+
+2. **Excel 导出报错：Invalid character / found in sheet title**
+   - 现象：岗位名含 `/`（如"前端/React 工程师"）时导出失败
+   - 根因：`export_to_excel()` 中 `sheet_name = job_name[:25]` 只做截断，未清理 Excel 工作表名非法字符（`\ / * ? [ ] :`）
+   - 修复：使用 `str.translate()` 将非法字符替换为安全字符，截断长度从 25 改为正确的 31
+
+3. **打招呼等级日志显示修正**
+   - `run_smart_scan()` 中启动日志的打招呼等级文字从硬编码"强烈推荐 + 推荐"改为根据实际参数动态显示
+
+### 修改文件
+- bossmaster.py：3 处修改（greet_level 透传、sheet name 清理、日志动态显示）
+
+---
+
 ## 2026-05-08 - 打包优化 + 侧边栏导航对齐修复
 
 ### 打包优化

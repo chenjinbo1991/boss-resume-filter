@@ -2,6 +2,7 @@
 BOSS 简历筛选器 - 打包脚本
 用法：python build.py (会自动使用 pack_venv 虚拟环境)
 """
+import shutil
 import subprocess
 import sys
 import time
@@ -87,16 +88,15 @@ def main():
     size_mb = exe_path.stat().st_size / (1024 * 1024)
     print(f"\n[成功] {exe_path} ({size_mb:.1f} MB)")
 
-    print("\n  复制辅助文件（仅缺失文件）...")
+    print("\n  更新辅助文件...")
     for file in ["README.md", "requirements.txt", "job_config.json", "gui.bat"]:
         src = BASE_DIR / file
         dst = DIST_DIR / file
         if src.exists():
-            if not dst.exists():
-                shutil.copy2(src, dst)
-                print(f"    + {file}")
-            else:
-                print(f"    = {file} (已存在，跳过)")
+            shutil.copy2(src, dst)
+            print(f"    + {file}")
+        else:
+            print(f"    ! {file} (源文件缺失)")
 
     print("""
 ╔══════════════════════════════════════════════════════════════╗
