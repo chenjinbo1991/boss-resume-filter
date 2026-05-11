@@ -76,7 +76,6 @@ UI_CONFIG = {
     'spinbox_exp_min': 0,            # 经验 Spinbox 最小值
     'spinbox_exp_max': 30,           # 经验 Spinbox 最大值
     'spinbox_rounds_min': 0,         # 轮次 Spinbox 最小值
-    'spinbox_rounds_max': 100,       # 轮次 Spinbox 最大值
     'icon_margin': 4,                # 图标圆形边距
     'combobox_width_job': 40,        # 岗位 Combobox 宽度
     'combobox_width_provider': 15,   # 服务商 Combobox 宽度
@@ -1093,13 +1092,12 @@ class BossFilterGUI:
         row1.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row1, text="滚动轮次:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
-        self.rounds_var = tk.StringVar(value="30")
+        self.rounds_var = tk.StringVar(value="100")
         rounds_spin = ttk.Spinbox(row1, from_=UI_CONFIG['spinbox_rounds_min'],
-                                  to=UI_CONFIG['spinbox_rounds_max'],
                                   increment=10, textvariable=self.rounds_var,
                                   width=15, font=self.font_button)
         rounds_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        ttk.Label(row1, text="(推荐 20-40 轮次)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
+        ttk.Label(row1, text="(推荐 50-200 轮次)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
                  foreground='#999', background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
         # 打招呼等级
@@ -3475,7 +3473,7 @@ class BossFilterGUI:
    - 保存配置
 
 2. 运行控制：
-   - 设置滚动轮次（推荐 20-40）
+   - 设置滚动轮次（推荐 50-200）
    - 选择打招呼等级
    - 点击"开始运行"
 

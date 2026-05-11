@@ -750,7 +750,7 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
     Args:
         page: 页面对象
         existing_ids: 已存在的候选人 ID 集合
-        max_rounds: 最大滚动轮次（默认 30）
+        max_rounds: 最大滚动轮次（默认 100）
     """
     print("正在提取候选人...")
     time.sleep(1.0)
@@ -1190,7 +1190,7 @@ def run_smart_scan(args=None):
                             help='打招呼等级（仅补打招呼模式有效）：strong=仅强烈推荐，normal=强烈推荐 + 推荐（默认）')
         parser.add_argument('--greet-names', type=str, help='点对点打招呼（仅补打招呼模式有效）：指定候选人姓名，多个用逗号分隔')
         parser.add_argument('--list-candidates', action='store_true', help='仅列出候选人，不打招呼')
-        parser.add_argument('--rounds', type=int, default=30, help='最大滚动轮次（默认 30，推荐 20-40）')
+        parser.add_argument('--rounds', type=int, default=100, help='最大滚动轮次（默认 100，推荐 50-200）')
         parser.add_argument('--verbose', action='store_true', help='输出详细评分信息（显示技能匹配详情）')
         args = parser.parse_args()
 
