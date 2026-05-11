@@ -207,9 +207,18 @@ class BossFilterGUI:
             'purple': '#8E24AA',        # 紫色
             'bg_main': '#F8F9FA',       # 主背景
             'bg_card': '#FFFFFF',       # 卡片背景
+            'bg_input': '#FAFAFA',      # 输入框背景
             'bg_sidebar': '#2D3748',    # 侧边栏背景
+            'bg_tree_tag_high': '#E8F5E9',   # 表格高权重行
+            'bg_tree_tag_mid': '#FFF3E0',    # 表格中权重行
+            'bg_tree_tag_low': '#F5F5F5',    # 表格低权重行
             'text_primary': '#1A202C',  # 主文字
             'text_secondary': '#718096',# 次要文字
+            'text_muted': '#999999',    # 弱化文字
+            'text_sidebar': '#A0AEC0',  # 侧边栏文字
+            'text_sidebar_active': '#FFFFFF',      # 侧边栏激活文字
+            'text_sidebar_subtitle': '#94A3B8',    # 侧边栏副标题
+            'text_sidebar_version': '#64748B',     # 侧边栏版本号
             'border': '#E2E8F0',        # 边框
         }
 
@@ -232,12 +241,13 @@ class BossFilterGUI:
         style.configure('TLabel', font=self.font_label, foreground=self.colors['text_primary'])
         style.configure('TButton', font=self.font_button, padding=(15, 8))
         style.configure('Accent.TButton', font=('Microsoft YaHei UI Semibold', int(14 * fs)), padding=(25, 10))
-        style.configure('Card.TFrame', background=self.colors['bg_card'], relief='flat')
+        style.configure('Card.TFrame', background=self.colors['bg_card'], relief='solid', borderwidth=1)
         style.configure('Sidebar.TFrame', background=self.colors['bg_sidebar'])
         sidebar_font_size = int(13 * self.dpi_scale * self.zoom_factor)
-        style.configure('Sidebar.TLabel', font=('Microsoft YaHei UI', sidebar_font_size), foreground='#A0AEC0', background=self.colors['bg_sidebar'])
+        style.configure('Sidebar.TLabel', font=('Microsoft YaHei UI', sidebar_font_size),
+                       foreground=self.colors['text_sidebar'], background=self.colors['bg_sidebar'])
         style.configure('SidebarSelected.TLabel', font=('Microsoft YaHei UI', sidebar_font_size, 'bold'),
-                       foreground='#FFFFFF', background=self.colors['bg_sidebar'])
+                       foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
         style.configure('Header.TLabel', font=self.font_title, foreground=self.colors['text_primary'])
         style.configure('Section.TLabel', font=self.font_section, foreground=self.colors['text_primary'])
         style.configure('Stat.TLabel', font=self.font_stat, foreground=self.colors['primary'])
@@ -265,13 +275,13 @@ class BossFilterGUI:
         # 主标题 "📋 BOSS" - 带 emoji，大字体
         logo_label = ttk.Label(logo_frame, text="📋 BOSS",
                                font=('Microsoft YaHei UI Semibold', int(32 * self.dpi_scale * self.zoom_factor)),
-                               foreground='#FFFFFF', background=self.colors['bg_sidebar'])
+                               foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
         logo_label.pack(anchor="w")
 
         # 副标题 "简历筛选器" - 调大字体
         subtitle_label = ttk.Label(logo_frame, text="简历筛选器",
                                    font=('Microsoft YaHei UI', int(16 * self.dpi_scale * self.zoom_factor)),
-                                   foreground='#94A3B8', background=self.colors['bg_sidebar'])
+                                   foreground=self.colors['text_sidebar_subtitle'], background=self.colors['bg_sidebar'])
         subtitle_label.pack(anchor="w", pady=(int(6 * self.dpi_scale * self.zoom_factor), 0))
 
         # 分隔线
@@ -294,11 +304,11 @@ class BossFilterGUI:
         style = ttk.Style()
         style.configure('SidebarNav.TLabel',
                        font=('Microsoft YaHei UI', sidebar_nav_font_size),
-                       foreground='#A0AEC0',
+                       foreground=self.colors['text_sidebar'],
                        background=self.colors['bg_sidebar'])
         style.configure('SidebarNavSelected.TLabel',
                        font=('Microsoft YaHei UI Semibold', sidebar_nav_font_size),
-                       foreground='#FFFFFF',
+                       foreground=self.colors['text_sidebar_active'],
                        background=self.colors['bg_sidebar'])
 
         # emoji 容器内边距（固定宽度，确保文字对齐）
@@ -378,7 +388,7 @@ class BossFilterGUI:
 
         version_label = ttk.Label(bottom_frame, text="v3.0",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
-                                  foreground='#64748B', background=self.colors['bg_sidebar'])
+                                  foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'])
         version_label.pack(anchor="w")
 
     def create_main_content(self):
@@ -542,7 +552,7 @@ class BossFilterGUI:
         text_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         self.requirement_text = tk.Text(text_container, height=UI_CONFIG['text_height_large'], font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
-                                        bg='#FAFAFA', borderwidth=1, highlightthickness=0)
+                                        bg=self.colors['bg_input'], borderwidth=1, highlightthickness=0)
         self.requirement_text.pack(side="left", fill="both", expand=True)
 
         req_scroll = ttk.Scrollbar(text_container, orient="vertical", command=self.requirement_text.yview)
@@ -637,9 +647,9 @@ class BossFilterGUI:
         self.skills_tree.column("weight", width=70, anchor='center')
         self.skills_tree.column("source", width=80, anchor='center')
         # 设置颜色标记（带字体）- 覆盖所有情况
-        self.skills_tree.tag_configure('high_weight', font=tree_font, background='#E8F5E9')
-        self.skills_tree.tag_configure('mid_weight', font=tree_font, background='#FFF3E0')
-        self.skills_tree.tag_configure('low_weight', font=tree_font, background='#F5F5F5')
+        self.skills_tree.tag_configure('high_weight', font=tree_font, background=self.colors['bg_tree_tag_high'])
+        self.skills_tree.tag_configure('mid_weight', font=tree_font, background=self.colors['bg_tree_tag_mid'])
+        self.skills_tree.tag_configure('low_weight', font=tree_font, background=self.colors['bg_tree_tag_low'])
 
         # 设置 Treeview 默认字体和行高
         _style = ttk.Style()
@@ -741,7 +751,7 @@ class BossFilterGUI:
         greet_text_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         self.greet_template_text = tk.Text(greet_text_container, height=UI_CONFIG['text_height_small'], font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor)),
-                                          bg='#FAFAFA', borderwidth=1, highlightthickness=0)
+                                          bg=self.colors['bg_input'], borderwidth=1, highlightthickness=0)
         self.greet_template_text.pack(side="left", fill="both", expand=True)
 
         greet_scroll = ttk.Scrollbar(greet_text_container, orient="vertical", command=self.greet_template_text.yview)
@@ -1118,7 +1128,7 @@ class BossFilterGUI:
         self.rounds_spin.bind('<Leave>',
             lambda e: self.rounds_spin.unbind('<MouseWheel>'))
         ttk.Label(row1, text="(推荐 50-200 轮次)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
-                 foreground='#999', background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+                 foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
         # 打招呼等级
         row2 = ttk.Frame(param_frame, style='TFrame')
@@ -1131,7 +1141,7 @@ class BossFilterGUI:
                                     width=20, state="readonly", font=self.font_combo)
         greet_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row2, text="(自动打招呼的推荐等级)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
-                 foreground='#999', background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+                 foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
         # === 进度条 ===
         progress_frame = ttk.Frame(param_frame, style='TFrame')
@@ -1177,7 +1187,7 @@ class BossFilterGUI:
         # 日志文本框 - 等宽字体
         log_font = font.Font(family='Consolas', size=int(12 * self.dpi_scale * self.zoom_factor))
         self.log_text = tk.Text(log_container, wrap="word", state="disabled",
-                               font=log_font, bg='#FAFAFA', borderwidth=0, highlightthickness=0)
+                               font=log_font, bg=self.colors['bg_input'], borderwidth=0, highlightthickness=0)
         self.log_text.pack(side="left", fill="both", expand=True)
         self.bind_text_context_menu(self.log_text, editable=False)
 
@@ -1382,15 +1392,15 @@ class BossFilterGUI:
     def on_nav_enter(self, index):
         """鼠标移入导航项时高亮（只改变前景色，不影响布局）"""
         comp = self.nav_components[index]
-        comp['emoji'].configure(foreground='#FFFFFF')
-        comp['text'].configure(foreground='#FFFFFF')
+        comp['emoji'].configure(foreground=self.colors['text_sidebar_active'])
+        comp['text'].configure(foreground=self.colors['text_sidebar_active'])
 
     def on_nav_leave(self, index):
         """鼠标移出导航项时恢复样式（当前页面除外）"""
         if index != self.current_page_index:
             comp = self.nav_components[index]
-            comp['emoji'].configure(foreground='#A0AEC0')
-            comp['text'].configure(foreground='#A0AEC0')
+            comp['emoji'].configure(foreground=self.colors['text_sidebar'])
+            comp['text'].configure(foreground=self.colors['text_sidebar'])
 
     # ===== 右键菜单功能 =====
     def bind_entry_context_menu(self, entry_widget):
@@ -3253,9 +3263,9 @@ class BossFilterGUI:
                 sorted_candidates = sorted(candidates, key=lambda x: x.get('match_score', 0), reverse=True)
 
                 # 配置颜色标记 tag
-                self.result_tree.tag_configure('strong_recommend', background='#E8F5E9')  # 浅绿
-                self.result_tree.tag_configure('recommend', background='#FFF3E0')  # 浅橙
-                self.result_tree.tag_configure('pending', background='#F5F5F5')  # 浅灰
+                self.result_tree.tag_configure('strong_recommend', background=self.colors['bg_tree_tag_high'])
+                self.result_tree.tag_configure('recommend', background=self.colors['bg_tree_tag_mid'])
+                self.result_tree.tag_configure('pending', background=self.colors['bg_tree_tag_low'])
 
                 for c in sorted_candidates[:100]:
                     score = c.get('match_score', 0)
