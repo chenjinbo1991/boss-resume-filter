@@ -3229,6 +3229,8 @@ class BossFilterGUI:
 
                 for c in sorted_candidates[:100]:
                     score = c.get('match_score', 0)
+                    if score < 55:
+                        continue  # 低于 55 分不显示
                     level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
                     status = "已招呼" if c.get('greet_sent', False) else "未招呼"
 

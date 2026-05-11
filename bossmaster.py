@@ -184,7 +184,7 @@ def export_to_excel(candidates, filename):
             elif score >= 55:
                 recommend_level = "待定"
             else:
-                recommend_level = "待定"
+                continue  # 低于 55 分直接过滤，不进入导出
 
             summary_info = extract_summary_info(c.get('summary', ''))
             row = {
@@ -1005,14 +1005,12 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
 
     for i, candidate in enumerate(raw_candidates):
         passed, score, details = filter_candidate(candidate['summary'], job_info['rule'])
-        if passed:
+        if passed and score >= 55:
             # 计算推荐等级
             if score >= 75:
                 recommend_level = "强烈推荐"
             elif score >= 65:
                 recommend_level = "推荐"
-            elif score >= 55:
-                recommend_level = "待定"
             else:
                 recommend_level = "待定"
 
