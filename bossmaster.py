@@ -1,5 +1,5 @@
 """
-BOSS 直聘候选人智能提取工具 v3.0
+BOSS 直聘候选人智能提取工具 v3.1
 支持 Excel 导出
 """
 import time
@@ -765,7 +765,21 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
     consecutive_empty = 0
 
     for scroll_round in range(max_rounds):
-        # 每轮先检测是否已到底（文本提示）
+        # 先滚动（第一轮跳过）
+        if scroll_round > 0:
+            if iframe:
+                # 同时滚动 window 和可能的滚动容器（BOSS 直聘虚拟列表的实际滚动目标）
+                iframe.run_js('''
+                    window.scrollBy(0, 800);
+                    var list = document.querySelector(".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]");
+                    if(list) list.scrollTop += 800;
+                ''')
+                time.sleep(0.5)
+            else:
+                page.run_js('window.scrollBy(0, 800)')
+                time.sleep(0.5)
+
+        # 滚动后检测是否已到底（文本提示）
         if scroll_round > 0:
             bottom_hint = None
             try:
@@ -775,19 +789,8 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
             except Exception:
                 pass
             if bottom_hint:
-                print(f"检测到'到底'提示，第 {scroll_round} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
+                print(f"检测到'到底'提示，第 {scroll_round + 1} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
                 break
-
-        # 先滚动，再收集数据（除了第一轮）
-        if scroll_round > 0:
-            if iframe:
-                scroll_in_frame(iframe, 600)
-                time.sleep(0.4)
-                scroll_in_frame(iframe, 200)
-                time.sleep(0.2)
-            else:
-                page.run_js('window.scrollBy(0, 800)')
-                time.sleep(0.4)
 
         # 收集候选人
         candidates_in_round = []
@@ -831,7 +834,7 @@ def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_ro
         # 连续空轮次检测（兜底策略，不依赖特定文案）
         if new_count == 0:
             consecutive_empty += 1
-            if consecutive_empty >= 5:
+            if consecutive_empty >= 10:
                 print(f"连续 {consecutive_empty} 轮无新候选人，第 {scroll_round + 1} 轮提前终止（累计 {total_count} 个候选人）")
                 break
         else:
@@ -856,6 +859,7 @@ def send_greeting_on_list_page(page, geek_id, retry=0):
     - CSS 选择器替代 //* 全局 XPath 扫描
     - 合并按钮文本查询为单次 XPath OR 表达式，消灭循环等待叠加
     - 所有 ele() 调用设短超时，不再死等默认 10s
+    - 点击后检测升级套餐/次数上限弹窗，防止假成功
 
     返回：(是否成功，消息)
     """
@@ -899,12 +903,63 @@ def send_greeting_on_list_page(page, geek_id, retry=0):
         except Exception:
             greet_btn.run_js('this.click()')
 
-        time.sleep(0.3)
+        time.sleep(0.3)  # 等待按钮点击生效
+
+        # 检测升级套餐/次数上限弹窗（重试一次，弹窗可能有渲染延迟）
+        is_limited, limit_msg = _detect_limit_popup(page)
+        if not is_limited:
+            time.sleep(0.3)
+            is_limited, limit_msg = _detect_limit_popup(page)
+
+        if is_limited:
+            return False, f"沟通次数已达上限: {limit_msg}"
+
         return True, "成功"
 
     except Exception as e:
         return False, f"异常: {str(e)[:50]}"
 
+
+
+def _detect_limit_popup(page):
+    """
+    检测是否弹出了 BOSS 直聘沟通次数上限/升级套餐弹窗（极速版）
+
+    单次 JS 调用合并所有关键词检测，<10ms 完成，不影响打招呼速度。
+
+    返回: (is_limited: bool, detail: str)
+    """
+    # 所有限制弹窗关键词，用 || 合并为一条 JS 表达式
+    limit_keywords = [
+        "次数已用完", "沟通次数", "今日上限", "升级套餐",
+        "立即升级", "联系次数", "已达上限", "今日剩余",
+        "开通套餐", "购买套餐", "次数不足", "免费次数",
+        "升级VIP", "VIP无限沟通", "体验VIP", "今日免费",
+    ]
+    checks = " || ".join(f'body.innerText.includes("{kw}")' for kw in limit_keywords)
+    script = f'return (function(){{var body=document.body;return {checks};}})()'
+
+    try:
+        # 只搜 iframe（BOSS 弹窗在此渲染），主页面作为兜底
+        iframe = get_iframe(page)
+        if iframe:
+            try:
+                if iframe.run_js(script):
+                    return True, "iframe检测到限制弹窗"
+            except Exception:
+                pass
+
+        # 兜底：主页面
+        try:
+            if page.run_js(script):
+                return True, "主页面检测到限制弹窗"
+        except Exception:
+            pass
+
+        return False, ""
+
+    except Exception:
+        return False, ""
 
 
 def verify_greeting_success(page, geek_id, debug=False):
@@ -1003,6 +1058,18 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
     passed_candidates = []  # 通过筛选的候选人（含分数）
     failed_reasons = {}
 
+    # 构建淘汰原因的动态描述（基于实际招聘要求）
+    rule = job_info['rule']
+    exp_requirement = f"经验不足（{rule.get('min_exp', 0)}年以上工作经验）"
+    # 学历要求：优先取 required_conditions 中的统招本科，否则取 edu 字段
+    edu_requirement = rule.get('edu', '不限')
+    req_conds = rule.get('required_conditions', [])
+    for cond in req_conds:
+        if isinstance(cond, str) and '统招' in cond:
+            edu_requirement = cond
+            break
+    edu_requirement = f"学历不符/不足（{edu_requirement}）"
+
     for i, candidate in enumerate(raw_candidates):
         passed, score, details = filter_candidate(candidate['summary'], job_info['rule'])
         if passed and score >= 55:
@@ -1033,7 +1100,23 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
             if verbose:
                 print(f"  [{i+1}/{len(raw_candidates)}] {candidate['name']} - {score}分 ({recommend_level})")
         else:
-            reason = details.get('reason', '未知')
+            if passed:
+                # 通过了硬性筛选但评分 < 55，按分数段归类
+                if score >= 50:
+                    reason = "评分不足(50-54分)"
+                elif score >= 40:
+                    reason = "评分不足(40-49分)"
+                elif score >= 30:
+                    reason = "评分不足(30-39分)"
+                else:
+                    reason = "评分不足(<30分)"
+            else:
+                reason = details.get('reason', '未知')
+                # 合并同类淘汰原因
+                if '经验不足' in reason:
+                    reason = exp_requirement
+                elif '学历不足' in reason or '学历不符' in reason:
+                    reason = edu_requirement
             failed_reasons[reason] = failed_reasons.get(reason, 0) + 1
 
         if (i + 1) % 20 == 0:
@@ -1044,9 +1127,24 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
 
     print(f"\n筛选完成：通过 {len(passed_candidates)}/{len(raw_candidates)} 个")
     if failed_reasons:
-        print(f"淘汰原因:")
-        for reason, count in sorted(failed_reasons.items(), key=lambda x: -x[1])[:5]:
+        total_failed = sum(failed_reasons.values())
+        print(f"淘汰原因（共 {total_failed} 人）:")
+        def _reason_order(item):
+            reason = item[0]
+            if '经验不足' in reason:
+                return (0, -item[1])
+            if '学历' in reason:
+                return (1, -item[1])
+            if '评分不足' in reason:
+                return (2, -item[1])
+            return (3, -item[1])
+
+        for reason, count in sorted(failed_reasons.items(), key=_reason_order):
             print(f"  - {reason}: {count} 人")
+        # 总数校验
+        accounted = len(passed_candidates) + total_failed
+        if accounted != len(raw_candidates):
+            print(f"⚠️  数量不一致：通过({len(passed_candidates)}) + 淘汰({total_failed}) = {accounted} ≠ 原始({len(raw_candidates)})")
 
     # === 仅列出候选人，不打招呼 ===
     if list_candidates and passed_candidates:
@@ -1142,6 +1240,18 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                         pending_save_count = 0
                     print(f"失败：{msg}")
 
+                    # 沟通次数上限是终端条件：达到上限后所有后续打招呼都不会成功
+                    if "上限" in msg or "次数" in msg:
+                        print(f"\n{'='*60}")
+                        print(f"⚠️  今日沟通次数已达上限！")
+                        print(f"   BOSS 直聘已弹出升级套餐页面，后续打招呼不会真正发送")
+                        print(f"   本次已成功打招呼：{greet_success_count} 人")
+                        print(f"{'='*60}")
+                        if pending_save_count > 0:
+                            save_candidates_all(candidates_all)
+                            pending_save_count = 0
+                        break
+
         except KeyboardInterrupt:
             print(f"\n\n⚠️  检测到中断，保存当前进度...")
             # 中断时立即保存所有数据
@@ -1221,7 +1331,7 @@ def run_smart_scan(args=None):
         greet_text = f" + 自动打招呼 ({greet_level_display})"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
-    print(f">>> BOSS 直聘候选人智能提取工具 v3.0 [{mode_text}{greet_text}]")
+    print(f">>> BOSS 直聘候选人智能提取工具 v3.1 [{mode_text}{greet_text}]")
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）
@@ -1271,8 +1381,8 @@ def run_smart_scan(args=None):
                 # 需要打开浏览器进行打招呼
                 page = ChromiumPage()
                 print("\n浏览器已打开，请手动导航到候选人推荐页面")
-                print("等待 10 秒...")
-                time.sleep(10)
+                print("等待 3 秒...")
+                time.sleep(3)
 
                 # 执行补打招呼
                 success_count = 0
@@ -1299,6 +1409,14 @@ def run_smart_scan(args=None):
                         else:
                             fail_count += 1
                             print(f"失败：{msg}")
+                            # 沟通次数上限是终端条件
+                            if "上限" in msg or "次数" in msg:
+                                print(f"\n{'='*60}")
+                                print(f"⚠️  今日沟通次数已达上限！")
+                                print(f"   BOSS 直聘已弹出升级套餐页面，后续打招呼不会真正发送")
+                                print(f"   本次已成功打招呼：{success_count} 人")
+                                print(f"{'='*60}")
+                                break
 
                 except KeyboardInterrupt:
                     print(f"\n\n检测到中断，保存当前进度...")
@@ -1324,8 +1442,8 @@ def run_smart_scan(args=None):
 
         print("\n浏览器已打开，请手动导航到候选人推荐页面")
         print("例如：https://www.zhipin.com/web/chat/recommend")
-        print("请确保页面完全加载后，等待 10 秒...")
-        time.sleep(10)
+        print("请确保页面完全加载后，等待 3 秒...")
+        time.sleep(3)
 
         job_rules, default_rule = load_job_config()
 

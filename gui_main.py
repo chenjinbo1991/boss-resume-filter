@@ -103,7 +103,7 @@ class BossFilterGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("BOSS 简历筛选器 v3.0 - 智能候选人筛选工具")
+        self.root.title("BOSS 简历筛选器 v3.1 - 智能候选人筛选工具")
 
         # 高 DPI 支持 - 启用系统 DPI 缩放
         try:
@@ -386,7 +386,7 @@ class BossFilterGUI:
         bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         bottom_frame.pack(side="bottom", fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
-        version_label = ttk.Label(bottom_frame, text="v3.0",
+        version_label = ttk.Label(bottom_frame, text="v3.1",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
                                   foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'])
         version_label.pack(anchor="w")
@@ -1135,9 +1135,9 @@ class BossFilterGUI:
         row2.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row2, text="打招呼等级:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
-        self.greet_level_var = tk.StringVar(value="强烈推荐 + 推荐")
+        self.greet_level_var = tk.StringVar(value="仅强烈推荐")
         greet_combo = ttk.Combobox(row2, textvariable=self.greet_level_var,
-                                    values=["强烈推荐 + 推荐", "仅强烈推荐"],
+                                    values=["仅强烈推荐", "强烈推荐 + 推荐"],
                                     width=20, state="readonly", font=self.font_combo)
         greet_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row2, text="(自动打招呼的推荐等级)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
@@ -3169,7 +3169,7 @@ class BossFilterGUI:
             from bossmaster import load_job_config, ChromiumPage, time, run_smart_scan
             import argparse
 
-            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v3.0 [图形界面模式]")
+            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v3.1 [图形界面模式]")
             self.append_log(f"滚动轮次：{rounds}, 打招呼等级：{greet_level_text}({greet_level})")
 
             job_rules, _ = load_job_config()
@@ -3189,8 +3189,8 @@ class BossFilterGUI:
             )
 
             self.append_log("[初次扫描模式] 请手动导航到 BOSS 直聘推荐页面...")
-            self.append_log("等待 10 秒...")
-            time.sleep(10)
+            self.append_log("等待 3 秒...")
+            time.sleep(3)
 
             self.append_log("开始扫描候选人...")
 
@@ -3550,7 +3550,7 @@ class BossFilterGUI:
 
     def show_about(self):
         """显示关于"""
-        messagebox.showinfo("关于", "BOSS 简历筛选器 v3.0\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+        messagebox.showinfo("关于", "BOSS 简历筛选器 v3.1\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
 
 
 def main():
