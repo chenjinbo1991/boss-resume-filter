@@ -1,5 +1,22 @@
 # 更新日志
 
+## 2026-05-11 - v3.1 更新日志查看器 + 打包精简
+
+### 更新日志查看器
+1. **版本号可点击**：侧边栏底部 `v3.1` 标签改为可点击（`cursor="hand2"`），弹出对话框展示 `CHANGELOG.md` 完整内容
+2. **对话框设计**：780x580 居中窗口，Text 组件无边框直接嵌入，与主界面背景色一致，支持滚动和文本选择
+
+### 打包输出精简
+1. **dist 辅助文件精简**：从 4 个（README.md, requirements.txt, job_config.json, gui.bat）精简为 2 个（README.md, job_config.json）
+2. **去掉 requirements.txt**：EXE 已自包含，无需 pip 安装
+3. **去掉 gui.bat**：EXE 双击即可运行
+
+### 修改文件
+- gui_main.py：`show_changelog()` 方法 + 版本号点击绑定 + UI 优化
+- build.py：精简 dist 辅助文件列表
+
+---
+
 ## 2026-05-11 - v3.1 滚动优化 + 淘汰原因展示 + 沟通上限检测
 
 ### 滚动提前终止优化

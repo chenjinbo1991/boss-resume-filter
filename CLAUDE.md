@@ -39,6 +39,12 @@ boss-resume-filter/
 
 ### 图形界面模式（推荐）
 - 双击 `gui.bat` 或 `python gui_main.py`
+- 侧边栏底部版本号可点击，弹出更新日志对话框查看 CHANGELOG.md 内容
+
+### 打包发布
+- `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~40MB）
+- dist 目录输出：`BOSS_简历筛选器.exe` + `README.md` + `job_config.json`
+- job_config.json 和 api_config.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
 
 ## 代码规范
 - 使用 type hints

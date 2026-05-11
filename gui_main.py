@@ -388,8 +388,10 @@ class BossFilterGUI:
 
         version_label = ttk.Label(bottom_frame, text="v3.1",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
-                                  foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'])
+                                  foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
+                                  cursor="hand2")
         version_label.pack(anchor="w")
+        version_label.bind("<Button-1>", lambda e: self.show_changelog())
 
     def create_main_content(self):
         """创建主内容区域"""
@@ -3551,6 +3553,45 @@ class BossFilterGUI:
     def show_about(self):
         """显示关于"""
         messagebox.showinfo("关于", "BOSS 简历筛选器 v3.1\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+
+    def show_changelog(self):
+        """显示更新日志"""
+        changelog_path = BASE_DIR / "CHANGELOG.md"
+        if not changelog_path.exists():
+            messagebox.showinfo("更新日志", "CHANGELOG.md 文件不存在")
+            return
+
+        try:
+            content = changelog_path.read_text(encoding="utf-8")
+        except Exception as e:
+            messagebox.showerror("错误", f"读取更新日志失败：{e}")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("更新日志")
+        dialog.geometry("780x580")
+        dialog.configure(bg=self.colors['bg_main'])
+
+        # 居中窗口
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 780) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 580) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        text_widget = tk.Text(dialog, wrap="word", borderwidth=0,
+                              font=('Microsoft YaHei UI', int(11 * self.dpi_scale * self.zoom_factor)),
+                              bg=self.colors['bg_main'], fg=self.colors['text_primary'],
+                              padx=int(20 * self.dpi_scale * self.zoom_factor),
+                              pady=int(15 * self.dpi_scale * self.zoom_factor),
+                              selectbackground=self.colors['primary'])
+        text_widget.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=text_widget.yview)
+        scrollbar.pack(side="right", fill="y")
+        text_widget.configure(yscrollcommand=scrollbar.set)
+
+        text_widget.insert("1.0", content)
+        text_widget.configure(state="disabled")
 
 
 def main():
