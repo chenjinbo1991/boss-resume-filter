@@ -225,7 +225,11 @@ def export_to_excel(candidates, filename):
                     job_df = df[df['岗位'] == job_name].copy()
                     # 重新编号
                     job_df['序号'] = range(1, len(job_df) + 1)
-                    sheet_name = job_name[:25]  # Excel 工作表名最长 31 字符
+                    # Excel 工作表名不允许: \ / * ? [ ] :
+                    sheet_name = job_name.translate(str.maketrans({
+                        '\\': '-', '/': '-', '*': '-', '?': '-',
+                        '[': '(', ']': ')', ':': '-'
+                    }))[:31]
                     job_df.to_excel(writer, index=False, sheet_name=sheet_name)
 
             # 统计摘要工作表
@@ -1209,7 +1213,8 @@ def run_smart_scan(args=None):
         mode_text = f"点对点打招呼模式 ({args.greet_names})"
     greet_text = ""
     if auto_greet_scan:
-        greet_text = " + 自动打招呼 (强烈推荐 + 推荐)"
+        greet_level_display = "仅强烈推荐" if args.greet_level == 'strong' else "强烈推荐 + 推荐"
+        greet_text = f" + 自动打招呼 ({greet_level_display})"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
     print(f">>> BOSS 直聘候选人智能提取工具 v3.0 [{mode_text}{greet_text}]")
@@ -1354,10 +1359,9 @@ def run_smart_scan(args=None):
             print(f"过滤规则：经验≥{rule.get('min_exp', 0)}年，学历≥{rule.get('edu', '不限')}")
             print(f"Keywords: {[k.get('name', k) if isinstance(k, dict) else k for k in rule.get('keywords', [])][:5]}...")
 
-            # 初次扫描时，greet_names_list 和 greet_level 不生效（仅补打招呼模式使用）
             candidates = smart_scan_candidates(page, job_info, auto_greet=auto_greet_scan,
                                                max_rounds=args.rounds, verbose=args.verbose,
-                                               greet_level='normal', greet_names_list=None,
+                                               greet_level=args.greet_level, greet_names_list=None,
                                                list_candidates=args.list_candidates)
             all_candidates.extend(candidates)
             # smart_scan_candidates 已经即时保存了，这里不需要重复保存
