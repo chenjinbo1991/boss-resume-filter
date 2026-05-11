@@ -76,6 +76,7 @@ UI_CONFIG = {
     'spinbox_exp_min': 0,            # 经验 Spinbox 最小值
     'spinbox_exp_max': 30,           # 经验 Spinbox 最大值
     'spinbox_rounds_min': 0,         # 轮次 Spinbox 最小值
+    'spinbox_rounds_max': 9999,      # 轮次 Spinbox 最大值（虚拟上限）
     'icon_margin': 4,                # 图标圆形边距
     'combobox_width_job': 40,        # 岗位 Combobox 宽度
     'combobox_width_provider': 15,   # 服务商 Combobox 宽度
@@ -825,6 +826,18 @@ class BossFilterGUI:
         elif self.current_page_index == 4 and hasattr(self, 'api_canvas'):
             self.api_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
+    def _on_rounds_mousewheel(self, event):
+        """滚动轮次 Spinbox 的鼠标滚轮处理"""
+        delta = event.delta // 120  # 正=向上滚，负=向下滚
+        try:
+            current = int(self.rounds_var.get())
+        except ValueError:
+            current = 100
+        new_val = current + delta * 10
+        new_val = max(UI_CONFIG['spinbox_rounds_min'],
+                      min(UI_CONFIG['spinbox_rounds_max'], new_val))
+        self.rounds_var.set(str(new_val))
+
     def _create_api_config_content(self):
         """创建 API 配置页面内容（在可滚动框架中）"""
         api_container = self.api_scrollable_frame
@@ -1093,10 +1106,16 @@ class BossFilterGUI:
         ttk.Label(row1, text="滚动轮次:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
         self.rounds_var = tk.StringVar(value="100")
-        rounds_spin = ttk.Spinbox(row1, from_=UI_CONFIG['spinbox_rounds_min'],
-                                  increment=10, textvariable=self.rounds_var,
-                                  width=15, font=self.font_button)
-        rounds_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        self.rounds_spin = ttk.Spinbox(row1, from_=UI_CONFIG['spinbox_rounds_min'],
+                                       to=UI_CONFIG['spinbox_rounds_max'],
+                                       increment=10, textvariable=self.rounds_var,
+                                       width=15, font=self.font_button)
+        self.rounds_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        # 鼠标滚轮绑定
+        self.rounds_spin.bind('<Enter>',
+            lambda e: self.rounds_spin.bind('<MouseWheel>', self._on_rounds_mousewheel))
+        self.rounds_spin.bind('<Leave>',
+            lambda e: self.rounds_spin.unbind('<MouseWheel>'))
         ttk.Label(row1, text="(推荐 50-200 轮次)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
                  foreground='#999', background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
