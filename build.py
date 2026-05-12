@@ -29,7 +29,7 @@ def run_in_venv():
 
 def clean_dist():
     """只删除旧的 EXE 文件，保留用户数据和配置文件"""
-    exe_path = DIST_DIR / "BOSS_简历筛选器.exe"
+    exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
     if exe_path.exists():
         for attempt in range(3):
             try:
@@ -61,7 +61,7 @@ def main():
         str(VENV_PYTHON), "-m", "PyInstaller",
         "--onefile",
         "--noconsole",
-        '--name', 'BOSS_简历筛选器',
+        '--name', 'BOSS_ResumeFilter',
         '--add-data', f'{BASE_DIR / "job_config.json"};.',
         '--add-data', f'{BASE_DIR / "api_config.json"};.',
         '--hidden-import=tkinter',
@@ -87,7 +87,7 @@ def main():
         print("\n[错误] 打包失败")
         sys.exit(1)
 
-    exe_path = DIST_DIR / "BOSS_简历筛选器.exe"
+    exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
     size_mb = exe_path.stat().st_size / (1024 * 1024)
     print(f"\n[成功] {exe_path} ({size_mb:.1f} MB)")
 
