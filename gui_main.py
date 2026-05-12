@@ -1842,6 +1842,8 @@ class BossFilterGUI:
                             if c.get('name') == vals[0]:
                                 d_win = tk.Toplevel(detail_window)
                                 d_win.title("候选人详情")
+                                d_win.transient(detail_window)
+                                d_win.withdraw()
                                 d_title = f"姓名：{vals[0]} | 匹配分：{vals[3]} | {vals[4]}"
                                 ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
                                          foreground=self.colors['primary']).pack(pady=15)
@@ -1849,10 +1851,16 @@ class BossFilterGUI:
                                 tw.pack(fill='both', expand=True, padx=20, pady=10)
                                 tw.insert('1.0', json.dumps(c, ensure_ascii=False, indent=2))
                                 self.bind_text_context_menu(tw, editable=False)
+                                d_win.update_idletasks()
+                                px = self.root.winfo_x()
+                                py = self.root.winfo_y()
+                                pw = self.root.winfo_width()
+                                ph = self.root.winfo_height()
                                 dw, dh = 600, 500
-                                dx = (self.root.winfo_screenwidth() - dw) // 2
-                                dy = (self.root.winfo_screenheight() - dh) // 2
+                                dx = px + (pw - dw) // 2
+                                dy = py + (ph - dh) // 2
                                 d_win.geometry(f"{dw}x{dh}+{max(0, dx)}+{max(0, dy)}")
+                                d_win.deiconify()
                                 break
 
                 def remove_candidate():
@@ -3865,6 +3873,8 @@ class BossFilterGUI:
             # 创建详情窗口
             detail_window = tk.Toplevel(self.root)
             detail_window.title("候选人详情")
+            detail_window.transient(self.root)
+            detail_window.withdraw()
 
             # 标题
             title = f"姓名：{values[0]} | 匹配分：{values[3]} | {values[4]}"
@@ -3882,13 +3892,17 @@ class BossFilterGUI:
                     text_widget.insert('1.0', detail_text)
                     break
 
-            # 屏幕居中：一次性 WxH+X+Y，用已映射的 root 查屏幕尺寸
+            # 相对父窗口居中（与模型列表弹窗相同实现）
+            detail_window.update_idletasks()
+            px = self.root.winfo_x()
+            py = self.root.winfo_y()
+            pw = self.root.winfo_width()
+            ph = self.root.winfo_height()
             w, h = 600, 500
-            sw = self.root.winfo_screenwidth()
-            sh = self.root.winfo_screenheight()
-            x = (sw - w) // 2
-            y = (sh - h) // 2
+            x = px + (pw - w) // 2
+            y = py + (ph - h) // 2
             detail_window.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+            detail_window.deiconify()
 
         except Exception as e:
             messagebox.showerror("错误", f"查看详情失败：{e}")
