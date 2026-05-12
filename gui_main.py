@@ -3097,27 +3097,16 @@ class BossFilterGUI:
         self.refresh_required_listbox()
 
     def _insert_requirement_template(self):
-        """插入招聘需求模板到输入框"""
-        template = (
-            "职位描述【高级Java/Python工程师】：\n"
-            "1. Java/Python基础扎实，具有实际开发经验，能够独立完成开发任务；\n"
-            "2. 熟悉mysql、oracle其中一种数据库的使用及优化；\n"
-            "3. 熟练使用Spring Cloud、Dubbo或类似的微服务框架,Dubbo优先；\n"
-            "4. 熟练使用SpringBoot/Spring Mvc/Mybatis等常用java框架；\n"
-            "5. 了解缓存技术Redis、消息中间件Kafka；\n"
-            "6. 熟悉activiti、camunda、flowable等相关技术；\n"
-            "7. 有AI开发背景（LLM、Al Agent、智能体、Spring AI、Langchain、智能问答、知识库）的优先；\n"
-            "\n"
-            "职位要求：\n"
-            "1. 4-10年工作经验\n"
-            "2. 本科学历\n"
-            "3. 薪资范围：12k-15k\n"
-            "4. 工作地点：南京市雨花区凯润大厦2号楼5层\n"
-            "\n"
-            "必要条件（硬性约束）：\n"
-            "1. 具有4年以上工作经验\n"
-            "2. 统招本科学历；"
-        )
+        """插入招聘需求模板到输入框（模板文本从 job_config.json 读取）"""
+        try:
+            with open("job_config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+            template = config.get("requirement_template", "")
+        except Exception:
+            template = ""
+        if not template:
+            messagebox.showwarning("警告", "配置文件中未找到 requirement_template 模板")
+            return
         self.requirement_text.delete("1.0", tk.END)
         self.requirement_text.insert("1.0", template)
 
