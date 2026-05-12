@@ -1262,7 +1262,6 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         greet_fail_count = 0
         greeted_in_this_run = []
         consecutive_failures = 0  # 连续失败计数
-        pending_save_count = 0  # 延迟保存计数
 
         try:
             for i, candidate in enumerate(to_greet_list):
@@ -1300,19 +1299,12 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                     candidate['greet_sent'] = True
                     candidates_all.append(candidate)
                     greeted_in_this_run.append(candidate['geek_id'])
-                    # 成功打招呼立即保存（防止中断丢失）
-                    save_candidates_all(candidates_all)
                     print(f"OK")
                 else:
                     greet_fail_count += 1
                     consecutive_failures += 1  # 累加连续失败计数
                     candidate['greet_sent'] = False
                     candidates_all.append(candidate)
-                    # 失败招呼延迟保存，攒够 5 个再写文件
-                    pending_save_count += 1
-                    if pending_save_count >= 5:
-                        save_candidates_all(candidates_all)
-                        pending_save_count = 0
                     print(f"失败：{msg}")
 
                     # 沟通次数上限是终端条件：达到上限后所有后续打招呼都不会成功
@@ -1322,9 +1314,6 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                         print(f"   BOSS 直聘已弹出升级套餐页面，后续打招呼不会真正发送")
                         print(f"   本次已成功打招呼：{greet_success_count} 人")
                         print(f"{'='*60}")
-                        if pending_save_count > 0:
-                            save_candidates_all(candidates_all)
-                            pending_save_count = 0
                         break
 
         except KeyboardInterrupt:
@@ -1335,10 +1324,6 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                 print(f"  本次运行已打招呼 {len(greeted_in_this_run)} 人")
             print(f"✅ 候选人总数：{len(candidates_all)}")
             raise
-
-        # 循环结束后，保存剩余未写入的数据
-        if pending_save_count > 0:
-            save_candidates_all(candidates_all)
 
         print(f"\n打招呼完成：成功 {greet_success_count} 人，失败 {greet_fail_count} 人")
 
@@ -1520,8 +1505,6 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                             else:
                                 success_count += 1
                                 c['greet_sent'] = True
-                                # 立即保存
-                                save_candidates_all(candidates_all)
                                 print("OK")
                         else:
                             fail_count += 1
@@ -1609,7 +1592,6 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                                progress_callback=progress_callback,
                                                stop_event=stop_event)
             all_candidates.extend(candidates)
-            # smart_scan_candidates 已经即时保存了，这里不需要重复保存
 
         # 最后生成 Excel 文件
         existing_all = load_candidates_all()
