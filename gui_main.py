@@ -603,9 +603,10 @@ class BossFilterGUI:
         ttk.Label(req_header, text="粘贴招聘需求文档:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
         icon_clipboard = self.icons.button('clipboard', self.colors['text_primary'])
-        btn_example = ttk.Button(req_header, image=icon_clipboard, text=" 招聘需求示例", compound=tk.LEFT, command=self._insert_requirement_template)
-        btn_example._icon_ref = icon_clipboard
-        btn_example.pack(side="right")
+        self.requirement_template_btn = ttk.Button(req_header, image=icon_clipboard, text=" 招聘需求示例", compound=tk.LEFT, command=self._insert_requirement_template)
+        self.requirement_template_btn._icon_ref = icon_clipboard
+        self.requirement_template_btn.pack(side="right")
+        self.requirement_template_btn.state(['disabled'])
 
         # 需求输入框 - 带滚动条（嵌套在容器内避免布局冲突）
         text_container = ttk.Frame(parse_frame, style='TFrame')
@@ -2926,6 +2927,7 @@ class BossFilterGUI:
         if job_name in self.job_rules:
             rule = self.job_rules[job_name]
             self.load_job_to_form(rule)
+            self.requirement_template_btn.state(['disabled'])
             # 显示详细结果区域
             self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
@@ -3234,6 +3236,7 @@ class BossFilterGUI:
         self.reset_job_form()
         self.job_name_var.set("新岗位")
         self.config_job_combo.set("")  # 清空岗位选择
+        self.requirement_template_btn.state(['!disabled'])
 
     def delete_job(self):
         """删除岗位"""
