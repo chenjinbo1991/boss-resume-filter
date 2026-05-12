@@ -4,10 +4,11 @@
 ```
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
-├── gui_main.py           # 图形界面主程序（v2.2）
+├── gui_main.py           # 图形界面主程序（v2.3）
+├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── main.py               # 命令行入口
-├── security.py           # API Key 安全存储模块（keyring 加密）
+├── security.py           # API Key 安全存储模块（keyring 加密）（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── build.py              # PyInstaller 打包脚本
 ├── job_config.json       # 岗位筛选规则配置

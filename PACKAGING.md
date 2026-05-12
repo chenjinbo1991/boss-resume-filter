@@ -193,6 +193,8 @@ pyinstaller --onedir --noconsole \
 | openpyxl | Excel 格式 |
 | PyPDF2 | PDF 解析 |
 | python-docx | Word 解析 |
+| Pillow | 图标绘制（PIL.ImageDraw） |
+| keyring | API Key 加密存储 |
 
 ### 8. 最小化部署
 
@@ -212,4 +214,4 @@ python gui_main.py
 
 ---
 
-**最后更新**: 2026-05-11
+**最后更新**: 2026-05-12
