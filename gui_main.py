@@ -466,10 +466,10 @@ class BossFilterGUI:
 
         # 卡片数据
         cards_data = [
-            ("people", "累计候选人", "total_home", self.colors['primary']),
-            ("trophy", "强烈推荐", "strong_home", self.colors['purple']),
+            ("clipboard", "累计候选人", "total_home", self.colors['primary']),
+            ("star", "强烈推荐", "strong_home", self.colors['purple']),
             ("thumbs_up", "推荐", "recommended_home", self.colors['success']),
-            ("mail", "已打招呼", "greeted_home", self.colors['warning']),
+            ("chat", "已打招呼", "greeted_home", self.colors['warning']),
         ]
 
         self.home_stats_vars = {}
@@ -1392,7 +1392,7 @@ class BossFilterGUI:
         self.result_stats_click = {}
         stats_data = [
             ("clipboard", "通过筛选", "passed", self.colors['primary']),
-            ("trophy", "强烈推荐", "strong", self.colors['purple']),
+            ("star", "强烈推荐", "strong", self.colors['purple']),
             ("thumbs_up", "推荐", "recommended", self.colors['success']),
         ]
 

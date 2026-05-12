@@ -378,6 +378,43 @@ def _stop(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _star(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """五角星 — 星标/强烈推荐"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    cx, cy = _s(_CX, S), _s(_CY, S)
+    outer_r = _s(9, S)
+    inner_r = _s(3.5, S)
+    points = []
+    for i in range(5):
+        ao = math.radians(-90 + i * 72)
+        ai = math.radians(-90 + 36 + i * 72)
+        points.append((cx + outer_r * math.cos(ao), cy + outer_r * math.sin(ao)))
+        points.append((cx + inner_r * math.cos(ai), cy + inner_r * math.sin(ai)))
+    d.polygon(points, outline=fill, width=sw)
+    return img
+
+
+def _chat(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """聊天气泡 — 打招呼/已发送消息"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    # 气泡主体
+    d.rounded_rectangle([_s(5, S), _s(3, S), _s(21, S), _s(16, S)],
+                        radius=_s(3, S), outline=fill, width=sw)
+    # 尾巴（左下角三角）
+    d.line([_s(7, S), _s(12, S), _s(1.5, S), _s(17, S)], fill=fill, width=sw)
+    d.line([_s(1.5, S), _s(17, S), _s(8, S), _s(16, S)], fill=fill, width=sw)
+    # 三个省略号点
+    dot_r = _s(1.2, S)
+    for dx in [0, _s(3.5, S), _s(7, S)]:
+        d.ellipse([_s(8.5, S) + dx - dot_r, _s(9.5, S) - dot_r,
+                   _s(8.5, S) + dx + dot_r, _s(9.5, S) + dot_r], fill=fill)
+    return img
+
+
 def _download(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
@@ -419,6 +456,8 @@ ICON_REGISTRY: Dict[str, Callable] = {
     'mail':         _mail,
     'play':         _play,
     'stop':         _stop,
+    'star':         _star,
+    'chat':         _chat,
     'download':     _download,
 }
 
