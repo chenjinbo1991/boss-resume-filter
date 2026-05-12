@@ -1842,7 +1842,6 @@ class BossFilterGUI:
                             if c.get('name') == vals[0]:
                                 d_win = tk.Toplevel(detail_window)
                                 d_win.title("候选人详情")
-                                d_win.withdraw()
                                 d_title = f"姓名：{vals[0]} | 匹配分：{vals[3]} | {vals[4]}"
                                 ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
                                          foreground=self.colors['primary']).pack(pady=15)
@@ -1851,13 +1850,9 @@ class BossFilterGUI:
                                 tw.insert('1.0', json.dumps(c, ensure_ascii=False, indent=2))
                                 self.bind_text_context_menu(tw, editable=False)
                                 dw, dh = 600, 500
-                                d_win.geometry(f"{dw}x{dh}")
-                                d_win.update_idletasks()
                                 dx = (self.root.winfo_screenwidth() - dw) // 2
                                 dy = (self.root.winfo_screenheight() - dh) // 2
-                                d_win.geometry(f"+{max(0, dx)}+{max(0, dy)}")
-                                d_win.deiconify()
-                                break
+                                d_win.geometry(f"{dw}x{dh}+{max(0, dx)}+{max(0, dy)}")
                                 break
 
                 def remove_candidate():
@@ -3870,7 +3865,6 @@ class BossFilterGUI:
             # 创建详情窗口
             detail_window = tk.Toplevel(self.root)
             detail_window.title("候选人详情")
-            detail_window.withdraw()  # 先隐藏，防止闪烁
 
             # 标题
             title = f"姓名：{values[0]} | 匹配分：{values[3]} | {values[4]}"
@@ -3888,14 +3882,13 @@ class BossFilterGUI:
                     text_widget.insert('1.0', detail_text)
                     break
 
-            # 屏幕居中：先设尺寸→update→用root查屏幕尺寸→设位置→显示
+            # 屏幕居中：一次性 WxH+X+Y，用已映射的 root 查屏幕尺寸
             w, h = 600, 500
-            detail_window.geometry(f"{w}x{h}")
-            detail_window.update_idletasks()
-            x = (self.root.winfo_screenwidth() - w) // 2
-            y = (self.root.winfo_screenheight() - h) // 2
-            detail_window.geometry(f"+{max(0, x)}+{max(0, y)}")
-            detail_window.deiconify()
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            x = (sw - w) // 2
+            y = (sh - h) // 2
+            detail_window.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
 
         except Exception as e:
             messagebox.showerror("错误", f"查看详情失败：{e}")
