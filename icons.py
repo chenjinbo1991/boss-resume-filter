@@ -327,16 +327,30 @@ def _trophy(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
 
 
 def _thumbs_up(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
-    """👍 风格 — 竖拇指（左）+ 握拳（右），两段式结构"""
+    """👍 Lucide 图标 — 24×24 轮廓 + 拇指分割线"""
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
     S = size_px
-    # 拇指 — 左侧竖立，上宽下窄的圆角矩形
-    d.rounded_rectangle([_s(5, S), _s(1, S), _s(12, S), _s(10, S)],
-                        radius=_s(3, S), outline=fill, width=sw)
-    # 拳头 — 右侧握拳，略低于拇指顶部
-    d.rounded_rectangle([_s(7, S), _s(8, S), _s(20, S), _s(20, S)],
-                        radius=_s(3.5, S), outline=fill, width=sw)
+    # 手部外轮廓（基于 Lucide thumbs-up SVG path 逐点转换）
+    pts = [
+        (15, 5.88),     # 拇指尖右侧
+        (14, 10),       # 拇指右缘底部
+        (19.83, 10),    # 手背顶部
+        (21.75, 12.56), # 手背右上（弧线中点）
+        (19.42, 20.56), # 手背右下（弧线中点）
+        (17.5, 22),     # 底部右侧
+        (4, 22),        # 底部中央
+        (2, 20),        # 底部左侧（弧线中点）
+        (2, 12),        # 左侧缘
+        (4, 10),        # 左上角
+        (6.76, 10),     # 拇指左缘底部
+        (8.55, 8.89),   # 拇指左缘中部
+        (12, 2),        # 拇指尖
+    ]
+    scaled = [(_s(x, S), _s(y, S)) for x, y in pts]
+    d.polygon(scaled, outline=fill, width=sw)
+    # 拇指与手掌分隔线（Lucide path 2: M7 10v12）
+    d.line([_s(7, S), _s(10, S), _s(7, S), _s(22, S)], fill=fill, width=sw)
     return img
 
 
