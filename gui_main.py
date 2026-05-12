@@ -1847,7 +1847,7 @@ class BossFilterGUI:
                                 d_title = f"姓名：{vals[0]} | 匹配分：{vals[3]} | {vals[4]}"
                                 ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
                                          foreground=self.colors['primary']).pack(pady=15)
-                                tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 12))
+                                tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
                                 tw.pack(fill='both', expand=True, padx=20, pady=10)
                                 tw.insert('1.0', json.dumps(c, ensure_ascii=False, indent=2))
                                 self.bind_text_context_menu(tw, editable=False)
@@ -1856,7 +1856,7 @@ class BossFilterGUI:
                                 py = self.root.winfo_y()
                                 pw = self.root.winfo_width()
                                 ph = self.root.winfo_height()
-                                dw, dh = 600, 500
+                                dw, dh = 700, 580
                                 dx = px + (pw - dw) // 2
                                 dy = py + (ph - dh) // 2
                                 d_win.geometry(f"{dw}x{dh}+{max(0, dx)}+{max(0, dy)}")
@@ -3881,7 +3881,7 @@ class BossFilterGUI:
             ttk.Label(detail_window, text=title, font=(FONT_FAMILY, 16), foreground=self.colors['primary']).pack(pady=15)
 
             # 详情文本
-            text_widget = tk.Text(detail_window, wrap='word', font=(FONT_FAMILY, 12))
+            text_widget = tk.Text(detail_window, wrap='word', font=(FONT_FAMILY, 14))
             text_widget.pack(fill='both', expand=True, padx=20, pady=10)
             self.bind_text_context_menu(text_widget, editable=False)
 
@@ -3898,7 +3898,7 @@ class BossFilterGUI:
             py = self.root.winfo_y()
             pw = self.root.winfo_width()
             ph = self.root.winfo_height()
-            w, h = 600, 500
+            w, h = 700, 580
             x = px + (pw - w) // 2
             y = py + (ph - h) // 2
             detail_window.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
