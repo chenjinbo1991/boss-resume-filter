@@ -288,19 +288,19 @@ def _home(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
 
 
 def _people(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
-    """三人头像叠加 — 累计候选人/团队"""
+    """双人半身剪影 — 👥 风格，累计候选人"""
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
     S = size_px
-    r = _s(4.5, S)
-    # 三圆重叠：中人略高在前，左右两人稍低在后
-    positions = [
-        (_s(8, S), _s(12, S)),   # 左
-        (_s(12, S), _s(10, S)),  # 中（略高，在前）
-        (_s(16, S), _s(12, S)),  # 右
-    ]
-    for cx, cy in positions:
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=fill, width=sw)
+    r = _s(3.5, S)
+    # 左人：头
+    d.ellipse([_s(5, S), _s(3.5, S), _s(12, S), _s(10.5, S)], outline=fill, width=sw)
+    # 左人：肩/半身弧线
+    d.arc([_s(2, S), _s(9, S), _s(15, S), _s(22, S)], start=180, end=360, fill=fill, width=sw)
+    # 右人：头（在前）
+    d.ellipse([_s(12, S), _s(3.5, S), _s(19, S), _s(10.5, S)], outline=fill, width=sw)
+    # 右人：肩/半身弧线
+    d.arc([_s(9, S), _s(9, S), _s(22, S), _s(22, S)], start=180, end=360, fill=fill, width=sw)
     return img
 
 
