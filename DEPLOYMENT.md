@@ -5,13 +5,13 @@
 ### 1. 复制文件
 将 `dist/` 目录中的所有文件复制到目标电脑：
 ```
-BOSS_简历筛选器.exe
+BOSS_ResumeFilter.exe
 README.md
 job_config.json
 ```
 
 ### 2. 首次运行
-双击 `BOSS_简历筛选器.exe` 启动程序
+双击 `BOSS_ResumeFilter.exe` 启动程序
 
 ### 3. 配置 API Key
 由于 API Key 加密存储在原电脑的系统钥匙串中，新电脑需要重新配置：

@@ -36,7 +36,7 @@ pip install -r requirements.txt
 python build.py
 
 # 或手动打包
-pyinstaller --onefile --noconsole --name "BOSS_简历筛选器" gui_main.py
+pyinstaller --onefile --noconsole --name "BOSS_ResumeFilter" gui_main.py
 ```
 
 #### 步骤 3：获取输出
@@ -45,7 +45,7 @@ pyinstaller --onefile --noconsole --name "BOSS_简历筛选器" gui_main.py
 
 ```
 dist/
-├── BOSS_简历筛选器.exe   <-- 主程序
+├── BOSS_ResumeFilter.exe   <-- 主程序
 ├── job_config.json        <-- 岗位配置
 └── README.md             <-- 说明文档
 ```
@@ -58,13 +58,13 @@ dist/
 #### 方式 A：复制文件夹（推荐）
 
 1. 将 `dist/` 目录复制到目标电脑任意位置
-2. 双击 `BOSS_简历筛选器.exe` 运行
+2. 双击 `BOSS_ResumeFilter.exe` 运行
 
 #### 方式 B：创建快捷方式
 
 ```bash
 # 在桌面创建快捷方式（手动操作）
-1. 右键 BOSS_简历筛选器.exe
+1. 右键 BOSS_ResumeFilter.exe
 2. 发送到 -> 桌面快捷方式
 ```
 
@@ -116,7 +116,7 @@ dist/
 # https://github.com/upx/upx/releases
 
 # 使用 UPX 压缩
-upx --best "dist/BOSS_简历筛选器.exe"
+upx --best "dist/BOSS_ResumeFilter.exe"
 ```
 
 #### Q2: 目标电脑提示缺少 DLL？
@@ -130,7 +130,7 @@ upx --best "dist/BOSS_简历筛选器.exe"
 pyinstaller --onefile --noconsole \
     --hidden-import=tkinter \
     --hidden-import=tkinter.ttk \
-    --name "BOSS_简历筛选器" \
+    --name "BOSS_ResumeFilter" \
     gui_main.py
 ```
 
@@ -139,7 +139,7 @@ pyinstaller --onefile --noconsole \
 确保 `job_config.json` 与 EXE 在同一目录：
 
 ```
-BOSS_简历筛选器.exe
+BOSS_ResumeFilter.exe
 job_config.json
 ```
 
@@ -160,7 +160,7 @@ cp candidates_all.json candidates_all.json.bak
 ```bash
 pyinstaller --onefile --noconsole \
     --icon=app.ico \
-    --name "BOSS_简历筛选器" \
+    --name "BOSS_ResumeFilter" \
     gui_main.py
 ```
 
@@ -168,7 +168,7 @@ pyinstaller --onefile --noconsole \
 
 ```bash
 pyinstaller --onefile --console \
-    --name "BOSS_简历筛选器_debug" \
+    --name "BOSS_ResumeFilter_debug" \
     gui_main.py
 ```
 
@@ -176,7 +176,7 @@ pyinstaller --onefile --console \
 
 ```bash
 pyinstaller --onedir --noconsole \
-    --name "BOSS_简历筛选器" \
+    --name "BOSS_ResumeFilter" \
     gui_main.py
 ```
 

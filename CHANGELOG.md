@@ -27,12 +27,10 @@
 - 模板存储在 `job_config.json` → `requirement_template`，方便维护
 - 按钮默认禁用，仅"新建岗位"模式下可用
 
-### 其他
-- 新增 `icons.py` 模块（IconCache 单例 + 21 个图标绘制函数）
-- `requirements.txt` 添加 `Pillow>=10.0.0`
-- `build.py` 添加 PIL hidden-import
-- 版本号代码同步：源码中残留的 v2.2 字符串全部更新为 v2.3
-- 修复 DEPLOYMENT.md dist 文件列表（移除不存在的 api_config.json）
+### 构建与发布
+- EXE 输出名改为 `BOSS_ResumeFilter.exe`（GitHub Release 不支持中文文件名）
+- Git 历史清理：使用 `git filter-branch` 移除所有历史 commit 中的明文 API Key
+- `build.py` EXE 名自动匹配 GitHub 上传需求
 
 ## v2.2 — 2026-05-12
 

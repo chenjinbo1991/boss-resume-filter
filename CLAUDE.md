@@ -8,7 +8,7 @@ boss-resume-filter/
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── main.py               # 命令行入口
-├── security.py           # API Key 安全存储模块（keyring 加密）（keyring 加密）
+├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── build.py              # PyInstaller 打包脚本
 ├── job_config.json       # 岗位筛选规则配置
@@ -44,7 +44,7 @@ boss-resume-filter/
 
 ### 打包发布
 - `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~40MB）
-- dist 目录输出：`BOSS_简历筛选器.exe` + `README.md` + `job_config.json`
+- dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
 - job_config.json 和 api_config.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
 
 ## 代码规范
