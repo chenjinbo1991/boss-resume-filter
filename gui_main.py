@@ -97,6 +97,48 @@ UI_CONFIG = {
     'font_size_model_label': 14,     # 模型标签字体大小
 }
 
+def _draw_search_icon(S, fill, sw_ratio=0.10):
+    """在 S×S 画布上绘制放大镜图标（🔍 风格），返回 RGBA Image"""
+    from PIL import Image, ImageDraw
+    import math
+    img = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # 镜片
+    rim_color = '#4B5563'      # 金属边框
+    glass_fill = (147, 197, 253, 80)  # 淡蓝玻璃
+    rim_w = max(3, int(S * 0.07))
+    r = int(S * 0.24)
+    cx, cy = int(S * 0.33), int(S * 0.33)
+    # 镜片玻璃底色
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=glass_fill)
+    # 金属边框
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=rim_color, width=rim_w)
+    # 反光斜线（白色）
+    shine_color = (255, 255, 255, 140)
+    shine_w = max(2, int(S * 0.025))
+    shine_y = int(cy - r * 0.4)
+    shine_len = int(r * 1.1)
+    angle = math.radians(-30)
+    sx1 = int(cx - shine_len * math.cos(angle))
+    sy1 = int(shine_y - shine_len * math.sin(angle))
+    sx2 = int(cx + shine_len * math.cos(angle))
+    sy2 = int(shine_y + shine_len * math.sin(angle))
+    d.line([(sx1, sy1), (sx2, sy2)], fill=shine_color, width=shine_w)
+    # 手柄
+    handle_color = '#374151'
+    handle_w = max(3, int(S * 0.07))
+    angle45 = math.radians(45)
+    hx0 = int(cx + (r + rim_w // 2) * math.cos(angle45))
+    hy0 = int(cy + (r + rim_w // 2) * math.sin(angle45))
+    handle_len = int(S * 0.42)
+    hx1 = int(hx0 + handle_len * math.cos(angle45))
+    hy1 = int(hy0 + handle_len * math.sin(angle45))
+    d.line([(hx0, hy0), (hx1, hy1)], fill=handle_color, width=handle_w)
+    # 手柄圆头
+    cap_r = handle_w // 2
+    d.ellipse([hx1 - cap_r, hy1 - cap_r, hx1 + cap_r, hy1 + cap_r], fill=handle_color)
+    return img
+
 
 class BossFilterGUI:
     """BOSS 简历筛选器图形界面 - 优化版"""
@@ -127,6 +169,9 @@ class BossFilterGUI:
 
         # 初始化图标缓存（DPI 感知的高清图标）
         self.icons = icons.init(effective_scale)
+
+        # 设置窗口图标（替换 tkinter 默认羽毛图标）
+        self._set_window_icon()
 
         # 设置 Combobox 下拉列表字体
         from tkinter import font as tkfont
@@ -278,7 +323,7 @@ class BossFilterGUI:
         logo_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(30 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
 
         # 主标题 "BOSS" - 带 clipboard 图标，大字体
-        logo_icon = self.icons.logo('clipboard', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
+        logo_icon = self.icons.logo('document', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
         logo_label = ttk.Label(logo_frame, image=logo_icon, text=" BOSS", compound=tk.LEFT,
                                font=('Microsoft YaHei UI Semibold', int(32 * self.dpi_scale * self.zoom_factor)),
                                foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
@@ -444,7 +489,7 @@ class BossFilterGUI:
                                font=self.font_title, foreground=self.colors['text_primary'])
         title_label.pack(anchor="w")
 
-        subtitle_label = ttk.Label(header_frame, text="基于 DrissionPage 的智能候选人筛选工具，自动滚动、智能匹配、自动打招呼",
+        subtitle_label = ttk.Label(header_frame, text="基于 DrissionPage 的智能候选人筛选工具，智能解析、智能匹配、自动滚动、自动打招呼",
                                    font=self.font_subtitle, foreground=self.colors['text_secondary'])
         subtitle_label.pack(anchor="w", pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
@@ -1741,6 +1786,17 @@ class BossFilterGUI:
         y = self.root.winfo_rooty() + (self.root.winfo_height() - height) // 2
         window.geometry(f"+{x}+{y}")
 
+    def _set_window_icon(self):
+        """设置窗口图标，替换 tkinter 默认羽毛图标"""
+        try:
+            from PIL import Image, ImageTk
+            icon_img = _draw_search_icon(256, '#2563EB', sw_ratio=0.10)
+            # 用 iconphoto 设置高分图标，Windows 10/11 原生缩放比 ICO 清晰
+            self._icon_photo = ImageTk.PhotoImage(icon_img)
+            self.root.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass  # 图标设置失败不影响程序运行
+
     def show_stat_detail(self, stat_type):
         """显示统计详情"""
         try:
@@ -1888,13 +1944,22 @@ class BossFilterGUI:
                         return
                     vals = tree.item(clicked_item, 'values')
                     name = vals[0]
-                    # 从当前过滤列表中移除
-                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('name') != name]
+                    score = vals[3]
+                    # 通过 name+score 精确定位候选人，获取 geek_id
+                    target_geek_id = None
+                    for c in filtered_ref[0]:
+                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                            target_geek_id = c.get('geek_id')
+                            break
+                    if not target_geek_id:
+                        return
+                    # 从当前过滤列表中移除（用 geek_id 精确匹配，避免同名误删）
+                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target_geek_id]
                     # 从 JSON 中移除
                     if CANDIDATES_PATH.exists():
                         with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                             candidates = json.load(f)
-                        candidates = [c for c in candidates if c.get('name') != name]
+                        candidates = [c for c in candidates if c.get('geek_id') != target_geek_id]
                         with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
                             json.dump(candidates, f, ensure_ascii=False, indent=2)
                     # 从表格中移除并刷新统计
@@ -3958,16 +4023,29 @@ class BossFilterGUI:
             try:
                 values = self.result_tree.item(item, 'values')
                 name = values[0]
+                score = values[3]
 
-                # 从数据中移除
+                # 通过 name+score 精确定位候选人，获取 geek_id
+                target_geek_id = None
                 if hasattr(self, 'result_tree_data'):
-                    self.result_tree_data = [c for c in self.result_tree_data if c.get('name') != name]
+                    for c in self.result_tree_data:
+                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                            target_geek_id = c.get('geek_id')
+                            break
+
+                if not target_geek_id:
+                    messagebox.showerror("错误", f"未找到候选人：{name}")
+                    return
+
+                # 从数据中移除（用 geek_id 精确匹配，避免同名误删）
+                if hasattr(self, 'result_tree_data'):
+                    self.result_tree_data = [c for c in self.result_tree_data if c.get('geek_id') != target_geek_id]
 
                 # 从 JSON 文件中移除
                 if CANDIDATES_PATH.exists():
                     with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                         candidates = json.load(f)
-                    candidates = [c for c in candidates if c.get('name') != name]
+                    candidates = [c for c in candidates if c.get('geek_id') != target_geek_id]
                     with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
                         json.dump(candidates, f, ensure_ascii=False, indent=2)
 

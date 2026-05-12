@@ -427,6 +427,35 @@ def _chat(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _document(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    # 页面主体 + 折角
+    fold_x = _s(15, S)
+    fold_y = _s(8, S)
+    # 页面轮廓（不含被折角覆盖的部分）：(3,4)→(fold_x,4)→(19,fold_y)→(19,22)→(3,22)→(3,4)
+    page_outline = [
+        _s(3, S), _s(4, S),           # 左上
+        fold_x, _s(4, S),              # 顶部到折角起点
+        _s(19, S), fold_y,             # 折角斜边
+        _s(19, S), _s(22, S),          # 右边缘
+        _s(3, S), _s(22, S),           # 底部
+        _s(3, S), _s(4, S),            # 回到左上
+    ]
+    d.polygon(page_outline, outline=fill, width=sw)
+    # 折角线（从顶部到右侧）
+    d.line([fold_x, _s(4, S), _s(19, S), fold_y], fill=fill, width=sw)
+    # 文本行
+    line_left = _s(6, S)
+    line_color = fill
+    lw = max(1, sw - 1) if sw > 1 else 1
+    d.line([line_left, _s(10, S), _s(13, S), _s(10, S)], fill=line_color, width=sw)    # 标题（粗）
+    d.line([line_left, _s(14, S), _s(17, S), _s(14, S)], fill=line_color, width=lw)    # 行2
+    d.line([line_left, _s(17, S), _s(15, S), _s(17, S)], fill=line_color, width=lw)    # 行3
+    return img
+
+
 def _download(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
@@ -471,6 +500,7 @@ ICON_REGISTRY: Dict[str, Callable] = {
     'star':         _star,
     'chat':         _chat,
     'download':     _download,
+    'document':     _document,
 }
 
 
