@@ -670,6 +670,19 @@ class BossFilterGUI:
         edu_combo.bind('<Enter>', lambda e: edu_combo.bind('<MouseWheel>', lambda ev: 'break'))
         edu_combo.bind('<Leave>', lambda e: edu_combo.unbind('<MouseWheel>'))
 
+        # 工作地点
+        row3 = ttk.Frame(basic_frame, style='TFrame')
+        row3.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(row3, text="工作地点:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
+                 background=self.colors['bg_card']).pack(side="left")
+        self.work_location_var = tk.StringVar()
+        work_location_entry = ttk.Entry(row3, textvariable=self.work_location_var, width=25, font=self.font_button)
+        work_location_entry.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        self.bind_entry_context_menu(work_location_entry)
+        ttk.Label(row3, text="留空表示不限   多地点用 / 分隔，如：南京/上海",
+                 font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
+                 foreground=self.colors['text_secondary'], background=self.colors['bg_card']).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), 0))
+
         # 技能关键词区域（带权重显示）- 左右分栏布局
         skills_frame = ttk.LabelFrame(self.result_detail_frame, text="  技能关键词（可编辑权重）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
         skills_frame.pack(fill="both", side="top", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
@@ -2917,6 +2930,7 @@ class BossFilterGUI:
         self.job_name_var.set(job_name)
         self.min_exp_var.set(str(rule.get("min_exp", 0)))
         self.edu_var.set(rule.get("edu", "不限"))
+        self.work_location_var.set(rule.get("work_location", ""))
 
         # 加载技能列表（带权重）
         self.skills_data = []
@@ -3117,6 +3131,9 @@ class BossFilterGUI:
             # 设置学历
             self.edu_var.set(job_config.get("edu", "本科"))
 
+            # 设置工作地点
+            self.work_location_var.set(job_config.get("work_location", ""))
+
             # 加载技能列表（带权重）- 直接使用 doc_parser 生成的结果
             self.skills_data = []
             keywords = job_config.get("keywords", [])
@@ -3147,11 +3164,14 @@ class BossFilterGUI:
             required_count = len(self.required_conditions_data)
             parsed_min_exp = job_config.get("min_exp", 0)
             parsed_edu = job_config.get("edu", "本科")
+            parsed_location = job_config.get("work_location", "")
+            loc_part = f"，地点={parsed_location}" if parsed_location else ""
+            summary_base = f"岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}{loc_part}, 技能={skills_count}个，必要条件={required_count}条"
 
             # 关键字不足警告
             if skills_count == 0:
                 self.parse_result_label.config(
-                    text=f"⚠ 解析成功但无技术关键字：岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}, 技能=0个",
+                    text=f"⚠ 解析成功但无技术关键字：{summary_base}",
                     foreground=self.colors['warning']
                 )
                 messagebox.showwarning(
@@ -3165,7 +3185,7 @@ class BossFilterGUI:
                 )
             elif skills_count <= 5:
                 self.parse_result_label.config(
-                    text=f"⚠ 关键字较少：岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}, 技能={skills_count}个，必要条件={required_count}条",
+                    text=f"⚠ 关键字较少：{summary_base}",
                     foreground=self.colors['warning']
                 )
                 messagebox.showwarning(
@@ -3179,7 +3199,7 @@ class BossFilterGUI:
                 )
             else:
                 self.parse_result_label.config(
-                    text=f"✓ 解析成功：岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}, 技能={skills_count}个，必要条件={required_count}条"
+                    text=f"✓ 解析成功：{summary_base}"
                 )
 
             # 显示详细结果区域
@@ -3252,6 +3272,7 @@ class BossFilterGUI:
         self.job_rules[normalized_job_name] = {
             "min_exp": int(self.min_exp_var.get()),
             "edu": self.edu_var.get(),
+            "work_location": self.work_location_var.get().strip() or None,
             "keywords": keywords,
             "required_conditions": required_conditions,
             "greet_template": greet_template if greet_template else None,
@@ -3268,6 +3289,7 @@ class BossFilterGUI:
         self.job_name_var.set("")
         self.min_exp_var.set("3")
         self.edu_var.set("本科")
+        self.work_location_var.set("")
         self.skills_data = []
         self.refresh_skills_tree()
         self.required_conditions_data = []

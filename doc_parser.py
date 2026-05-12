@@ -11,6 +11,36 @@ import os
 from typing import Dict, List
 
 
+def _extract_work_location(text: str) -> str:
+    """从招聘需求中提取工作地点"""
+    if not text:
+        return ""
+    # 模式1: "工作地点：南京" / "工作地点: 杭州"
+    m = re.search(r'工作地点\s*[：:]\s*([^\n]{2,10})', text)
+    if m:
+        return m.group(1).strip()
+    # 模式2: "base：上海" / "base地：深圳" / "base: 北京"
+    m = re.search(r'base\s*(?:地)?\s*[：:]\s*([^\n]{2,10})', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # 模式3: "坐标：成都"
+    m = re.search(r'坐标\s*[：:]\s*([^\n]{2,10})', text)
+    if m:
+        return m.group(1).strip()
+    # 兜底：扫描常见城市名
+    major_cities = [
+        '北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '武汉',
+        '西安', '苏州', '重庆', '长沙', '合肥', '郑州', '天津', '济南',
+        '青岛', '厦门', '福州', '珠海', '东莞', '无锡', '宁波', '大连',
+        '沈阳', '昆明', '贵阳', '南宁', '海口', '南昌', '太原', '长春',
+        '哈尔滨', '石家庄',
+    ]
+    for city in major_cities:
+        if city in text:
+            return city
+    return ""
+
+
 def parse_job_requirements(text: str) -> Dict:
     """
     从招聘需求文本中解析出关键信息
@@ -439,6 +469,7 @@ def parse_job_requirements(text: str) -> Dict:
         "job_title": job_title,
         "min_exp": exp_value,
         "edu": edu_value,
+        "work_location": _extract_work_location(text),
         "soft_skills": unique_soft_skills,  # 职位描述中的技能要求（用于评分）
         "required_conditions": required_conditions,
         "tech_conditions": tech_condition_keywords  # 必要条件中的技术要求（只需满足其一）
@@ -551,6 +582,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
     new_job_config = {
         "min_exp": parsed["min_exp"],
         "edu": parsed["edu"],
+        "work_location": parsed.get("work_location", ""),
         "keywords": weighted_keywords,  # 带权重的技能列表
         "required_conditions": all_required,
         "tech_conditions": parsed.get("tech_conditions", [])  # 单独存储，用于 OR 检查

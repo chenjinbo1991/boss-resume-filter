@@ -95,6 +95,24 @@ def load_job_config():
 JOB_RULES = load_job_config()
 
 
+def _extract_city(text: str) -> str:
+    """从候选人摘要中提取期望城市"""
+    if not text:
+        return ""
+    city_match = re.search(r'(?:意向？|城市|地点)[：:\s]*([一-龥]{2,4})', text)
+    if city_match:
+        return city_match.group(1)
+    city_patterns = ['南京', '上海', '北京', '深圳', '广州', '杭州', '苏州',
+                    '成都', '武汉', '西安', '重庆', '长沙', '合肥', '郑州',
+                    '天津', '济南', '青岛', '厦门', '福州', '珠海', '东莞',
+                    '无锡', '宁波', '大连', '沈阳', '昆明', '贵阳', '南宁',
+                    '海口', '南昌', '太原', '长春', '哈尔滨', '石家庄']
+    for city in city_patterns:
+        if city in text:
+            return city
+    return ""
+
+
 def extract_summary_info(text):
     """从候选人摘要中提取结构化信息"""
     info = {
@@ -470,6 +488,16 @@ def filter_candidate(candidate_text, rule):
 
             edu_bonus = _calc_edu_bonus(candidate_text)
         details['edu_bonus'] = edu_bonus
+
+        # 2.5. 工作地点（硬性条件）
+        work_location = rule.get("work_location")
+        if work_location and work_location.strip():
+            candidate_city = _extract_city(candidate_text)
+            required_locations = re.split(r'[/、/]', work_location)
+            required_locations = [loc.strip() for loc in required_locations if loc.strip()]
+            if candidate_city and required_locations:
+                if not any(loc in candidate_city for loc in required_locations):
+                    return False, 0, {"reason": f"地点不符：要求{work_location}，期望{candidate_city}"}
 
         # 3. 必要条件
         required_conditions = rule.get("required_conditions", [])
@@ -1118,6 +1146,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                 "summary": candidate['summary'],
                 "job_id": job_info['job_id'],
                 "job_name": job_name.replace(" ", ""),  # 去除岗位名称中的空格
+                "city": _extract_city(candidate['summary']),
                 "match_rule": job_info['rule_key'],
                 "match_score": score,
                 "skill_matches": details.get('skill_matches', []),
