@@ -4,7 +4,7 @@
 ```
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
-├── gui_main.py           # 图形界面主程序（v3.1）
+├── gui_main.py           # 图形界面主程序（v2.2）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── main.py               # 命令行入口
 ├── security.py           # API Key 安全存储模块（keyring 加密）
@@ -64,12 +64,23 @@ boss-resume-filter/
 - 每成功一个招呼立即保存，支持中断恢复
 - 过滤规则：只过滤「当前岗位已匹配且打过招呼」的候选人
 - 打招呼等级：`--greet-level strong`（仅强烈推荐 ≥75）或 `normal`（默认，强烈推荐+推荐 ≥65）
-- GUI 中「打招呼等级」下拉框对初次扫描和补打招呼均生效
+- GUI 中「自动打招呼」下拉框对初次扫描和补打招呼均生效
 - 沟通上限检测：`_detect_limit_popup()` 单次 JS 调用检测 16 个限制关键词（"今日沟通次数已用完"等），同时检查 page 和 iframe。检测到上限后停止后续打招呼并提示用户
 - 页面导航等待时间统一为 3 秒
+- 多岗位间切换：GUI 模式弹出确认对话框，用户确认后才继续（不再使用倒计时）；CLI 模式等待 Enter 确认
+
+### 停止机制（v2.2）
+- StopRequested 异常 + threading.Event 信号穿透所有关键循环（滚动轮次/筛选/打招呼）
+- GUI「停止」按钮设置 stop_event，工作线程在下次循环检查点立即停止
+- 停止时自动保存当前进度并导出 Excel
+
+### 浏览器自动检测（v2.2）
+- 进入运行页自动每 2 秒轮询 Chrome 调试端口（127.0.0.1:9222）
+- 端口检测先于 ChromiumPage() 调用，端口不通则跳过，防止自动启动浏览器
+- 离开运行页自动停止轮询
 
 ### 去重机制
-- 基于 `geek_id` 去重，保留分数高的记录
+- 基于 `(geek_id, job_name)` 复合键去重，保留分数高的记录
 - 合并打招呼状态（greet_sent）
 - save_candidates_all 使用 O(n) 算法（字典替代列表查找）
 

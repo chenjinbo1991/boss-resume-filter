@@ -90,36 +90,25 @@ def parse_job_requirements(text: str) -> Dict:
         job_desc_and_position = text
 
     # 进一步分离职位描述和职位要求
-    if 'job_desc_and_position' in locals():
-        if '职位描述' in job_desc_and_position and '职位要求' in job_desc_and_position:
-            # 先按职位描述分
-            pos_parts = job_desc_and_position.split('职位描述', 1)
-            if len(pos_parts) > 1:
-                remaining = pos_parts[1]
-                if '职位要求' in remaining:
-                    req_parts = remaining.split('职位要求', 1)
-                    job_desc_section = req_parts[0]
-                    position_req_section = req_parts[1] if len(req_parts) > 1 else ""
-                else:
-                    job_desc_section = remaining
-        elif '职位描述' in job_desc_and_position:
-            pos_parts = job_desc_and_position.split('职位描述', 1)
-            job_desc_section = pos_parts[1] if len(pos_parts) > 1 else ""
-        elif '职位要求' in job_desc_and_position:
-            pos_parts = job_desc_and_position.split('职位要求', 1)
-            position_req_section = pos_parts[1] if len(pos_parts) > 1 else ""
-        else:
-            job_desc_section = job_desc_and_position
+    if '职位描述' in job_desc_and_position and '职位要求' in job_desc_and_position:
+        # 先按职位描述分
+        pos_parts = job_desc_and_position.split('职位描述', 1)
+        if len(pos_parts) > 1:
+            remaining = pos_parts[1]
+            if '职位要求' in remaining:
+                req_parts = remaining.split('职位要求', 1)
+                job_desc_section = req_parts[0]
+                position_req_section = req_parts[1] if len(req_parts) > 1 else ""
+            else:
+                job_desc_section = remaining
+    elif '职位描述' in job_desc_and_position:
+        pos_parts = job_desc_and_position.split('职位描述', 1)
+        job_desc_section = pos_parts[1] if len(pos_parts) > 1 else ""
+    elif '职位要求' in job_desc_and_position:
+        pos_parts = job_desc_and_position.split('职位要求', 1)
+        position_req_section = pos_parts[1] if len(pos_parts) > 1 else ""
     else:
-        # 没有"必要条件"标记时，尝试其他分割方式
-        if '职位描述' in text:
-            parts = text.split('职位描述', 1)
-            job_desc_section = parts[1] if len(parts) > 1 else ""
-        elif '职位要求' in text:
-            parts = text.split('职位要求', 1)
-            position_req_section = parts[1] if len(parts) > 1 else ""
-        else:
-            job_desc_section = text
+        job_desc_section = job_desc_and_position
 
     # 如果是 markdown 格式，使用章节来分离
     if re.search(r'^#\s*', text, re.MULTILINE):

@@ -1,5 +1,5 @@
 """
-BOSS 直聘候选人智能提取工具 v3.2
+BOSS 直聘候选人智能提取工具 v2.2
 支持 Excel 导出
 """
 import time
@@ -746,21 +746,30 @@ def save_candidates_all(candidates_all):
     print(f"已更新 {all_file} (共 {len(unique_candidates)} 个唯一候选人)")
 
 
-def is_already_greeted(candidates_all, geek_id):
-    """检查是否已打过招呼"""
+def is_already_greeted(candidates_all, geek_id, job_name=None):
+    """检查是否已打过招呼（v2.2: 支持复合键 (geek_id, job_name)）
+
+    Args:
+        candidates_all: 候选人列表
+        geek_id: 候选人 ID
+        job_name: 岗位名称，传入时使用复合键检查，为 None 时仅按 geek_id 检查（向后兼容）
+    """
     for c in candidates_all:
         if c.get('geek_id') == geek_id and c.get('greet_sent') is True:
-            return True
+            if job_name is not None:
+                if c.get('job_name', '') == job_name:
+                    return True
+            else:
+                return True
     return False
 
 
-def extract_candidates_by_comprehensive_analysis(page, existing_ids=None, max_rounds=30, progress_callback=None, stop_event=None):
+def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_callback=None, stop_event=None):
     """通过全面分析提取候选人
 
     Args:
         page: 页面对象
-        existing_ids: 已存在的候选人 ID 集合
-        max_rounds: 最大滚动轮次（默认 100）
+        max_rounds: 最大滚动轮次（默认 30）
         progress_callback: 进度回调 callable(percentage, description)，percentage 0-100
         stop_event: threading.Event，设位时立即停止扫描
     """
@@ -1064,7 +1073,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         print(f"已加载 candidates_all.json：累计 {len(all_existing_ids)} 个候选人，{len(greeted_geek_ids)} 人已打招呼")
 
     # === 阶段 1: 滚动收集所有候选人 ===
-    raw_candidates = extract_candidates_by_comprehensive_analysis(page, existing_ids_for_job_and_greeted, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event)
+    raw_candidates = extract_candidates_by_comprehensive_analysis(page, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event)
     print(f"原始提取到 {len(raw_candidates)} 个唯一候选人")
 
     # 过滤当前岗位已匹配且打过招呼的候选人
@@ -1300,16 +1309,13 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         print(f"\n打招呼完成：成功 {greet_success_count} 人，失败 {greet_fail_count} 人")
 
     # 保存所有通过的候选人（包含未打招呼的）
+    # 用字典索引避免 O(n²) 查找
+    existing_index = {c.get('geek_id'): c for c in candidates_all}
     for c in passed_candidates:
         if not c.get('greet_sent'):
-            # 检查是否已存在
-            exists = False
-            for existing in candidates_all:
-                if existing.get('geek_id') == c.get('geek_id'):
-                    exists = True
-                    break
-            if not exists:
+            if c.get('geek_id') not in existing_index:
                 candidates_all.append(c)
+                existing_index[c.get('geek_id')] = c
     save_candidates_all(candidates_all)
 
     return passed_candidates
@@ -1408,7 +1414,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         greet_text = f" + 自动打招呼 ({greet_level_display})"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
-    print(f">>> BOSS 直聘候选人智能提取工具 v3.2 [{mode_text}{greet_text}]")
+    print(f">>> BOSS 直聘候选人智能提取工具 v2.2 [{mode_text}{greet_text}]")
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）

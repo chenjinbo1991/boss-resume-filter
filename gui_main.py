@@ -1,11 +1,12 @@
 """
-BOSS 简历筛选器 - 图形界面版本 v3.2
+BOSS 简历筛选器 - 图形界面版本 v2.2
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
 import json
 import os
+import re
 import shutil
 import time
 import threading
@@ -103,7 +104,7 @@ class BossFilterGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("BOSS 简历筛选器 v3.2 - 智能候选人筛选工具")
+        self.root.title("BOSS 简历筛选器 v2.2 - 智能候选人筛选工具")
 
         # 高 DPI 支持 - 启用系统 DPI 缩放
         try:
@@ -388,7 +389,7 @@ class BossFilterGUI:
         bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         bottom_frame.pack(side="bottom", fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
-        version_label = ttk.Label(bottom_frame, text="v3.2",
+        version_label = ttk.Label(bottom_frame, text="v2.2",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
                                   foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
                                   cursor="hand2")
@@ -1102,8 +1103,8 @@ class BossFilterGUI:
             lambda e: self.run_canvas.configure(scrollregion=self.run_canvas.bbox("all"))
         )
 
-        self.run_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         self.run_scrollable_frame = scrollable_frame  # 保存引用，供 mousewheel 绑定使用
+        self._run_canvas_window_id = self.run_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         self.run_canvas.configure(yscrollcommand=run_scroll.set)
 
         self.run_canvas.pack(side="left", fill="both", expand=True)
@@ -1719,21 +1720,7 @@ class BossFilterGUI:
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
-                summary = c.get('summary', '')
-                exp = ''
-                salary = ''
-                if summary:
-                    import re
-                    first_line = summary.split('\n')[0].strip() if '\n' in summary else summary.strip()
-                    if '面议' in first_line:
-                        salary = '面议'
-                    else:
-                        salary_match = re.search(r'^(\d+(?:-\d+)?)[Kk 千]', first_line)
-                        if salary_match:
-                            salary = salary_match.group(1) + 'K'
-                    exp_match = re.search(r'(\d+)\s*年', summary)
-                    if exp_match:
-                        exp = exp_match.group(1) + '年'
+                salary, exp = self._parse_salary_exp(c.get('summary', ''))
 
                 tree.insert("", "end", values=(
                     c.get('name', ''),
@@ -1858,22 +1845,8 @@ class BossFilterGUI:
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
-                summary = c.get('summary', '')
-                exp = ''
-                salary = ''
                 status = "已招呼" if c.get('greet_sent', False) else "未招呼"
-                if summary:
-                    import re
-                    first_line = summary.split('\n')[0].strip() if '\n' in summary else summary.strip()
-                    if '面议' in first_line:
-                        salary = '面议'
-                    else:
-                        salary_match = re.search(r'^(\d+(?:-\d+)?)[Kk 千]', first_line)
-                        if salary_match:
-                            salary = salary_match.group(1) + 'K'
-                    exp_match = re.search(r'(\d+)\s*年', summary)
-                    if exp_match:
-                        exp = exp_match.group(1) + '年'
+                salary, exp = self._parse_salary_exp(c.get('summary', ''))
 
                 tree.insert("", "end", values=(
                     c.get('name', ''),
@@ -1885,15 +1858,7 @@ class BossFilterGUI:
                 ))
 
             # 窗口居中显示
-            def center_window():
-                detail_window.update_idletasks()
-                width = detail_window.winfo_width()
-                height = detail_window.winfo_height()
-                x = (detail_window.winfo_screenwidth() - width) // 2
-                y = (detail_window.winfo_screenheight() - height) // 2
-                detail_window.geometry(f"+{x}+{y}")
-
-            detail_window.after(100, center_window)
+            detail_window.after(100, lambda: self._center_window_on_screen(detail_window, window_width, window_height))
 
         except Exception as e:
             messagebox.showerror("错误", f"显示详情失败：{e}")
@@ -2024,8 +1989,9 @@ class BossFilterGUI:
                 self.update_current_model_display()
             self.api_config["saved_models"] = self.saved_models
             try:
+                save_config = {k: v for k, v in self.api_config.items() if k != "api_key"}
                 with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
-                    json.dump(self.api_config, f, ensure_ascii=False, indent=4)
+                    json.dump(save_config, f, ensure_ascii=False, indent=4)
             except Exception as e:
                 print(f"保存配置失败：{e}")
 
@@ -2089,10 +2055,11 @@ class BossFilterGUI:
             self.update_current_model_display()
             self.load_saved_models_to_tree()
 
-            # 保存到文件
+            # 保存到文件（排除 api_key，Key 仅存 keyring）
             try:
+                save_config = {k: v for k, v in self.api_config.items() if k != "api_key"}
                 with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
-                    json.dump(self.api_config, f, ensure_ascii=False, indent=4)
+                    json.dump(save_config, f, ensure_ascii=False, indent=4)
             except Exception as e:
                 print(f"保存配置失败：{e}")
 
@@ -2934,7 +2901,6 @@ class BossFilterGUI:
             job_config = config["job_requirements"][job_title]
 
             # 填充基本信息
-            import re
             # 规范化岗位名称：去除多余空格
             job_title = re.sub(r'\s+', ' ', job_title).strip()
             self.job_name_var.set(job_title)
@@ -2977,9 +2943,40 @@ class BossFilterGUI:
             required_count = len(self.required_conditions_data)
             parsed_min_exp = job_config.get("min_exp", 0)
             parsed_edu = job_config.get("edu", "本科")
-            self.parse_result_label.config(
-                text=f"✓ 解析成功：岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}, 技能={skills_count}个，必要条件={required_count}条"
-            )
+
+            # 关键字不足警告
+            if skills_count == 0:
+                self.parse_result_label.config(
+                    text=f"⚠ 解析成功但无技术关键字：岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}, 技能=0个",
+                    foreground=self.colors['warning']
+                )
+                messagebox.showwarning(
+                    "关键字缺失",
+                    f"解析成功，但未提取到任何技术关键字。\n\n"
+                    f"没有技术关键字无法精确筛选简历，筛选将仅依赖\n"
+                    f"经验和学历，匹配精度会大幅下降。\n\n"
+                    f"建议：\n"
+                    f"1. 完善招聘需求文档，详细列出技术栈要求\n"
+                    f"2. 在下方「技能关键词」区域手工添加关键字"
+                )
+            elif skills_count <= 5:
+                self.parse_result_label.config(
+                    text=f"⚠ 关键字较少：岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}, 技能={skills_count}个，必要条件={required_count}条",
+                    foreground=self.colors['warning']
+                )
+                messagebox.showwarning(
+                    "关键字偏少",
+                    f"仅提取到 {skills_count} 个技术关键字（建议 6 个以上）。\n\n"
+                    f"关键字偏少会导致评分区分度不足，\n"
+                    f"无法有效排序候选人。\n\n"
+                    f"建议：\n"
+                    f"1. 完善招聘需求文档，补充更多技术栈要求\n"
+                    f"2. 在下方「技能关键词」区域手工添加关键字"
+                )
+            else:
+                self.parse_result_label.config(
+                    text=f"✓ 解析成功：岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}, 技能={skills_count}个，必要条件={required_count}条"
+                )
 
             # 显示详细结果区域
             self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
@@ -3012,7 +3009,6 @@ class BossFilterGUI:
             return
 
         # 规范化岗位名称：去除多余空格
-        import re
         normalized_job_name = re.sub(r'\s+', ' ', job_name).strip()
 
         # 检查是否已存在相同（规范化后）的岗位
@@ -3223,7 +3219,15 @@ class BossFilterGUI:
             return  # 已在运行
 
         def poll():
-            self.check_browser_connection(silent=True)
+            if getattr(self, '_browser_check_running', False):
+                # 上一次检测尚未完成，跳过本轮
+                self._browser_auto_check_id = self.root.after(2000, poll)
+                return
+            self._browser_check_running = True
+            try:
+                self.check_browser_connection(silent=True)
+            finally:
+                self._browser_check_running = False
             self._browser_auto_check_id = self.root.after(2000, poll)
 
         self._browser_auto_check_id = self.root.after(500, poll)  # 首次 0.5s 后检测，之后每 2s
@@ -3274,9 +3278,11 @@ class BossFilterGUI:
 
     def _bind_run_canvas_width(self, canvas_frame):
         """绑定 run_canvas 内部窗口宽度，使其跟随 canvas 宽度"""
+        window_id = getattr(self, '_run_canvas_window_id', None)
+        if window_id is None:
+            return
         def on_resize(event):
-            if self.run_canvas.winfo_children():
-                self.run_canvas.itemconfig(self.run_canvas.winfo_children()[0], width=event.width)
+            self.run_canvas.itemconfig(window_id, width=event.width)
         canvas_frame.bind("<Configure>", on_resize)
 
     @staticmethod
@@ -3300,6 +3306,37 @@ class BossFilterGUI:
                 _bind_recursive(child)
 
         _bind_recursive(parent_frame)
+
+    @staticmethod
+    def _parse_salary_exp(summary):
+        """从候选人摘要中解析薪资和工作年限
+
+        Returns:
+            (salary: str, exp: str) — 如 ("15K", "5年")
+        """
+        salary = ''
+        exp = ''
+        if not summary:
+            return salary, exp
+        first_line = summary.split('\n')[0].strip() if '\n' in summary else summary.strip()
+        if '面议' in first_line:
+            salary = '面议'
+        else:
+            salary_match = re.search(r'^(\d+(?:-\d+)?)[Kk 千]', first_line)
+            if salary_match:
+                salary = salary_match.group(1) + 'K'
+        exp_match = re.search(r'(\d+)\s*年', summary)
+        if exp_match:
+            exp = exp_match.group(1) + '年'
+        return salary, exp
+
+    @staticmethod
+    def _center_window_on_screen(window, width, height):
+        """将子窗口相对于屏幕居中（不依赖父窗口位置）"""
+        window.update_idletasks()
+        x = (window.winfo_screenwidth() - width) // 2
+        y = (window.winfo_screenheight() - height) // 2
+        window.geometry(f"+{max(0, x)}+{max(0, y)}")
 
     def start_run(self):
         """开始运行"""
@@ -3346,7 +3383,9 @@ class BossFilterGUI:
                             self.callback(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
 
                 def flush(self):
-                    pass
+                    if self.buffer.strip():
+                        self.callback(f"[{datetime.now().strftime('%H:%M:%S')}] {self.buffer}")
+                    self.buffer = ""
 
             log_redirector = LogRedirector(self.append_log)
             old_stdout = sys.stdout
@@ -3361,11 +3400,8 @@ class BossFilterGUI:
             from bossmaster import load_job_config, ChromiumPage, time, run_smart_scan
             import argparse
 
-            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v3.2 [图形界面模式]")
+            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v2.2 [图形界面模式]")
             self.append_log(f"滚动轮次：{rounds}, 自动打招呼：{greet_level_text}")
-
-            job_rules, _ = load_job_config()
-            self.append_log(f"已加载 {len(job_rules)} 个岗位配置")
 
             # 获取选择的岗位
             selected_job = self.job_select_var.get()
@@ -3520,26 +3556,7 @@ class BossFilterGUI:
                         tag = 'pending'
 
                     # 从 summary 中解析工作年限和薪资
-                    exp = ''
-                    salary = ''
-                    summary = c.get('summary', '')
-                    if summary:
-                        import re
-                        # 解析薪资 - 只从第一行解析，避免匹配到其他数字
-                        first_line = summary.split('\n')[0].strip() if '\n' in summary else summary.strip()
-                        # 检查是否是"面议"
-                        if '面议' in first_line:
-                            salary = '面议'
-                        else:
-                            # 匹配薪资格式：15-30K、15-30k、15-30 千、20K 等
-                            salary_match = re.search(r'^(\d+(?:-\d+)?)[Kk 千]', first_line)
-                            if salary_match:
-                                salary = salary_match.group(1) + 'K'
-
-                        # 解析工作年限 - 从整个 summary 解析
-                        exp_match = re.search(r'(\d+)\s*年', summary)
-                        if exp_match:
-                            exp = exp_match.group(1) + '年'
+                    salary, exp = self._parse_salary_exp(c.get('summary', ''))
 
                     self.result_tree.insert("", "end", values=(
                         c.get('name', ''),
@@ -3664,10 +3681,7 @@ class BossFilterGUI:
                     break
 
             # 居中显示
-            detail_window.update_idletasks()
-            x = (detail_window.winfo_screenwidth() - 600) // 2
-            y = (detail_window.winfo_screenheight() - 500) // 2
-            detail_window.geometry(f"+{x}+{y}")
+            self._center_window_on_screen(detail_window, 600, 500)
 
         except Exception as e:
             messagebox.showerror("错误", f"查看详情失败：{e}")
@@ -3787,7 +3801,7 @@ class BossFilterGUI:
 
     def show_about(self):
         """显示关于"""
-        messagebox.showinfo("关于", "BOSS 简历筛选器 v3.2\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+        messagebox.showinfo("关于", "BOSS 简历筛选器 v2.2\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
 
     def show_changelog(self):
         """显示更新日志"""

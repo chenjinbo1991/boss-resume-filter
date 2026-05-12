@@ -97,6 +97,8 @@ python bossmaster.py --greet --rounds 20
 4. 已打过招呼的候选人自动跳过
 5. **立即保存**：每成功发送一个招呼，立即更新 `candidates_all.json`，防止中断丢失进度
 6. 每个岗位处理完后再次保存新增的候选人
+7. **多岗位确认**：GUI 模式切换岗位前弹出确认对话框，用户确认后才继续
+8. **去重键**：`(geek_id, job_name)` 复合键，同一候选人在不同岗位保留独立记录
 
 ### 补打招呼模式（`--re-greet`）
 - 直接读取 `candidates_all.json`
