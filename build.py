@@ -2,6 +2,7 @@
 BOSS 简历筛选器 - 打包脚本
 用法：python build.py (会自动使用 pack_venv 虚拟环境)
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -81,6 +82,7 @@ def main():
     ]
 
     print(">>> PyInstaller 打包中...")
+    os.chdir(BASE_DIR)  # PyInstaller 使用 CWD 作为输出根目录
     result = subprocess.run(cmd)
 
     if result.returncode != 0:
