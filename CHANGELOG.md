@@ -9,11 +9,30 @@
 - 侧边栏导航图标支持 hover/active 颜色切换
 - 眼睛切换按钮（API Key 密文显隐）使用 eye/eye_off 图标
 - 右键菜单项添加 clipboard/trash/export 图标
+- **首页图标语义化重构**：累计候选人→people(双人剪影)、强烈推荐→star(五角星)、推荐→thumbs_up(Lucide开源库坐标)、已打招呼→chat(聊天气泡)
+
+### 候选人详情弹窗优化
+- 弹窗居中显示：采用 withdraw/deiconify 模式，基于父窗口坐标精确定位
+- 窗口尺寸放大：600×500 → 700×580
+- 正文字体放大：12 → 14
+
+### 工作地点配置与筛选（新增）
+- `doc_parser.py`：从需求文档中提取工作地点，智能解析城市名（"南京市雨花区凯润大厦" → "南京"）
+- `gui_main.py`：岗位配置页新增"工作地点"输入框（位于学历右侧）
+- `bossmaster.py`：filter_candidate 新增地点匹配逻辑，支持多地点（`/`、`、`分隔）
+- `job_config.json`：新增 `work_location` 字段
+
+### 招聘需求示例按钮（新增）
+- 岗位配置页新增"招聘需求示例"按钮，一键填充模板到需求输入框
+- 模板存储在 `job_config.json` → `requirement_template`，方便维护
+- 按钮默认禁用，仅"新建岗位"模式下可用
 
 ### 其他
 - 新增 `icons.py` 模块（IconCache 单例 + 21 个图标绘制函数）
 - `requirements.txt` 添加 `Pillow>=10.0.0`
 - `build.py` 添加 PIL hidden-import
+- 版本号代码同步：源码中残留的 v2.2 字符串全部更新为 v2.3
+- 修复 DEPLOYMENT.md dist 文件列表（移除不存在的 api_config.json）
 
 ## v2.2 — 2026-05-12
 

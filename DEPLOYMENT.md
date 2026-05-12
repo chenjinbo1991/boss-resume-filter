@@ -6,7 +6,7 @@
 将 `dist/` 目录中的所有文件复制到目标电脑：
 ```
 BOSS_简历筛选器.exe
-api_config.json
+README.md
 job_config.json
 ```
 
