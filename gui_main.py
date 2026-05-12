@@ -598,8 +598,14 @@ class BossFilterGUI:
         parse_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 需求输入框
-        ttk.Label(parse_frame, text="粘贴招聘需求文档:", font=self.font_label,
-                 background=self.colors['bg_card']).pack(anchor="w", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
+        req_header = ttk.Frame(parse_frame, style='TFrame')
+        req_header.pack(fill="x", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
+        ttk.Label(req_header, text="粘贴招聘需求文档:", font=self.font_label,
+                 background=self.colors['bg_card']).pack(side="left")
+        icon_clipboard = self.icons.button('clipboard', self.colors['text_primary'])
+        btn_example = ttk.Button(req_header, image=icon_clipboard, text=" 招聘需求示例", compound=tk.LEFT, command=self._insert_requirement_template)
+        btn_example._icon_ref = icon_clipboard
+        btn_example.pack(side="right")
 
         # 需求输入框 - 带滚动条（嵌套在容器内避免布局冲突）
         text_container = ttk.Frame(parse_frame, style='TFrame')
@@ -621,12 +627,7 @@ class BossFilterGUI:
         icon_search_parse = self.icons.button('search', self.colors['text_primary'])
         btn_parse = ttk.Button(parse_btn_frame, image=icon_search_parse, text=" 解析需求文档", compound=tk.LEFT, command=self.parse_requirement)
         btn_parse._icon_ref = icon_search_parse
-        btn_parse.pack(side="left", padx=(0, int(10 * self.dpi_scale * self.zoom_factor)))
-
-        icon_clipboard = self.icons.button('clipboard', self.colors['text_primary'])
-        btn_example = ttk.Button(parse_btn_frame, image=icon_clipboard, text=" 招聘需求示例", compound=tk.LEFT, command=self._insert_requirement_template)
-        btn_example._icon_ref = icon_clipboard
-        btn_example.pack(side="left")
+        btn_parse.pack(side="left")
 
         # 解析结果展示
         self.parse_result_label = ttk.Label(parse_frame, text="", font=('Microsoft YaHei UI', int(11 * self.dpi_scale * self.zoom_factor)),
