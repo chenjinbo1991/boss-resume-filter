@@ -13,6 +13,12 @@
 - **Excel 导出**: 自动生成带颜色标识的 Excel 文件（多工作表 + 统计摘要）
 - **图形界面**: 提供友好的 GUI 界面，支持可视化配置和操作（推荐新手使用）
 
+### v2.3 新增功能
+- **图标 DPI 高清化**：全部 21 个 emoji 图标替换为 Pillow 程序化生成的高清矢量图标，按系统 DPI 动态缩放
+- 侧边栏导航图标支持 hover/active 颜色切换
+- API Key 密文显隐按钮使用 eye/eye_off 图标
+- 右键菜单项添加图标
+
 ### v2.2 新增功能
 - **多岗位确认机制**：岗位切换弹出对话框等待确认，取消即停止
 - **停止按钮即时生效**：StopRequested + threading.Event 穿透所有循环，停止后自动保存并导出
@@ -114,8 +120,9 @@ python bossmaster.py --greet --verbose
 ```
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
-├── gui_main.py           # 图形界面主程序（v2.2）
-├── doc_parser.py         # 文档解析器（简历解析）
+├── gui_main.py            # 图形界面主程序（v2.3）
+├── icons.py               # 图标绘制模块（Pillow 矢量图标）
+├── doc_parser.py          # 文档解析器（简历解析）
 ├── main.py               # 命令行入口
 ├── security.py           # API Key 安全存储模块
 ├── gui.bat               # GUI 启动脚本
