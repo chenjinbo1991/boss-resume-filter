@@ -466,7 +466,7 @@ class BossFilterGUI:
 
         # 卡片数据
         cards_data = [
-            ("clipboard", "累计候选人", "total_home", self.colors['primary']),
+            ("people", "累计候选人", "total_home", self.colors['primary']),
             ("star", "强烈推荐", "strong_home", self.colors['purple']),
             ("thumbs_up", "推荐", "recommended_home", self.colors['success']),
             ("chat", "已打招呼", "greeted_home", self.colors['warning']),
