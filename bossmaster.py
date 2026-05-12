@@ -95,19 +95,32 @@ def load_job_config():
 JOB_RULES = load_job_config()
 
 
+# 中国主要城市列表（按长度降序，优先匹配长名）
+_MAJOR_CITIES = sorted([
+    '北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '武汉',
+    '西安', '苏州', '重庆', '长沙', '合肥', '郑州', '天津', '济南',
+    '青岛', '厦门', '福州', '珠海', '东莞', '无锡', '宁波', '大连',
+    '沈阳', '昆明', '贵阳', '南宁', '海口', '南昌', '太原', '长春',
+    '哈尔滨', '石家庄',
+], key=len, reverse=True)
+
+
 def _extract_city(text: str) -> str:
-    """从候选人摘要中提取期望城市"""
+    """从候选人摘要中提取期望城市名"""
     if not text:
         return ""
-    city_match = re.search(r'(?:意向？|城市|地点)[：:\s]*([一-龥]{2,4})', text)
+    # 模式匹配：意向城市：上海 / 城市: 杭州
+    city_match = re.search(r'(?:意向|城市|地点)[：:\s]*([一-龥]{2,4})', text)
     if city_match:
-        return city_match.group(1)
-    city_patterns = ['南京', '上海', '北京', '深圳', '广州', '杭州', '苏州',
-                    '成都', '武汉', '西安', '重庆', '长沙', '合肥', '郑州',
-                    '天津', '济南', '青岛', '厦门', '福州', '珠海', '东莞',
-                    '无锡', '宁波', '大连', '沈阳', '昆明', '贵阳', '南宁',
-                    '海口', '南昌', '太原', '长春', '哈尔滨', '石家庄']
-    for city in city_patterns:
+        raw = city_match.group(1)
+        # "XX市" → "XX"
+        m = re.match(r'([一-龥]{2,3})市', raw)
+        if m and m.group(1) in _MAJOR_CITIES:
+            return m.group(1)
+        if raw in _MAJOR_CITIES:
+            return raw
+    # 兜底：按长度降序扫描城市名（防子串误匹配）
+    for city in _MAJOR_CITIES:
         if city in text:
             return city
     return ""
@@ -160,15 +173,7 @@ def extract_summary_info(text):
         info['company'] = status_match.group(2).strip()
 
     # 城市
-    city_match = re.search(r'(?:意向？|城市 | 地点)[:：\s]*([一 - 龥]{2,4})', text)
-    if city_match:
-        info['city'] = city_match.group(1)
-    else:
-        city_patterns = ['南京', '上海', '北京', '深圳', '广州', '杭州', '苏州']
-        for city in city_patterns:
-            if city in text:
-                info['city'] = city
-                break
+    info['city'] = _extract_city(text)
 
     # 技能关键词
     skill_keywords = ['Java', 'Python', 'MySQL', 'Oracle', 'Redis', 'Kafka',

@@ -11,31 +11,57 @@ import os
 from typing import Dict, List
 
 
+# 中国主要城市列表（按长度降序，优先匹配长名如"哈尔滨"）
+_MAJOR_CITIES = sorted([
+    '北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '武汉',
+    '西安', '苏州', '重庆', '长沙', '合肥', '郑州', '天津', '济南',
+    '青岛', '厦门', '福州', '珠海', '东莞', '无锡', '宁波', '大连',
+    '沈阳', '昆明', '贵阳', '南宁', '海口', '南昌', '太原', '长春',
+    '哈尔滨', '石家庄',
+], key=len, reverse=True)
+
+
+def _resolve_city(raw: str) -> str:
+    """从原始地点字符串中提取城市名，如 '南京市雨花区凯润大厦' → '南京'"""
+    if not raw:
+        return ""
+    # 先从带"市"后缀的格式提取：南京市→南京，上海市→上海
+    m = re.search(r'([一-龥]{2,3})市', raw)
+    if m:
+        candidate = m.group(1)
+        if candidate in _MAJOR_CITIES:
+            return candidate
+    # 直接匹配城市名（按长度降序，防止"吉林"误匹配"吉林市"）
+    for city in _MAJOR_CITIES:
+        if city in raw:
+            return city
+    return ""
+
+
 def _extract_work_location(text: str) -> str:
-    """从招聘需求中提取工作地点"""
+    """从招聘需求中提取工作地点（城市名）"""
     if not text:
         return ""
-    # 模式1: "工作地点：南京" / "工作地点: 杭州"
-    m = re.search(r'工作地点\s*[：:]\s*([^\n]{2,10})', text)
+    # 模式1: "工作地点：南京市雨花区凯润大厦"
+    m = re.search(r'工作地点\s*[：:]\s*([^\n]{2,20})', text)
     if m:
-        return m.group(1).strip()
-    # 模式2: "base：上海" / "base地：深圳" / "base: 北京"
-    m = re.search(r'base\s*(?:地)?\s*[：:]\s*([^\n]{2,10})', text, re.IGNORECASE)
+        city = _resolve_city(m.group(1))
+        if city:
+            return city
+    # 模式2: "base：上海浦东" / "base地：深圳南山"
+    m = re.search(r'base\s*(?:地)?\s*[：:]\s*([^\n]{2,20})', text, re.IGNORECASE)
     if m:
-        return m.group(1).strip()
-    # 模式3: "坐标：成都"
-    m = re.search(r'坐标\s*[：:]\s*([^\n]{2,10})', text)
+        city = _resolve_city(m.group(1))
+        if city:
+            return city
+    # 模式3: "坐标：成都高新区"
+    m = re.search(r'坐标\s*[：:]\s*([^\n]{2,20})', text)
     if m:
-        return m.group(1).strip()
-    # 兜底：扫描常见城市名
-    major_cities = [
-        '北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '武汉',
-        '西安', '苏州', '重庆', '长沙', '合肥', '郑州', '天津', '济南',
-        '青岛', '厦门', '福州', '珠海', '东莞', '无锡', '宁波', '大连',
-        '沈阳', '昆明', '贵阳', '南宁', '海口', '南昌', '太原', '长春',
-        '哈尔滨', '石家庄',
-    ]
-    for city in major_cities:
+        city = _resolve_city(m.group(1))
+        if city:
+            return city
+    # 兜底：全文扫描城市名
+    for city in _MAJOR_CITIES:
         if city in text:
             return city
     return ""
