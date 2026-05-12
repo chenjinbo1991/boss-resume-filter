@@ -1760,12 +1760,8 @@ class BossFilterGUI:
             # 创建详情窗口
             detail_window = tk.Toplevel(self.root)
             detail_window.title(title)
-
-            # 设置固定大小并居中
             window_width = 1000
             window_height = 650
-            detail_window.geometry(f"{window_width}x{window_height}")
-            self._center_window(detail_window, window_width, window_height)
 
             # 标题 - 加大加粗
             title_label = ttk.Label(detail_window, text=title,
@@ -1820,6 +1816,93 @@ class BossFilterGUI:
             tree.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
 
+            # 绑定右键菜单 - 与筛选结果页一致
+            filtered_ref = [filtered]  # 用列表包装以支持闭包内修改
+
+            def on_detail_right_click(event):
+                clicked_item = tree.identify_row(event.y)
+                if not clicked_item:
+                    return
+                tree.selection_set(clicked_item)
+
+                context_menu_font = (FONT_FAMILY, int(16 * self.dpi_scale * self.zoom_factor))
+                menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
+                icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
+                icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
+                icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+
+                def show_detail():
+                    vals = tree.item(clicked_item, 'values')
+                    if vals:
+                        for c in filtered_ref[0]:
+                            if c.get('name') == vals[0]:
+                                d_win = tk.Toplevel(detail_window)
+                                d_win.title("候选人详情")
+                                d_title = f"姓名：{vals[0]} | 匹配分：{vals[3]} | {vals[4]}"
+                                ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
+                                         foreground=self.colors['primary']).pack(pady=15)
+                                tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 12))
+                                tw.pack(fill='both', expand=True, padx=20, pady=10)
+                                tw.insert('1.0', json.dumps(c, ensure_ascii=False, indent=2))
+                                self.bind_text_context_menu(tw, editable=False)
+                                d_win.update_idletasks()
+                                dw, dh = 600, 500
+                                dx = (d_win.winfo_screenwidth() - dw) // 2
+                                dy = (d_win.winfo_screenheight() - dh) // 2
+                                d_win.geometry(f"{dw}x{dh}+{max(0, dx)}+{max(0, dy)}")
+                                break
+
+                def remove_candidate():
+                    if not messagebox.askyesno("确认删除", "确定要移除该候选人吗？"):
+                        return
+                    vals = tree.item(clicked_item, 'values')
+                    name = vals[0]
+                    # 从当前过滤列表中移除
+                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('name') != name]
+                    # 从 JSON 中移除
+                    if CANDIDATES_PATH.exists():
+                        with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                            candidates = json.load(f)
+                        candidates = [c for c in candidates if c.get('name') != name]
+                        with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
+                            json.dump(candidates, f, ensure_ascii=False, indent=2)
+                    # 从表格中移除并刷新统计
+                    tree.delete(clicked_item)
+                    self.refresh_home_stats()
+                    self.refresh_results()
+
+                def export_selected():
+                    selection = tree.selection()
+                    if not selection:
+                        messagebox.showwarning("警告", "请先选择要导出的候选人")
+                        return
+                    selected_data = []
+                    for sel_item in selection:
+                        sv = tree.item(sel_item, 'values')
+                        for c in filtered_ref[0]:
+                            if c.get('name') == sv[0]:
+                                selected_data.append(c)
+                                break
+                    file_path = filedialog.asksaveasfilename(
+                        title="保存选中的候选人",
+                        defaultextension=".json",
+                        filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+                        initialfile=f"selected_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    )
+                    if file_path:
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            json.dump(selected_data, f, ensure_ascii=False, indent=2)
+                        messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
+
+                menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
+                menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=remove_candidate)
+                menu.add_separator()
+                menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=export_selected)
+                menu._icon_refs = [icon_detail, icon_trash_menu, icon_export_menu]
+                menu.tk_popup(event.x_root, event.y_root)
+
+            tree.bind('<Button-3>', on_detail_right_click)
+
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
@@ -1837,8 +1920,11 @@ class BossFilterGUI:
                     c.get('skill_match_ratio', '')
                 ))
 
-            # 窗口居中显示 - 延迟执行确保窗口已完全渲染
-            self._center_window(detail_window, window_width, window_height)
+            # 屏幕居中
+            detail_window.update_idletasks()
+            x = (detail_window.winfo_screenwidth() - window_width) // 2
+            y = (detail_window.winfo_screenheight() - window_height) // 2
+            detail_window.geometry(f"{window_width}x{window_height}+{max(0, x)}+{max(0, y)}")
 
         except Exception as e:
             messagebox.showerror("错误", f"显示详情失败：{e}")
@@ -1891,12 +1977,8 @@ class BossFilterGUI:
             # 创建详情窗口
             detail_window = tk.Toplevel(self.root)
             detail_window.title(title)
-
-            # 设置固定大小并居中
             window_width = 1000
             window_height = 650
-            detail_window.geometry(f"{window_width}x{window_height}")
-            self._center_window(detail_window, window_width, window_height)
 
             # 标题
             title_label = ttk.Label(detail_window, text=title,
@@ -1964,8 +2046,11 @@ class BossFilterGUI:
                     c.get('skill_match_ratio', '')
                 ))
 
-            # 窗口居中显示
-            detail_window.after(100, lambda: self._center_window_on_screen(detail_window, window_width, window_height))
+            # 屏幕居中
+            detail_window.update_idletasks()
+            x = (detail_window.winfo_screenwidth() - window_width) // 2
+            y = (detail_window.winfo_screenheight() - window_height) // 2
+            detail_window.geometry(f"{window_width}x{window_height}+{max(0, x)}+{max(0, y)}")
 
         except Exception as e:
             messagebox.showerror("错误", f"显示详情失败：{e}")
@@ -3776,7 +3861,6 @@ class BossFilterGUI:
             # 创建详情窗口
             detail_window = tk.Toplevel(self.root)
             detail_window.title("候选人详情")
-            detail_window.geometry("600x500")
 
             # 标题
             title = f"姓名：{values[0]} | 匹配分：{values[3]} | {values[4]}"
@@ -3794,8 +3878,12 @@ class BossFilterGUI:
                     text_widget.insert('1.0', detail_text)
                     break
 
-            # 居中显示
-            self._center_window_on_screen(detail_window, 600, 500)
+            # 一次性设置尺寸和屏幕居中位置（不先设 geometry 避免窗口提前出现在默认位置）
+            detail_window.update_idletasks()
+            w, h = 600, 500
+            x = (detail_window.winfo_screenwidth() - w) // 2
+            y = (detail_window.winfo_screenheight() - h) // 2
+            detail_window.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
 
         except Exception as e:
             messagebox.showerror("错误", f"查看详情失败：{e}")
