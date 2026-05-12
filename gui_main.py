@@ -621,7 +621,12 @@ class BossFilterGUI:
         icon_search_parse = self.icons.button('search', self.colors['text_primary'])
         btn_parse = ttk.Button(parse_btn_frame, image=icon_search_parse, text=" 解析需求文档", compound=tk.LEFT, command=self.parse_requirement)
         btn_parse._icon_ref = icon_search_parse
-        btn_parse.pack(side="left")
+        btn_parse.pack(side="left", padx=(0, int(10 * self.dpi_scale * self.zoom_factor)))
+
+        icon_clipboard = self.icons.button('clipboard', self.colors['text_primary'])
+        btn_example = ttk.Button(parse_btn_frame, image=icon_clipboard, text=" 招聘需求示例", compound=tk.LEFT, command=self._insert_requirement_template)
+        btn_example._icon_ref = icon_clipboard
+        btn_example.pack(side="left")
 
         # 解析结果展示
         self.parse_result_label = ttk.Label(parse_frame, text="", font=('Microsoft YaHei UI', int(11 * self.dpi_scale * self.zoom_factor)),
@@ -3090,6 +3095,31 @@ class BossFilterGUI:
         for index in reversed(selection):
             self.required_conditions_data.pop(index)
         self.refresh_required_listbox()
+
+    def _insert_requirement_template(self):
+        """插入招聘需求模板到输入框"""
+        template = (
+            "职位描述【高级Java/Python工程师】：\n"
+            "1. Java/Python基础扎实，具有实际开发经验，能够独立完成开发任务；\n"
+            "2. 熟悉mysql、oracle其中一种数据库的使用及优化；\n"
+            "3. 熟练使用Spring Cloud、Dubbo或类似的微服务框架,Dubbo优先；\n"
+            "4. 熟练使用SpringBoot/Spring Mvc/Mybatis等常用java框架；\n"
+            "5. 了解缓存技术Redis、消息中间件Kafka；\n"
+            "6. 熟悉activiti、camunda、flowable等相关技术；\n"
+            "7. 有AI开发背景（LLM、Al Agent、智能体、Spring AI、Langchain、智能问答、知识库）的优先；\n"
+            "\n"
+            "职位要求：\n"
+            "1. 4-10年工作经验\n"
+            "2. 本科学历\n"
+            "3. 薪资范围：12k-15k\n"
+            "4. 工作地点：南京市雨花区凯润大厦2号楼5层\n"
+            "\n"
+            "必要条件（硬性约束）：\n"
+            "1. 具有4年以上工作经验\n"
+            "2. 统招本科学历；"
+        )
+        self.requirement_text.delete("1.0", tk.END)
+        self.requirement_text.insert("1.0", template)
 
     def parse_requirement(self):
         """解析需求文档"""
