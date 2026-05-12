@@ -1,5 +1,20 @@
 # 更新日志
 
+## v2.3 — 2026-05-12
+
+### 图标系统升级
+- **全部图标 DPI 高清化**：使用 Pillow ImageDraw 在运行时程序化生成 21 个矢量精度图标，替代所有 emoji 字符图标
+- 图标按系统 DPI 自动缩放，100%/125%/150% 缩放比下均保持清晰锐利
+- 单色线条风格，暗色模式下自动适配配色
+- 侧边栏导航图标支持 hover/active 颜色切换
+- 眼睛切换按钮（API Key 密文显隐）使用 eye/eye_off 图标
+- 右键菜单项添加 clipboard/trash/export 图标
+
+### 其他
+- 新增 `icons.py` 模块（IconCache 单例 + 21 个图标绘制函数）
+- `requirements.txt` 添加 `Pillow>=10.0.0`
+- `build.py` 添加 PIL hidden-import
+
 ## v2.2 — 2026-05-12
 
 ### 新增功能

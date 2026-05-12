@@ -44,3 +44,6 @@ Thumbs.db
 
 # keyring 配置（可能含敏感信息）
 .keyring/
+
+# 配置备份
+*.bak
