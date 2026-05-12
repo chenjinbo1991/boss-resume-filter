@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import icons
 import time
 import threading
 import queue
@@ -68,7 +69,6 @@ UI_CONFIG = {
     'label_frame_padding': 15,       # LabelFrame 默认内边距
     'font_size_title': 32,           # 标题字体大小
     'font_size_logo': 28,            # Logo 字体大小
-    'font_size_emoji': 28,           # Emoji 图标字体大小
     'treeview_rowheight': 28,        # Treeview 行高
     'text_height_large': 8,          # 大文本框高度（行）
     'text_height_small': 4,          # 小文本框高度（行）
@@ -93,7 +93,6 @@ UI_CONFIG = {
     'label_width_model': 10,         # 模型名称标签宽度
     'label_width_api_key': 10,       # API Key 标签宽度
     'label_width_url': 10,           # Base URL 标签宽度
-    'button_toggle_width': 3,        # 切换按钮宽度
     'font_size_status': 11,          # 状态提示字体大小
     'font_size_model_label': 14,     # 模型标签字体大小
 }
@@ -125,6 +124,9 @@ class BossFilterGUI:
         # 额外放大系数 - 让界面更大
         self.zoom_factor = UI_CONFIG['zoom_factor']
         effective_scale = self.dpi_scale * self.zoom_factor
+
+        # 初始化图标缓存（DPI 感知的高清图标）
+        self.icons = icons.init(effective_scale)
 
         # 设置 Combobox 下拉列表字体
         from tkinter import font as tkfont
@@ -275,10 +277,12 @@ class BossFilterGUI:
         logo_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         logo_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(30 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
 
-        # 主标题 "📋 BOSS" - 带 emoji，大字体
-        logo_label = ttk.Label(logo_frame, text="📋 BOSS",
+        # 主标题 "BOSS" - 带 clipboard 图标，大字体
+        logo_icon = self.icons.logo('clipboard', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
+        logo_label = ttk.Label(logo_frame, image=logo_icon, text=" BOSS", compound=tk.LEFT,
                                font=('Microsoft YaHei UI Semibold', int(32 * self.dpi_scale * self.zoom_factor)),
                                foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
+        logo_label._icon_ref = logo_icon
         logo_label.pack(anchor="w")
 
         # 副标题 "简历筛选器" - 调大字体
@@ -291,12 +295,12 @@ class BossFilterGUI:
         sep = ttk.Separator(sidebar, orient='horizontal')
         sep.pack(fill="x", padx=0, pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 导航项 - 使用 Frame 容器确保文字对齐（emoji 固定宽度）
+        # 导航项 - 使用 Frame 容器确保文字对齐（图标固定宽度）
         nav_items = [
-            ("🏠", "首页", self.show_page_home),
-            ("⚙️", "岗位配置", self.show_page_config),
-            ("▶️", "运行控制", self.show_page_run),
-            ("📊", "筛选结果", self.show_page_result),
+            ("home", "首页", self.show_page_home),
+            ("gear", "岗位配置", self.show_page_config),
+            ("play", "运行控制", self.show_page_run),
+            ("chart", "筛选结果", self.show_page_result),
         ]
 
         self.nav_labels = []
@@ -318,16 +322,21 @@ class BossFilterGUI:
         emoji_padx = int(20 * self.dpi_scale * self.zoom_factor)
         text_padx = int(10 * self.dpi_scale * self.zoom_factor)
 
-        for idx, (emoji, text, command) in enumerate(nav_items):
+        for idx, (icon_name, text, command) in enumerate(nav_items):
+            # 生成两个颜色版本的图标
+            icon_default = self.icons.nav(icon_name, self.colors['text_sidebar'], self.colors['bg_sidebar'])
+            icon_active = self.icons.nav(icon_name, self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
+
             # 使用 Frame 容器
             nav_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
             nav_frame.pack(fill="x", padx=0, pady=1)
 
-            # emoji 标签 - 固定宽度
-            emoji_label = ttk.Label(nav_frame, text=emoji,
-                                   style='SidebarNav.TLabel', cursor="hand2",
-                                   width=2)  # 2 字符宽度
-            emoji_label.pack(side="left", padx=(emoji_padx, 0))
+            # 图标标签
+            icon_label = ttk.Label(nav_frame, image=icon_default,
+                                   style='SidebarNav.TLabel', cursor="hand2")
+            icon_label._icon_default = icon_default
+            icon_label._icon_active = icon_active
+            icon_label.pack(side="left", padx=(emoji_padx, 0))
 
             # 文字标签
             text_label = ttk.Label(nav_frame, text=text,
@@ -336,7 +345,7 @@ class BossFilterGUI:
             text_label.pack(side="left", fill="x", expand=True)
 
             # 绑定点击和 hover 事件 - 所有子组件绑定到同一个 command
-            for widget in [nav_frame, emoji_label, text_label]:
+            for widget in [nav_frame, icon_label, text_label]:
                 widget.bind("<Button-1>", lambda e, c=command: c())
                 widget.bind("<Enter>", lambda e, i=idx: self.on_nav_enter(i))
                 widget.bind("<Leave>", lambda e, i=idx: self.on_nav_leave(i))
@@ -344,7 +353,9 @@ class BossFilterGUI:
             # 保存所有组件引用，用于 hover 效果
             self.nav_components.append({
                 'frame': nav_frame,
-                'emoji': emoji_label,
+                'icon': icon_label,
+                'icon_default': icon_default,
+                'icon_active': icon_active,
                 'text': text_label,
                 'command': command,
                 'index': idx
@@ -361,24 +372,29 @@ class BossFilterGUI:
         settings_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         settings_frame.pack(fill="x", padx=0, pady=1)
 
-        settings_emoji = ttk.Label(settings_frame, text="⚙️",
-                                  style='SidebarNav.TLabel', cursor="hand2",
-                                  width=2)
-        settings_emoji.pack(side="left", padx=(emoji_padx, 0))
+        settings_icon_default = self.icons.nav('gear', self.colors['text_sidebar'], self.colors['bg_sidebar'])
+        settings_icon_active = self.icons.nav('gear', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
+        settings_icon_label = ttk.Label(settings_frame, image=settings_icon_default,
+                                  style='SidebarNav.TLabel', cursor="hand2")
+        settings_icon_label._icon_default = settings_icon_default
+        settings_icon_label._icon_active = settings_icon_active
+        settings_icon_label.pack(side="left", padx=(emoji_padx, 0))
 
         settings_text = ttk.Label(settings_frame, text="系统设置",
                                  style='SidebarNav.TLabel', cursor="hand2",
                                  padding=(text_padx, int(14 * self.dpi_scale * self.zoom_factor)))
         settings_text.pack(side="left", fill="x", expand=True)
 
-        for widget in [settings_frame, settings_emoji, settings_text]:
+        for widget in [settings_frame, settings_icon_label, settings_text]:
             widget.bind("<Button-1>", lambda e: self.show_page_api())
             widget.bind("<Enter>", lambda e, i=settings_idx: self.on_nav_enter(i))
             widget.bind("<Leave>", lambda e, i=settings_idx: self.on_nav_leave(i))
 
         self.nav_components.append({
             'frame': settings_frame,
-            'emoji': settings_emoji,
+            'icon': settings_icon_label,
+            'icon_default': settings_icon_default,
+            'icon_active': settings_icon_active,
             'text': settings_text,
             'command': self.show_page_api,
             'index': settings_idx
@@ -450,15 +466,15 @@ class BossFilterGUI:
 
         # 卡片数据
         cards_data = [
-            ("👥", "累计候选人", "total_home", self.colors['primary']),
-            ("🏆", "强烈推荐", "strong_home", self.colors['purple']),
-            ("👍", "推荐", "recommended_home", self.colors['success']),
-            ("📩", "已打招呼", "greeted_home", self.colors['warning']),
+            ("people", "累计候选人", "total_home", self.colors['primary']),
+            ("trophy", "强烈推荐", "strong_home", self.colors['purple']),
+            ("thumbs_up", "推荐", "recommended_home", self.colors['success']),
+            ("mail", "已打招呼", "greeted_home", self.colors['warning']),
         ]
 
         self.home_stats_vars = {}
         self.home_stats_labels = {}  # 保存标签引用用于绑定事件
-        for icon, label_text, var_name, color in cards_data:
+        for icon_name, label_text, var_name, color in cards_data:
             card_frame = ttk.Frame(stats_container, style='Card.TFrame')
             card_frame.pack(side="left", fill="x", expand=True, padx=int(15 * self.dpi_scale * self.zoom_factor), pady=int(12 * self.dpi_scale * self.zoom_factor))
 
@@ -474,10 +490,10 @@ class BossFilterGUI:
             icon_canvas.create_oval(margin, margin, icon_size - margin, icon_size - margin,
                                     fill=color, outline='')
 
-            # 在圆形上绘制白色图标
-            icon_canvas.create_text(icon_size // 2, icon_size // 2, text=icon,
-                                    font=('Segoe UI Emoji', int(UI_CONFIG['font_size_emoji'] * self.dpi_scale * self.zoom_factor)),
-                                    fill='white')
+            # 在圆形上绘制白色图标（使用 PhotoImage）
+            stat_icon = self.icons.stat(icon_name, 'white')
+            icon_canvas.create_image(icon_size // 2, icon_size // 2, image=stat_icon)
+            icon_canvas._icon_ref = stat_icon
 
             # 数值
             var = tk.StringVar(value="0")
@@ -505,9 +521,18 @@ class BossFilterGUI:
         quick_buttons = ttk.Frame(quick_frame, style='TFrame')
         quick_buttons.pack(fill="x")
 
-        ttk.Button(quick_buttons, text="▶️ 开始筛选", command=self.show_page_run, style='TButton').pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(quick_buttons, text="📊 查看结果", command=self.show_page_result, style='TButton').pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(quick_buttons, text="⚙️ 配置岗位", command=self.show_page_config, style='TButton').pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        icon_play = self.icons.button('play', self.colors['text_primary'])
+        btn1 = ttk.Button(quick_buttons, image=icon_play, text=" 开始筛选", compound=tk.LEFT, command=self.show_page_run, style='TButton')
+        btn1._icon_ref = icon_play
+        btn1.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        icon_chart = self.icons.button('chart', self.colors['text_primary'])
+        btn2 = ttk.Button(quick_buttons, image=icon_chart, text=" 查看结果", compound=tk.LEFT, command=self.show_page_result, style='TButton')
+        btn2._icon_ref = icon_chart
+        btn2.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        icon_gear = self.icons.button('gear', self.colors['text_primary'])
+        btn3 = ttk.Button(quick_buttons, image=icon_gear, text=" 配置岗位", compound=tk.LEFT, command=self.show_page_config, style='TButton')
+        btn3._icon_ref = icon_gear
+        btn3.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
 
     def create_config_page(self):
         """创建岗位配置页面"""
@@ -534,8 +559,13 @@ class BossFilterGUI:
             lambda e: self.config_canvas.configure(scrollregion=self.config_canvas.bbox("all"))
         )
 
-        self.config_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        # 约束 scrollable_frame 宽度 = Canvas 可视宽度，防止内容溢出
+        def _on_canvas_configure(event):
+            self.config_canvas.itemconfig(self.config_canvas_window, width=event.width)
+
+        self.config_canvas_window = self.config_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         self.config_canvas.configure(yscrollcommand=scrollbar.set)
+        self.config_canvas.bind("<Configure>", _on_canvas_configure)
 
         self.config_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -543,18 +573,25 @@ class BossFilterGUI:
         # 使用 scrollable_frame 作为实际容器
         config_container = scrollable_frame
 
-        # 岗位选择行
+        # 岗位选择区域
         select_frame = ttk.Frame(config_container, style='TFrame')
-        select_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(25 * self.dpi_scale * self.zoom_factor))
+        select_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(int(25 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
 
         ttk.Label(select_frame, text="选择岗位:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
+        # 按钮靠右
+        icon_trash_small = self.icons.button('trash', self.colors['text_primary'])
+        btn_del = ttk.Button(select_frame, image=icon_trash_small, text="删除", compound=tk.LEFT, command=self.delete_job)
+        btn_del._icon_ref = icon_trash_small
+        btn_del.pack(side="right", padx=(int(8 * self.dpi_scale * self.zoom_factor), 0))
+        icon_plus_small = self.icons.button('plus', self.colors['text_primary'])
+        btn_add = ttk.Button(select_frame, image=icon_plus_small, text="新建", compound=tk.LEFT, command=self.add_job)
+        btn_add._icon_ref = icon_plus_small
+        btn_add.pack(side="right", padx=int(8 * self.dpi_scale * self.zoom_factor))
+        # 下拉框填充剩余空间
         self.config_job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=UI_CONFIG['combobox_width_job'], font=self.font_combo)
         self.config_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.config_job_combo.bind("<<ComboboxSelected>>", self.on_job_selected)
-
-        ttk.Button(select_frame, text="➕ 新建", command=self.add_job).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(select_frame, text="🗑 删除", command=self.delete_job).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
         # ===== 需求文档解析区域 =====
         parse_frame = ttk.LabelFrame(config_container, text="  需求文档解析（可选）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
@@ -581,7 +618,10 @@ class BossFilterGUI:
         # 解析按钮
         parse_btn_frame = ttk.Frame(parse_frame, style='TFrame')
         parse_btn_frame.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(parse_btn_frame, text="🔍 解析需求文档", command=self.parse_requirement).pack(side="left")
+        icon_search_parse = self.icons.button('search', self.colors['text_primary'])
+        btn_parse = ttk.Button(parse_btn_frame, image=icon_search_parse, text=" 解析需求文档", compound=tk.LEFT, command=self.parse_requirement)
+        btn_parse._icon_ref = icon_search_parse
+        btn_parse.pack(side="left")
 
         # 解析结果展示
         self.parse_result_label = ttk.Label(parse_frame, text="", font=('Microsoft YaHei UI', int(11 * self.dpi_scale * self.zoom_factor)),
@@ -704,8 +744,14 @@ class BossFilterGUI:
         self.bind_entry_context_menu(weight_entry)
 
         # 操作按钮
-        ttk.Button(edit_card, text="✏️ 更新权重", command=self.update_skill_weight).pack(fill="x", pady=(0, int(5 * self.dpi_scale * self.zoom_factor)))
-        ttk.Button(edit_card, text="🗑️ 删除技能", command=self.delete_skill).pack(fill="x")
+        icon_pencil_skill = self.icons.button('pencil', self.colors['text_primary'])
+        btn_update = ttk.Button(edit_card, image=icon_pencil_skill, text=" 更新权重", compound=tk.LEFT, command=self.update_skill_weight)
+        btn_update._icon_ref = icon_pencil_skill
+        btn_update.pack(fill="x", pady=(0, int(5 * self.dpi_scale * self.zoom_factor)))
+        icon_trash_skill = self.icons.button('trash', self.colors['text_primary'])
+        btn_del_skill = ttk.Button(edit_card, image=icon_trash_skill, text=" 删除技能", compound=tk.LEFT, command=self.delete_skill)
+        btn_del_skill._icon_ref = icon_trash_skill
+        btn_del_skill.pack(fill="x")
 
         # 添加新技能区
         add_card = ttk.LabelFrame(skills_right, text="  添加新技能  ", padding=int(12 * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
@@ -729,7 +775,10 @@ class BossFilterGUI:
         add_weight_entry.pack(side="left")
         self.bind_entry_context_menu(add_weight_entry)
 
-        ttk.Button(add_card, text="➕ 添加技能", command=self.add_skill).pack(fill="x", pady=(int(8 * self.dpi_scale * self.zoom_factor), 0))
+        icon_plus_add = self.icons.button('plus', self.colors['text_primary'])
+        btn_add_skill = ttk.Button(add_card, image=icon_plus_add, text=" 添加技能", compound=tk.LEFT, command=self.add_skill)
+        btn_add_skill._icon_ref = icon_plus_add
+        btn_add_skill.pack(fill="x", pady=(int(8 * self.dpi_scale * self.zoom_factor), 0))
 
         # 绑定选中事件
         self.skills_tree.bind("<<TreeviewSelect>>", self.on_skill_selected)
@@ -753,8 +802,8 @@ class BossFilterGUI:
         required_edit = ttk.Entry(required_edit_frame, textvariable=self.new_required_var, width=UI_CONFIG['entry_width_required'], font=self.font_button)
         required_edit.pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(required_edit)
-        ttk.Button(required_edit_frame, text="添加", command=self.add_required_condition).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(required_edit_frame, text="删除选中", command=self.delete_required_condition).pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        ttk.Button(required_edit_frame, text="添加", command=self.add_required_condition).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), int(3 * self.dpi_scale * self.zoom_factor)))
+        ttk.Button(required_edit_frame, text="删除选中", command=self.delete_required_condition).pack(side="left", padx=(int(3 * self.dpi_scale * self.zoom_factor), 0))
 
         # ===== 打招呼话术模板 =====
         greet_template_frame = ttk.LabelFrame(self.result_detail_frame, text="  打招呼话术模板（可选）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
@@ -782,14 +831,27 @@ class BossFilterGUI:
                  font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
                  foreground=self.colors['text_secondary'], background=self.colors['bg_card']).pack(anchor="w")
 
-        # 按钮行
-        btn_frame = ttk.Frame(self.result_detail_frame, style='TFrame')
-        btn_frame.pack(fill="x", pady=(int(20 * self.dpi_scale * self.zoom_factor), int(15 * self.dpi_scale * self.zoom_factor)))
+        # 按钮行（居中布局，固定在页面底部，不随 Canvas 滚动）
+        self.btn_frame = ttk.Frame(self.config_page, style='TFrame')
+        btn_inner = ttk.Frame(self.btn_frame, style='TFrame')
+        btn_inner.pack(anchor="center")
 
-        ttk.Button(btn_frame, text="💾 保存配置", command=self.save_current_job).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(btn_frame, text="🔄 重置", command=self.reset_job_form).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(btn_frame, text="📂 导入配置", command=self.import_config).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(btn_frame, text="📤 导出配置", command=self.export_config).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+        icon_save_cfg = self.icons.button('save', self.colors['text_primary'])
+        btn_save = ttk.Button(btn_inner, image=icon_save_cfg, text=" 保存配置", compound=tk.LEFT, command=self.save_current_job)
+        btn_save._icon_ref = icon_save_cfg
+        btn_save.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        icon_refresh_cfg = self.icons.button('refresh', self.colors['text_primary'])
+        btn_reset = ttk.Button(btn_inner, image=icon_refresh_cfg, text=" 重置", compound=tk.LEFT, command=self.reset_job_form)
+        btn_reset._icon_ref = icon_refresh_cfg
+        btn_reset.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        icon_import_cfg = self.icons.button('import', self.colors['text_primary'])
+        btn_import = ttk.Button(btn_inner, image=icon_import_cfg, text=" 导入配置", compound=tk.LEFT, command=self.import_config)
+        btn_import._icon_ref = icon_import_cfg
+        btn_import.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        icon_export_cfg = self.icons.button('export', self.colors['text_primary'])
+        btn_export = ttk.Button(btn_inner, image=icon_export_cfg, text=" 导出配置", compound=tk.LEFT, command=self.export_config)
+        btn_export._icon_ref = icon_export_cfg
+        btn_export.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
 
         # 存储技能数据的列表（带权重）
         self.skills_data = []  # [{"name": "Java", "weight": 2, "source": "解析"}, ...]
@@ -807,6 +869,9 @@ class BossFilterGUI:
             self.load_job_to_form(rule)
             # 注意：这里不 pack result_detail_frame，因为 config_page 还没有被显示
             # 将在 show_page_config 中 pack
+
+        # 底部按钮固定在页面底部，不随 Canvas 滚动
+        self.btn_frame.pack(fill="x", side="bottom", pady=(int(10 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
 
     def create_api_config_page(self):
         """创建 API 配置页面"""
@@ -937,7 +1002,10 @@ class BossFilterGUI:
         self.bind_entry_context_menu(model_entry)
 
         # 获取模型列表按钮
-        ttk.Button(row2, text="📋 获取模型列表", command=self.fetch_model_list).pack(side="left")
+        icon_download_models = self.icons.button('download', self.colors['text_primary'])
+        btn_fetch = ttk.Button(row2, image=icon_download_models, text=" 获取模型列表", compound=tk.LEFT, command=self.fetch_model_list)
+        btn_fetch._icon_ref = icon_download_models
+        btn_fetch.pack(side="left")
 
         # 第三行：API Key
         row3 = ttk.Frame(input_frame, style='TFrame')
@@ -949,9 +1017,15 @@ class BossFilterGUI:
         self.api_key_entry.pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), 0))
         self.bind_entry_context_menu(self.api_key_entry)
 
-        # 明文/密文切换按钮
+        # 明文/密文切换按钮（无边框 Button 实现，使用图标）
         self.api_key_show_var = tk.BooleanVar(value=False)
-        self.api_key_toggle_btn = ttk.Button(row3, text="👁️", command=self.toggle_api_key_visibility, width=UI_CONFIG['button_toggle_width'])
+        eye_icon = self.icons.button('eye', self.colors['text_primary'])
+        eye_off_icon = self.icons.button('eye_off', self.colors['text_primary'])
+        self.api_key_toggle_btn = tk.Button(row3, image=eye_icon,
+            relief="flat", bd=0, highlightthickness=0, cursor="hand2",
+            command=self.toggle_api_key_visibility)
+        self.api_key_toggle_btn._icon_eye = eye_icon
+        self.api_key_toggle_btn._icon_eye_off = eye_off_icon
         self.api_key_toggle_btn.pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), 0))
 
         # 第四行：Base URL
@@ -968,8 +1042,14 @@ class BossFilterGUI:
         button_row = ttk.Frame(config_card, style='TFrame')
         button_row.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-        ttk.Button(button_row, text="💾 保存并添加到列表", command=self.save_api_config).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), int(5 * self.dpi_scale * self.zoom_factor)))
-        ttk.Button(button_row, text="🔍 测试连接", command=self.test_api_connection).pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        icon_save_api = self.icons.button('save', self.colors['text_primary'])
+        btn_save_api = ttk.Button(button_row, image=icon_save_api, text=" 保存并添加到列表", compound=tk.LEFT, command=self.save_api_config)
+        btn_save_api._icon_ref = icon_save_api
+        btn_save_api.pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), int(5 * self.dpi_scale * self.zoom_factor)))
+        icon_search_test = self.icons.button('search', self.colors['text_primary'])
+        btn_test = ttk.Button(button_row, image=icon_search_test, text=" 测试连接", compound=tk.LEFT, command=self.test_api_connection)
+        btn_test._icon_ref = icon_search_test
+        btn_test.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
 
         # API 配置状态提示
         self.api_status_label = ttk.Label(config_card, text="",
@@ -1142,7 +1222,10 @@ class BossFilterGUI:
         self.browser_status_indicator.pack(side="left")
 
         # 检测按钮
-        ttk.Button(browser_status_row, text="🔍 检测/连接浏览器", command=self.check_browser_connection).pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
+        icon_browser = self.icons.button('search', self.colors['text_primary'])
+        btn_browser = ttk.Button(browser_status_row, image=icon_browser, text=" 检测/连接浏览器", compound=tk.LEFT, command=self.check_browser_connection)
+        btn_browser._icon_ref = icon_browser
+        btn_browser.pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 状态说明
         self.browser_status_help = ttk.Label(browser_status_row, text="请点击按钮连接 BOSS 直聘页面",
@@ -1223,10 +1306,14 @@ class BossFilterGUI:
         btn_container.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 开始/停止按钮
-        self.start_btn = ttk.Button(btn_container, text="▶️ 开始运行", command=self.start_run, style='Accent.TButton', state="disabled")
+        icon_play_run = self.icons.button('play', self.colors['text_primary'])
+        self.start_btn = ttk.Button(btn_container, image=icon_play_run, text=" 开始运行", compound=tk.LEFT, command=self.start_run, style='Accent.TButton', state="disabled")
+        self.start_btn._icon_ref = icon_play_run
         self.start_btn.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
 
-        self.stop_btn = ttk.Button(btn_container, text="⏹ 停止", command=self.stop_run, state="disabled")
+        icon_stop = self.icons.button('stop', self.colors['text_primary'])
+        self.stop_btn = ttk.Button(btn_container, image=icon_stop, text=" 停止", compound=tk.LEFT, command=self.stop_run, state="disabled")
+        self.stop_btn._icon_ref = icon_stop
         self.stop_btn.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 状态指示器
@@ -1261,7 +1348,10 @@ class BossFilterGUI:
         log_toolbar = ttk.Frame(log_wrapper, style='TFrame')
         log_toolbar.pack(fill="x", pady=(int(8 * self.dpi_scale * self.zoom_factor), 0))
 
-        ttk.Button(log_toolbar, text="🗑 清空日志", command=self.clear_log).pack()
+        icon_trash_log = self.icons.button('trash', self.colors['text_primary'])
+        btn_clear_log = ttk.Button(log_toolbar, image=icon_trash_log, text=" 清空日志", compound=tk.LEFT, command=self.clear_log)
+        btn_clear_log._icon_ref = icon_trash_log
+        btn_clear_log.pack()
 
         # 启动进度条更新循环
         self.update_progress()
@@ -1301,12 +1391,12 @@ class BossFilterGUI:
         self.result_stats_greeted = {}
         self.result_stats_click = {}
         stats_data = [
-            ("📋", "通过筛选", "passed", self.colors['primary']),
-            ("🏆", "强烈推荐", "strong", self.colors['purple']),
-            ("👍", "推荐", "recommended", self.colors['success']),
+            ("clipboard", "通过筛选", "passed", self.colors['primary']),
+            ("trophy", "强烈推荐", "strong", self.colors['purple']),
+            ("thumbs_up", "推荐", "recommended", self.colors['success']),
         ]
 
-        for icon_emoji, label_text, var_name, color in stats_data:
+        for icon_name, label_text, var_name, color in stats_data:
             card = ttk.Frame(stats_container, style='Card.TFrame')
             card.pack(side="left", fill="x", expand=True, padx=int(15 * self.dpi_scale * self.zoom_factor), pady=int(12 * self.dpi_scale * self.zoom_factor))
 
@@ -1321,10 +1411,10 @@ class BossFilterGUI:
             icon_canvas.create_oval(margin, margin, icon_size - margin, icon_size - margin,
                                     fill=color, outline='')
 
-            # 在圆形上绘制白色图标
-            icon_canvas.create_text(icon_size // 2, icon_size // 2, text=icon_emoji,
-                                    font=('Segoe UI Emoji', int(UI_CONFIG['font_size_emoji'] * self.dpi_scale * self.zoom_factor)),
-                                    fill='white')
+            # 在圆形上绘制白色图标（使用 PhotoImage）
+            stat_icon = self.icons.stat(icon_name, 'white')
+            icon_canvas.create_image(icon_size // 2, icon_size // 2, image=stat_icon)
+            icon_canvas._icon_ref = stat_icon
 
             # 数值标签（可点击）- 显示总数
             var = tk.StringVar(value="0")
@@ -1335,8 +1425,8 @@ class BossFilterGUI:
                                    background=self.colors['bg_card'])
             value_label.pack(pady=(0, int(4 * self.dpi_scale * self.zoom_factor)))
 
-            # 已打招呼标签 - 小字，用🤝图标
-            greeted_var = tk.StringVar(value="0 🤝")
+            # 已打招呼标签 - 小字
+            greeted_var = tk.StringVar(value="0 已打招呼")
             self.result_stats_greeted[var_name] = greeted_var
 
             greeted_label = ttk.Label(card, textvariable=greeted_var,
@@ -1396,9 +1486,18 @@ class BossFilterGUI:
         btn_frame = ttk.Frame(self.result_page, style='TFrame')
         btn_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
 
-        ttk.Button(btn_frame, text="🔄 刷新结果", command=self.refresh_results).pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(btn_frame, text="📊 导出 Excel", command=self.export_excel).pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(btn_frame, text="📁 打开 JSON", command=self.open_json).pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
+        icon_refresh_result = self.icons.button('refresh', self.colors['text_primary'])
+        btn_refresh = ttk.Button(btn_frame, image=icon_refresh_result, text=" 刷新结果", compound=tk.LEFT, command=self.refresh_results)
+        btn_refresh._icon_ref = icon_refresh_result
+        btn_refresh.pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
+        icon_chart_excel = self.icons.button('chart', self.colors['text_primary'])
+        btn_excel = ttk.Button(btn_frame, image=icon_chart_excel, text=" 导出 Excel", compound=tk.LEFT, command=self.export_excel)
+        btn_excel._icon_ref = icon_chart_excel
+        btn_excel.pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
+        icon_folder_json = self.icons.button('folder', self.colors['text_primary'])
+        btn_json = ttk.Button(btn_frame, image=icon_folder_json, text=" 打开 JSON", compound=tk.LEFT, command=self.open_json)
+        btn_json._icon_ref = icon_folder_json
+        btn_json.pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
 
     def show_page_home(self):
         """显示首页"""
@@ -1484,23 +1583,23 @@ class BossFilterGUI:
         """更新导航高亮 - 当前页面使用选中颜色，其他使用默认颜色"""
         for i, comp in enumerate(self.nav_components):
             if i == self.current_page_index:
-                comp['emoji'].configure(foreground=self.colors['text_sidebar_active'])
+                comp['icon'].configure(image=comp['icon_active'])
                 comp['text'].configure(foreground=self.colors['text_sidebar_active'])
             else:
-                comp['emoji'].configure(foreground=self.colors['text_sidebar'])
+                comp['icon'].configure(image=comp['icon_default'])
                 comp['text'].configure(foreground=self.colors['text_sidebar'])
 
     def on_nav_enter(self, index):
-        """鼠标移入导航项时高亮（只改变前景色，不影响布局）"""
+        """鼠标移入导航项时高亮（交换图标和前景色）"""
         comp = self.nav_components[index]
-        comp['emoji'].configure(foreground=self.colors['text_sidebar_active'])
+        comp['icon'].configure(image=comp['icon_active'])
         comp['text'].configure(foreground=self.colors['text_sidebar_active'])
 
     def on_nav_leave(self, index):
         """鼠标移出导航项时恢复样式（当前页面除外）"""
         if index != self.current_page_index:
             comp = self.nav_components[index]
-            comp['emoji'].configure(foreground=self.colors['text_sidebar'])
+            comp['icon'].configure(image=comp['icon_default'])
             comp['text'].configure(foreground=self.colors['text_sidebar'])
 
     # ===== 右键菜单功能 =====
@@ -2456,12 +2555,12 @@ class BossFilterGUI:
         if self.api_key_show_var.get():
             # 当前是明文，切换为密文
             self.api_key_entry.configure(show="*")
-            self.api_key_toggle_btn.configure(text="👁️")
+            self.api_key_toggle_btn.configure(image=self.api_key_toggle_btn._icon_eye)
             self.api_key_show_var.set(False)
         else:
             # 当前是密文，切换为明文
             self.api_key_entry.configure(show="")
-            self.api_key_toggle_btn.configure(text="🙈")
+            self.api_key_toggle_btn.configure(image=self.api_key_toggle_btn._icon_eye_off)
             self.api_key_show_var.set(True)
 
     def test_api_connection(self):
@@ -3525,10 +3624,10 @@ class BossFilterGUI:
                 self.result_stats_vars['passed'].set(str(passed_total))
                 self.result_stats_vars['strong'].set(str(strong_total))
                 self.result_stats_vars['recommended'].set(str(recommended_total))
-                # 更新已打招呼数（用🤝图标）
-                self.result_stats_greeted['passed'].set(f"{passed_greeted} 🤝")
-                self.result_stats_greeted['strong'].set(f"{strong_greeted} 🤝")
-                self.result_stats_greeted['recommended'].set(f"{recommended_greeted} 🤝")
+                # 更新已打招呼数
+                self.result_stats_greeted['passed'].set(f"{passed_greeted} 已打招呼")
+                self.result_stats_greeted['strong'].set(f"{strong_greeted} 已打招呼")
+                self.result_stats_greeted['recommended'].set(f"{recommended_greeted} 已打招呼")
 
                 for item in self.result_tree.get_children():
                     self.result_tree.delete(item)
@@ -3644,10 +3743,16 @@ class BossFilterGUI:
 
             # 创建菜单
             menu = tk.Menu(self.root, tearoff=0)
-            menu.add_command(label="📋 查看详情", command=lambda: self._show_candidate_detail(item))
-            menu.add_command(label="🗑 移除此人", command=lambda: self._remove_candidate(item))
+            icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
+            icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
+            icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+            menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=lambda: self._show_candidate_detail(item))
+            menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=lambda: self._remove_candidate(item))
             menu.add_separator()
-            menu.add_command(label="📤 导出选中", command=lambda: self._export_selected())
+            menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=lambda: self._export_selected())
+
+            # 保持引用防止 GC
+            menu._icon_refs = [icon_detail, icon_trash_menu, icon_export_menu]
 
             # 显示菜单
             menu.tk_popup(event.x_root, event.y_root)
