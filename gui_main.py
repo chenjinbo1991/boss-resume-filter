@@ -1762,7 +1762,7 @@ class BossFilterGUI:
             detail_window.title(title)
 
             # 设置固定大小并居中
-            window_width = 900
+            window_width = 1000
             window_height = 650
             detail_window.geometry(f"{window_width}x{window_height}")
             self._center_window(detail_window, window_width, window_height)
@@ -1773,8 +1773,9 @@ class BossFilterGUI:
                                    foreground=self.colors['primary'])
             title_label.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
-            # 统计信息
-            count_label = ttk.Label(detail_window, text=f"共 {len(filtered)} 人",
+            # 统计信息 - 显示总数和已打招呼数
+            greeted_count = len([c for c in filtered if c.get('greet_sent', False)])
+            count_label = ttk.Label(detail_window, text=f"共 {len(filtered)} 人，已打招呼 {greeted_count} 人",
                                    font=('Microsoft YaHei UI', int(14 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['text_secondary'])
             count_label.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
@@ -1783,24 +1784,26 @@ class BossFilterGUI:
             table_frame = ttk.Frame(detail_window, style='Card.TFrame')
             table_frame.pack(fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-            # 创建表格
-            columns = ("name", "exp", "salary", "score", "skills")
+            # 创建表格 - 与筛选结果页明细列一致
+            columns = ("name", "exp", "salary", "score", "status", "skills")
             tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
 
             tree.heading("name", text="姓名")
             tree.heading("exp", text="工作年限")
             tree.heading("salary", text="薪资")
             tree.heading("score", text="匹配分")
-            tree.heading("skills", text="匹配技能")
+            tree.heading("status", text="状态")
+            tree.heading("skills", text="技能匹配")
 
-            # 设置列宽和字体 - 内容居中对齐
+            # 设置列宽和字体 - 内容居中对齐，宽度与筛选结果页一致
             tree.column("name", width=100, anchor='center')
-            tree.column("exp", width=120, anchor='center')  # 工作年限增宽
-            tree.column("salary", width=120, anchor='center')  # 薪资增宽
-            tree.column("score", width=100, anchor='center')  # 匹配分增宽
-            tree.column("skills", width=450, anchor='center')
+            tree.column("exp", width=120, anchor='center')
+            tree.column("salary", width=120, anchor='center')
+            tree.column("score", width=100, anchor='center')
+            tree.column("status", width=90, anchor='center')
+            tree.column("skills", width=400, anchor='center')
 
-            # 设置表格字体和样式
+            # 设置表格字体和样式 - 与筛选结果页一致
             tree_style = ttk.Style()
             tree_style.configure("Detail.Treeview",
                                 font=('Microsoft YaHei UI', int(14 * self.dpi_scale * self.zoom_factor)),
@@ -1819,6 +1822,7 @@ class BossFilterGUI:
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
+                status = "已招呼" if c.get('greet_sent', False) else "未招呼"
                 salary, exp = self._parse_salary_exp(c.get('summary', ''))
 
                 tree.insert("", "end", values=(
@@ -1826,6 +1830,7 @@ class BossFilterGUI:
                     exp,
                     salary,
                     score,
+                    status,
                     c.get('skill_match_ratio', '')
                 ))
 
@@ -3430,6 +3435,7 @@ class BossFilterGUI:
         return salary, exp
 
     @staticmethod
+    @staticmethod
     def _center_window_on_screen(window, width, height):
         """将子窗口相对于屏幕居中（不依赖父窗口位置）"""
         window.update_idletasks()
@@ -3742,7 +3748,8 @@ class BossFilterGUI:
             self.result_tree.selection_set(item)
 
             # 创建菜单
-            menu = tk.Menu(self.root, tearoff=0)
+            context_menu_font = (FONT_FAMILY, int(16 * self.dpi_scale * self.zoom_factor))
+            menu = tk.Menu(self.root, tearoff=0, font=context_menu_font)
             icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
             icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
             icon_export_menu = self.icons.button('export', self.colors['text_primary'])
