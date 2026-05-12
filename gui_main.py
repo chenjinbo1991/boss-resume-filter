@@ -1391,7 +1391,7 @@ class BossFilterGUI:
         self.result_stats_greeted = {}
         self.result_stats_click = {}
         stats_data = [
-            ("clipboard", "通过筛选", "passed", self.colors['primary']),
+            ("people", "通过筛选", "passed", self.colors['primary']),
             ("star", "强烈推荐", "strong", self.colors['purple']),
             ("thumbs_up", "推荐", "recommended", self.colors['success']),
         ]

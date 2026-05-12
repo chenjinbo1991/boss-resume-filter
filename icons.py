@@ -327,25 +327,16 @@ def _trophy(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
 
 
 def _thumbs_up(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
-    """点赞手 — 完整手部轮廓，拇指清晰可辨"""
+    """👍 风格 — 竖拇指（左）+ 握拳（右），两段式结构"""
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
     S = size_px
-    # 手部外轮廓多边形（右手竖拇指，侧面视角）
-    pts = [
-        (_s(7, S), _s(2, S)),       # 拇指尖
-        (_s(10.5, S), _s(3.5, S)),  # 拇指右侧
-        (_s(10.5, S), _s(7, S)),    # 拇指根部右侧
-        (_s(13, S), _s(5.5, S)),    # 食指关节
-        (_s(16.5, S), _s(7.5, S)),  # 手背右侧
-        (_s(17.5, S), _s(12, S)),   # 拳头右下
-        (_s(15, S), _s(14.5, S)),   # 拳头底部
-        (_s(12.5, S), _s(20, S)),   # 手腕右下
-        (_s(9, S), _s(20, S)),      # 手腕左下
-        (_s(6.5, S), _s(14, S)),    # 拳头左侧
-        (_s(7, S), _s(8, S)),       # 拇指根部左侧
-    ]
-    d.polygon(pts, outline=fill, width=sw)
+    # 拇指 — 左侧竖立，上宽下窄的圆角矩形
+    d.rounded_rectangle([_s(5, S), _s(1, S), _s(12, S), _s(10, S)],
+                        radius=_s(3, S), outline=fill, width=sw)
+    # 拳头 — 右侧握拳，略低于拇指顶部
+    d.rounded_rectangle([_s(7, S), _s(8, S), _s(20, S), _s(20, S)],
+                        radius=_s(3.5, S), outline=fill, width=sw)
     return img
 
 
