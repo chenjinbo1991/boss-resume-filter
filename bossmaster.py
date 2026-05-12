@@ -1,5 +1,5 @@
 """
-BOSS 直聘候选人智能提取工具 v2.2
+BOSS 直聘候选人智能提取工具 v2.3
 支持 Excel 导出
 """
 import time
@@ -1448,7 +1448,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         greet_text = f" + 自动打招呼 ({greet_level_display})"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
-    print(f">>> BOSS 直聘候选人智能提取工具 v2.2 [{mode_text}{greet_text}]")
+    print(f">>> BOSS 直聘候选人智能提取工具 v2.3 [{mode_text}{greet_text}]")
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）

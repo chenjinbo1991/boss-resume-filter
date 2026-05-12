@@ -1,5 +1,5 @@
 """
-BOSS 简历筛选器 - 图形界面版本 v2.2
+BOSS 简历筛选器 - 图形界面版本 v2.3
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 import tkinter as tk
@@ -103,7 +103,7 @@ class BossFilterGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("BOSS 简历筛选器 v2.2 - 智能候选人筛选工具")
+        self.root.title("BOSS 简历筛选器 v2.3 - 智能候选人筛选工具")
 
         # 高 DPI 支持 - 启用系统 DPI 缩放
         try:
@@ -405,7 +405,7 @@ class BossFilterGUI:
         bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         bottom_frame.pack(side="bottom", fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
-        version_label = ttk.Label(bottom_frame, text="v2.2",
+        version_label = ttk.Label(bottom_frame, text="v2.3",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
                                   foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
                                   cursor="hand2")
@@ -3649,7 +3649,7 @@ class BossFilterGUI:
             from bossmaster import load_job_config, ChromiumPage, time, run_smart_scan
             import argparse
 
-            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v2.2 [图形界面模式]")
+            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v2.3 [图形界面模式]")
             self.append_log(f"滚动轮次：{rounds}, 自动打招呼：{greet_level_text}")
 
             # 获取选择的岗位
@@ -4067,7 +4067,7 @@ class BossFilterGUI:
 
     def show_about(self):
         """显示关于"""
-        messagebox.showinfo("关于", "BOSS 简历筛选器 v2.2\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+        messagebox.showinfo("关于", "BOSS 简历筛选器 v2.3\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
 
     def show_changelog(self):
         """显示更新日志"""
