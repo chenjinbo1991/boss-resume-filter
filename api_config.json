@@ -1,0 +1,89 @@
+{
+    "api_provider": "qwen",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "deepseek-v4-pro",
+    "saved_models": [
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.5-plus"
+        },
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "glm-5.1"
+        },
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "kimi-k2.6"
+        },
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "MiniMax-M2.5"
+        },
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.6-max-preview"
+        },
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "deepseek-v4-pro"
+        },
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.6-plus-2026-04-02"
+        }
+    ],
+    "providers": {
+        "qwen": {
+            "name": "通义千问",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "models": [
+                "qwen3.5-plus",
+                "qwen-plus",
+                "qwen-max",
+                "qwen-turbo"
+            ]
+        },
+        "deepseek": {
+            "name": "DeepSeek",
+            "base_url": "https://api.deepseek.com",
+            "models": [
+                "deepseek-chat",
+                "deepseek-coder"
+            ]
+        },
+        "openai": {
+            "name": "OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "models": [
+                "gpt-4o",
+                "gpt-4o-mini",
+                "gpt-4-turbo"
+            ]
+        },
+        "anthropic": {
+            "name": "Anthropic",
+            "base_url": "https://api.anthropic.com",
+            "models": [
+                "claude-sonnet-4-20250514",
+                "claude-opus-4-20250514"
+            ]
+        },
+        "azure": {
+            "name": "Azure OpenAI",
+            "base_url": "",
+            "models": []
+        },
+        "custom": {
+            "name": "自定义",
+            "base_url": "",
+            "models": []
+        }
+    }
+}
