@@ -35,8 +35,13 @@ pip install -r requirements.txt
 # 使用自动打包脚本（推荐）
 python build.py
 
-# 或手动打包
-pyinstaller --onefile --noconsole --name "BOSS_ResumeFilter" gui_main.py
+# 或手动打包（不推荐，缺少依赖检查和 PIL 完整收集）
+pyinstaller --onefile --noconsole \
+    --collect-all PIL \
+    --hidden-import=tkinter \
+    --hidden-import=tkinter.ttk \
+    --name "BOSS_ResumeFilter" \
+    gui_main.py
 ```
 
 #### 步骤 3：获取输出
@@ -126,8 +131,9 @@ upx --best "dist/BOSS_ResumeFilter.exe"
 解决方案：
 
 ```bash
-# 使用 --hidden-import 指定隐藏依赖
+# 使用 --collect-all 指定完整收集
 pyinstaller --onefile --noconsole \
+    --collect-all PIL \
     --hidden-import=tkinter \
     --hidden-import=tkinter.ttk \
     --name "BOSS_ResumeFilter" \
@@ -191,10 +197,9 @@ pyinstaller --onedir --noconsole \
 | requests | HTTP 请求 |
 | pandas | Excel 导出 |
 | openpyxl | Excel 格式 |
-| PyPDF2 | PDF 解析 |
-| python-docx | Word 解析 |
 | Pillow | 图标绘制（PIL.ImageDraw） |
 | keyring | API Key 加密存储 |
+| python-dotenv | 环境变量管理 |
 
 ### 8. 最小化部署
 
@@ -214,4 +219,4 @@ python gui_main.py
 
 ---
 
-**最后更新**: 2026-05-12
+**最后更新**: 2026-05-13

@@ -724,6 +724,28 @@ class BossFilterGUI:
         edu_combo.bind('<Enter>', lambda e: edu_combo.bind('<MouseWheel>', lambda ev: 'break'))
         edu_combo.bind('<Leave>', lambda e: edu_combo.unbind('<MouseWheel>'))
 
+        # 薪资范围
+        self.salary_min_var = tk.StringVar()
+        self.salary_max_var = tk.StringVar()
+        row_salary = ttk.Frame(basic_frame, style='TFrame')
+        row_salary.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(row_salary, text="薪资范围:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
+                 background=self.colors['bg_card']).pack(side="left")
+        salary_min_entry = ttk.Entry(row_salary, textvariable=self.salary_min_var, width=8, font=self.font_button)
+        salary_min_entry.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        self.bind_entry_context_menu(salary_min_entry)
+        ttk.Label(row_salary, text="K  ~", font=self.font_label,
+                 background=self.colors['bg_card']).pack(side="left")
+        salary_max_entry = ttk.Entry(row_salary, textvariable=self.salary_max_var, width=8, font=self.font_button)
+        salary_max_entry.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        self.bind_entry_context_menu(salary_max_entry)
+        ttk.Label(row_salary, text="K", font=self.font_label,
+                 background=self.colors['bg_card']).pack(side="left")
+        ttk.Label(row_salary, text="  留空表示不限制薪资",
+                 font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
+                 foreground=self.colors['text_secondary'],
+                 background=self.colors['bg_card']).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), 0))
+
         # 工作地点
         row3 = ttk.Frame(basic_frame, style='TFrame')
         row3.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
@@ -3016,6 +3038,10 @@ class BossFilterGUI:
         self.min_exp_var.set(str(rule.get("min_exp", 0)))
         self.edu_var.set(rule.get("edu", "不限"))
         self.work_location_var.set(rule.get("work_location", ""))
+        salary_min = rule.get("salary_min")
+        salary_max = rule.get("salary_max")
+        self.salary_min_var.set(str(salary_min) if salary_min is not None else "")
+        self.salary_max_var.set(str(salary_max) if salary_max is not None else "")
 
         # 加载技能列表（带权重）
         self.skills_data = []
@@ -3233,6 +3259,12 @@ class BossFilterGUI:
             # 设置工作地点
             self.work_location_var.set(job_config.get("work_location", ""))
 
+            # 设置薪资范围
+            salary_min = job_config.get("salary_min")
+            salary_max = job_config.get("salary_max")
+            self.salary_min_var.set(str(salary_min) if salary_min is not None else "")
+            self.salary_max_var.set(str(salary_max) if salary_max is not None else "")
+
             # 加载技能列表（带权重）- 直接使用 doc_parser 生成的结果
             self.skills_data = []
             keywords = job_config.get("keywords", [])
@@ -3374,6 +3406,8 @@ class BossFilterGUI:
             "min_exp": int(self.min_exp_var.get()),
             "edu": self.edu_var.get(),
             "work_location": self.work_location_var.get().strip() or None,
+            "salary_min": int(self.salary_min_var.get()) if self.salary_min_var.get().strip() else None,
+            "salary_max": int(self.salary_max_var.get()) if self.salary_max_var.get().strip() else None,
             "keywords": keywords,
             "required_conditions": required_conditions,
             "greet_template": greet_template if greet_template else None,
@@ -3391,6 +3425,8 @@ class BossFilterGUI:
         self.min_exp_var.set("3")
         self.edu_var.set("本科")
         self.work_location_var.set("")
+        self.salary_min_var.set("")
+        self.salary_max_var.set("")
         self.skills_data = []
         self.refresh_skills_tree()
         self.required_conditions_data = []

@@ -67,6 +67,21 @@ def _extract_work_location(text: str) -> str:
     return ""
 
 
+def _extract_salary_range(text: str):
+    """从招聘需求中提取薪资范围。返回 (min_k, max_k)，未匹配返回 (None, None)"""
+    if not text:
+        return None, None
+    patterns = [
+        r'薪资(?:范围)?\s*[：:]\s*(\d+)\s*[kK]\s*[-~～\-]\s*(\d+)\s*[kK]',
+        r'月薪\s*[：:]\s*(\d+)\s*[kK]\s*[-~～\-]\s*(\d+)\s*[kK]',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None, None
+
+
 def parse_job_requirements(text: str) -> Dict:
     """
     从招聘需求文本中解析出关键信息
@@ -491,11 +506,14 @@ def parse_job_requirements(text: str) -> Dict:
             unique_soft_skills.append(skill)
 
     # 返回解析结果
+    salary_min, salary_max = _extract_salary_range(text)
     return {
         "job_title": job_title,
         "min_exp": exp_value,
         "edu": edu_value,
         "work_location": _extract_work_location(text),
+        "salary_min": salary_min,
+        "salary_max": salary_max,
         "soft_skills": unique_soft_skills,  # 职位描述中的技能要求（用于评分）
         "required_conditions": required_conditions,
         "tech_conditions": tech_condition_keywords  # 必要条件中的技术要求（只需满足其一）
@@ -609,6 +627,8 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         "min_exp": parsed["min_exp"],
         "edu": parsed["edu"],
         "work_location": parsed.get("work_location", ""),
+        "salary_min": parsed.get("salary_min"),
+        "salary_max": parsed.get("salary_max"),
         "keywords": weighted_keywords,  # 带权重的技能列表
         "required_conditions": all_required,
         "tech_conditions": parsed.get("tech_conditions", [])  # 单独存储，用于 OR 检查

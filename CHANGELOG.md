@@ -1,8 +1,16 @@
 # 更新日志
 
-## v2.3 — 2026-05-12
+## v2.3 — 2026-05-13
 
-### 图标系统升级
+### BUG修复（2026-05-13）
+- **PIL 打包缺失**：pack_venv 中漏装 Pillow，导致 EXE 在无 Python 环境电脑上启动报 `ModuleNotFoundError: No module named 'PIL'`。修复：安装 Pillow 到 pack_venv，build.py 改用 `--collect-all PIL` 完整收集所有图片格式插件
+- **Chrome 启动异常处理**：`FileNotFoundError`（Chrome 未安装）和 `chrome`/`errno` 关键词异常（Chrome 安装异常）分类处理，替代宽泛的超时提示
+- **依赖清理**：移除 requirements.txt 中已废弃的 `cdpkit`（DrissionPage 4.x 不再需要）
+
+### 构建改进（2026-05-13）
+- `build.py` 增加 `_check_dependencies()` 打包前验证：逐项 import 检查 7 个核心依赖，缺失时明确提示包名和修复命令，杜绝生成有缺陷的 EXE
+
+### 图标系统升级（2026-05-12）
 - **全部图标 DPI 高清化**：使用 Pillow ImageDraw 在运行时程序化生成 21 个矢量精度图标，替代所有 emoji 字符图标
 - 图标按系统 DPI 自动缩放，100%/125%/150% 缩放比下均保持清晰锐利
 - 单色线条风格，暗色模式下自动适配配色

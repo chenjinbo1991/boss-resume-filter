@@ -391,6 +391,27 @@ def parse_experience_years(text):
     return None
 
 
+def _parse_candidate_salary_range(text):
+    """
+    从候选人 summary 中提取期望薪资范围。
+    summary 第一行即为薪资，如 "15-16K"、"面议"、"20-35K·15薪"。
+    返回 (min_k, max_k)，未匹配返回 (None, None)。
+    """
+    if not text:
+        return None, None
+    first_line = text.split('\n')[0].strip()
+    if '面议' in first_line:
+        return None, None
+    m = re.search(r'(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]', first_line)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r'^(\d+)\s*[kK]', first_line)
+    if m:
+        val = int(m.group(1))
+        return val, val
+    return None, None
+
+
 def _keyword_found(text, keyword):
     """检查关键词是否在文本中作为独立词出现，避免子串误匹配（如 AI 匹配 email）"""
     # 中文关键词用子串匹配（中文不存在子串误匹配问题）
@@ -503,6 +524,15 @@ def filter_candidate(candidate_text, rule):
             if candidate_city and required_locations:
                 if not any(loc in candidate_city for loc in required_locations):
                     return False, 0, {"reason": f"地点不符：要求{work_location}，期望{candidate_city}"}
+
+        # 2.6. 薪资范围（硬性条件）
+        # 候选人期望最低薪资 >= 岗位薪资上限 + 2K → 过滤
+        salary_min = rule.get("salary_min")
+        salary_max = rule.get("salary_max")
+        if salary_min is not None and salary_max is not None:
+            cand_min_k, _ = _parse_candidate_salary_range(candidate_text)
+            if cand_min_k is not None and cand_min_k >= salary_max + 2:
+                return False, 0, {"reason": f"薪资不匹配：岗位最高{salary_max}K，候选人期望最低{cand_min_k}K"}
 
         # 3. 必要条件
         required_conditions = rule.get("required_conditions", [])

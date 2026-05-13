@@ -22,6 +22,7 @@ boss-resume-filter/
 ├── README.md             # 项目主文档
 ├── CHANGELOG.md          # 更新日志
 ├── GUI 使用说明.md        # 图形界面详细说明
+├── README_文件管理.md      # 数据文件管理说明
 ├── DEPLOYMENT.md         # 部署说明（新电脑配置）
 ├── PACKAGING.md          # 打包指南
 ├── tests/                # 测试脚本目录
@@ -43,9 +44,10 @@ boss-resume-filter/
 - 侧边栏底部版本号可点击，弹出更新日志对话框查看 CHANGELOG.md 内容
 
 ### 打包发布
-- `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~40MB）
+- `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~47MB），打包前自动验证依赖完整性
 - dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
 - job_config.json 和 api_config.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
+- 打包前 `_check_dependencies()` 逐项 import 验证核心依赖，缺失时中断并给出修复命令
 
 ## 代码规范
 - 使用 type hints
@@ -77,7 +79,8 @@ boss-resume-filter/
 
 ### 浏览器自动检测（v2.2）
 - 进入运行页自动每 2 秒轮询 Chrome 调试端口（127.0.0.1:9222）
-- 端口检测先于 ChromiumPage() 调用，端口不通则跳过，防止自动启动浏览器
+- 端口检测先于 ChromiumPage() 调用，端口不通时区分场景：定时轮询跳过（silent），手动点击按钮则自动启动 Chrome
+- Chrome 启动失败时分类处理：FileNotFoundError → 提示安装 Chrome；其他 chrome 相关异常 → 提示检查安装
 - 离开运行页自动停止轮询
 
 ### 去重机制
