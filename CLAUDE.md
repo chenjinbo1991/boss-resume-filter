@@ -109,6 +109,17 @@ boss-resume-filter/
 - 淘汰原因排序：学历不符/不足 → 经验不足 → 地点不符 → 薪资不匹配 → 评分不足(按分数段) → 其他，同类内按数量降序
 - 硬条件检查顺序（v2.4）：学历 → 经验 → 工作地点 → 薪资范围 → 必要条件 → 技术关键词
 
+### 必要条件（v2.4 UI 重构）
+- GUI 使用下拉框选择条件类型 + 逗号分隔关键词，无需手写 JSON
+- 三种模式：简单匹配（子串搜索）、OR（满足任一，大小写不敏感）、AND（全部满足）
+- 全角逗号（，）自动归一化为半角逗号分隔
+- 底层 `check_required_condition()` 支持三种格式：字符串、`{"type":"or","items":[...]}`、`{"type":"and","items":[...]}`
+- 实现位置：`bossmaster.py:check_required_condition()`、`gui_main.py:add_required_condition()`
+
+### 薪资输入验证（v2.4）
+- `StringVar.trace_add('write', callback)` 实时检测：非数字字符红色高亮，空值/合法数字恢复默认色
+- 保存时 `int()` 二次解析，非法值弹窗警告并阻止保存
+
 ### 需求解析规则（doc_parser.py）
 - 从需求文档中提取关键词，分为硬约束（tech_condition_keywords）和软技能（soft_skills）两类
 - 已排除泛化关键词：数据库（零区分信号，几乎所有后端简历都有）

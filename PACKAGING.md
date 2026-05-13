@@ -86,7 +86,7 @@ dist/
             "min_exp": 5,
             "edu": "本科",
             "keywords": ["Java", "Spring Boot", "MySQL", "Redis"],
-            "required_conditions": ["统招本科"]
+            "required_conditions": ["统招本科", {"type": "or", "items": ["activiti", "camunda"]}]
         }
     }
 }
