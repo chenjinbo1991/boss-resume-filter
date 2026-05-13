@@ -147,21 +147,19 @@ class BossFilterGUI:
         self.root = root
         self.root.title("BOSS 简历筛选器 v2.3 - 智能候选人筛选工具")
 
-        # 高 DPI 支持 - 启用系统 DPI 缩放
+        # 高 DPI 支持 - Per Monitor DPI Aware V2（仅此一个调用，不混用旧 API）
         try:
             from ctypes import windll
-            windll.shcore.SetProcessDpiAwareness(2)  # 2=Per Monitor DPI Aware
+            windll.shcore.SetProcessDpiAwareness(2)  # 2 = Per Monitor DPI Aware V2
         except (OSError, AttributeError):
             pass  # 非 Windows 或 DPI 设置不支持，静默降级
 
-        # 获取屏幕 DPI 缩放比例
+        # 使用 tkinter 内置方法获取 DPI 缩放比例（兼容 PyInstaller 打包）
         try:
-            from ctypes import windll
-            user32 = windll.user32
-            user32.SetProcessDPIAware()
-            self.dpi_scale = user32.GetDeviceCaps(user32.GetDC(0), 88) / 96.0
-        except (OSError, AttributeError):
-            self.dpi_scale = 1.0  # 非 Windows 降级
+            self.root.update_idletasks()
+            self.dpi_scale = self.root.winfo_fpixels('1i') / 96.0
+        except Exception:
+            self.dpi_scale = 1.0
 
         # 额外放大系数 - 让界面更大
         self.zoom_factor = UI_CONFIG['zoom_factor']
@@ -183,11 +181,15 @@ class BossFilterGUI:
         window_width = int(UI_CONFIG['window_base_width'] * effective_scale)
         window_height = int(UI_CONFIG['window_base_height'] * effective_scale)
 
-        # 获取屏幕分辨率，计算居中位置
+        # 获取屏幕分辨率，计算居中位置，窗口过大时缩小适配
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
+        if window_width > screen_width:
+            window_width = int(screen_width * 0.9)
+        if window_height > screen_height:
+            window_height = int(screen_height * 0.85)
+        x = max(0, (screen_width - window_width) // 2)
+        y = max(0, (screen_height - window_height) // 2)
 
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.root.minsize(int(UI_CONFIG['window_min_width'] * effective_scale), int(UI_CONFIG['window_min_height'] * effective_scale))
@@ -2974,17 +2976,27 @@ class BossFilterGUI:
         threading.Thread(target=test_thread, daemon=True).start()
 
     def save_config(self):
-        """保存配置文件 - 带备份保护"""
+        """保存配置文件 - 带备份保护，保留 requirement_template 等顶层字段"""
         # 先备份旧配置
         if CONFIG_PATH.exists():
             try:
                 shutil.copy(CONFIG_PATH, CONFIG_BACKUP_PATH)
             except IOError as e:
                 print(f"备份配置失败：{e}")
-        # 保存新配置
-        config = {"job_requirements": self.job_rules}
+
+        # 加载已有配置，保留顶层字段（如 requirement_template）
+        existing = {}
+        if CONFIG_PATH.exists():
+            try:
+                with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        # 更新 job_requirements，保留其他顶层字段
+        existing["job_requirements"] = self.job_rules
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(config, f, ensure_ascii=False, indent=4)
+            json.dump(existing, f, ensure_ascii=False, indent=4)
 
     def on_job_selected(self, event):
         """岗位选择改变"""
@@ -3311,6 +3323,7 @@ class BossFilterGUI:
                 del self.job_rules[job_name]
                 self.save_config()
                 self.config_job_combo['values'] = list(self.job_rules.keys())
+                self.config_job_combo.set('')
                 self.reset_job_form()
 
     def save_current_job(self):
