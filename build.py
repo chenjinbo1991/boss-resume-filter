@@ -47,6 +47,38 @@ def clean_dist():
                     sys.exit(1)
 
 
+# PyPI 包名 → import 名 映射（部分包名与 import 名不同）
+REQUIRED_IMPORTS = {
+    "DrissionPage": "DrissionPage",
+    "pandas": "pandas",
+    "openpyxl": "openpyxl",
+    "requests": "requests",
+    "dotenv": "python-dotenv",
+    "keyring": "keyring",
+    "PIL": "Pillow",
+}
+
+
+def _check_dependencies():
+    """打包前验证所有关键依赖已安装，缺失时直接中断并给出修复命令"""
+    missing = []
+    for import_name, pkg_name in REQUIRED_IMPORTS.items():
+        try:
+            __import__(import_name)
+        except ImportError:
+            missing.append((import_name, pkg_name))
+
+    if missing:
+        print("[依赖缺失] 以下包未安装：\n")
+        for import_name, pkg_name in missing:
+            print(f"  ✗ {pkg_name}（import '{import_name}' 失败）")
+        print(f"\n请在 pack_venv 中安装缺失依赖后重试：")
+        print(f"  pack_venv\\Scripts\\pip install -r requirements.txt\n")
+        sys.exit(1)
+
+    print("  [OK] 依赖检查通过\n")
+
+
 def main():
     run_in_venv()
 
@@ -55,6 +87,9 @@ def main():
 ║         BOSS 简历筛选器 - 自动打包脚本 (v2)                   ║
 ╚══════════════════════════════════════════════════════════════╝
 """)
+
+    # ---- 打包前：验证所有依赖可导入 ----
+    _check_dependencies()
 
     clean_dist()
 
