@@ -477,19 +477,7 @@ def filter_candidate(candidate_text, rule):
 
         # === 硬性条件检查 ===
 
-        # 1. 工作经验（门限 + 超额加分）
-        min_exp = rule.get("min_exp", 0)
-        exp_years = None
-        if min_exp > 0:
-            exp_years = parse_experience_years(candidate_text)
-            if exp_years is not None:
-                if min_exp > exp_years:
-                    return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
-                # 超额加分：超出部分每年+4，20分封顶
-                details['exp_bonus'] = min((exp_years - min_exp) * 4, EXP_MAX)
-            # 找不到经验不再淘汰，仅不加分
-
-        # 2. 学历（门限 + 额外加分）
+        # 1. 学历（门限 + 额外加分）
         edu_bonus = 0
         if rule.get("edu", "不限") != "不限":
             edu_keywords = {"博士": 6, "硕士": 5, "本科": 4, "大专": 3, "高中": 2, "中专": 1}
@@ -514,6 +502,18 @@ def filter_candidate(candidate_text, rule):
 
             edu_bonus = _calc_edu_bonus(candidate_text)
         details['edu_bonus'] = edu_bonus
+
+        # 2. 工作经验（门限 + 超额加分）
+        min_exp = rule.get("min_exp", 0)
+        exp_years = None
+        if min_exp > 0:
+            exp_years = parse_experience_years(candidate_text)
+            if exp_years is not None:
+                if min_exp > exp_years:
+                    return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
+                # 超额加分：超出部分每年+4，20分封顶
+                details['exp_bonus'] = min((exp_years - min_exp) * 4, EXP_MAX)
+            # 找不到经验不再淘汰，仅不加分
 
         # 2.5. 工作地点（硬性条件）
         work_location = rule.get("work_location")

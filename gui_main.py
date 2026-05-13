@@ -700,21 +700,11 @@ class BossFilterGUI:
         self.job_name_entry.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(self.job_name_entry)
 
-        # 经验和学历
+        # 学历和经验
         row2 = ttk.Frame(basic_frame, style='TFrame')
         row2.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Label(row2, text="最低经验:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
+        ttk.Label(row2, text="最低学历:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
                  background=self.colors['bg_card']).pack(side="left")
-        self.min_exp_var = tk.StringVar(value="3")
-        min_exp_spin = ttk.Spinbox(row2, from_=UI_CONFIG['spinbox_exp_min'], to=UI_CONFIG['spinbox_exp_max'], textvariable=self.min_exp_var, width=15, font=self.font_button)
-        min_exp_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        # 禁用滚轮切换，防止误操作
-        min_exp_spin.bind('<Enter>', lambda e: min_exp_spin.bind('<MouseWheel>', lambda ev: 'break'))
-        min_exp_spin.bind('<Leave>', lambda e: min_exp_spin.unbind('<MouseWheel>'))
-        ttk.Label(row2, text="年", font=self.font_label, background=self.colors['bg_card']).pack(side="left")
-
-        ttk.Label(row2, text="最低学历:", font=self.font_label, width=UI_CONFIG['entry_width_label'],
-                 background=self.colors['bg_card']).pack(side="left", padx=(int(30 * self.dpi_scale * self.zoom_factor), 0))
         self.edu_var = tk.StringVar(value="本科")
         edu_combo = ttk.Combobox(row2, textvariable=self.edu_var,
                                  values=["不限", "高中", "中专", "大专", "本科", "硕士", "博士"],
@@ -723,6 +713,16 @@ class BossFilterGUI:
         # 禁用滚轮切换，防止误操作
         edu_combo.bind('<Enter>', lambda e: edu_combo.bind('<MouseWheel>', lambda ev: 'break'))
         edu_combo.bind('<Leave>', lambda e: edu_combo.unbind('<MouseWheel>'))
+
+        ttk.Label(row2, text="最低经验:", font=self.font_label, width=UI_CONFIG['entry_width_label'],
+                 background=self.colors['bg_card']).pack(side="left", padx=(int(30 * self.dpi_scale * self.zoom_factor), 0))
+        self.min_exp_var = tk.StringVar(value="3")
+        min_exp_spin = ttk.Spinbox(row2, from_=UI_CONFIG['spinbox_exp_min'], to=UI_CONFIG['spinbox_exp_max'], textvariable=self.min_exp_var, width=15, font=self.font_button)
+        min_exp_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        # 禁用滚轮切换，防止误操作
+        min_exp_spin.bind('<Enter>', lambda e: min_exp_spin.bind('<MouseWheel>', lambda ev: 'break'))
+        min_exp_spin.bind('<Leave>', lambda e: min_exp_spin.unbind('<MouseWheel>'))
+        ttk.Label(row2, text="年", font=self.font_label, background=self.colors['bg_card']).pack(side="left")
 
         # 薪资范围
         self.salary_min_var = tk.StringVar()
