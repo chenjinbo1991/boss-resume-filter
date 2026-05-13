@@ -70,9 +70,7 @@ def main():
         '--hidden-import=tkinter.font',
         '--hidden-import=tkinter.filedialog',
         '--hidden-import=tkinter.messagebox',
-        '--hidden-import=PIL.Image',
-        '--hidden-import=PIL.ImageDraw',
-        '--hidden-import=PIL.ImageTk',
+        '--collect-all', 'PIL',  # Pillow 含大量动态加载的图片格式插件，需完整收集
         '--exclude-module=PyQt5',
         '--exclude-module=PySide6',
         '--exclude-module=torch',

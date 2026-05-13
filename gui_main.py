@@ -3477,7 +3477,6 @@ class BossFilterGUI:
                     if not silent:
                         self.browser_status_help.config(text="正在启动 Chrome 浏览器...")
                         self.append_log("⚠️ 未检测到 Chrome 调试端口，正在自动启动 Chrome...")
-                        self.append_log("⏳ Chrome 启动中，每2秒检测一次...")
                         # DrissionPage ChromiumPage() 原生支持无浏览器时自动启动
                         from DrissionPage import ChromiumPage
                         for attempt in range(1, 16):
@@ -3501,10 +3500,17 @@ class BossFilterGUI:
                                     self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘")
                                     self.append_log("⚠️ Chrome 已启动，请导航到 BOSS 直聘")
                                 return
+                            except FileNotFoundError:
+                                self.browser_status_help.config(text="未找到 Chrome 浏览器，请安装后重试")
+                                self.append_log("❌ 未找到 Chrome 浏览器，请安装 Chrome 或将 chrome.exe 加入 PATH")
+                                return
                             except Exception as e:
+                                err_msg = str(e)
+                                if 'chrome' in err_msg.lower() or 'errno' in err_msg.lower():
+                                    self.browser_status_help.config(text="Chrome 浏览器异常，请检查安装")
+                                    self.append_log(f"❌ Chrome 启动失败：{err_msg}")
+                                    return
                                 self.append_log(f"⏳ 等待 Chrome 就绪... ({attempt}/15)")
-                        self.append_log("❌ Chrome 启动超时（30秒），请手动检查")
-                        self.browser_status_help.config(text="Chrome 启动超时，请手动启动并开启调试端口")
                     else:
                         self.browser_status_help.config(text="未检测到 Chrome 浏览器，请确保浏览器已启动")
                         if prev_state != "🔴 未连接":
