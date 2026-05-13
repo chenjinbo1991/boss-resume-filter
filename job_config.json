@@ -5,6 +5,8 @@
             "min_exp": 4,
             "edu": "本科",
             "work_location": "南京",
+            "salary_min": 12,
+            "salary_max": 15,
             "keywords": [
                 {
                     "name": "Spring Cloud",

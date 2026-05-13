@@ -145,18 +145,22 @@ class BossFilterGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("BOSS 简历筛选器 v2.3 - 智能候选人筛选工具")
+        self.root.title("BOSS 简历筛选器 v2.4 - 智能候选人筛选工具")
 
-        # 高 DPI 支持 - Per Monitor DPI Aware V2（仅此一个调用，不混用旧 API）
+        # 在 DPI 感知生效前捕获屏幕尺寸（此时与 tkinter geometry 同一虚拟坐标系）
+        self.root.update_idletasks()
+        _screen_width = self.root.winfo_screenwidth()
+        _screen_height = self.root.winfo_screenheight()
+
+        # 高 DPI 支持 - Per Monitor DPI Aware V2
         try:
             from ctypes import windll
             windll.shcore.SetProcessDpiAwareness(2)  # 2 = Per Monitor DPI Aware V2
         except (OSError, AttributeError):
-            pass  # 非 Windows 或 DPI 设置不支持，静默降级
+            pass
 
         # 使用 tkinter 内置方法获取 DPI 缩放比例（兼容 PyInstaller 打包）
         try:
-            self.root.update_idletasks()
             self.dpi_scale = self.root.winfo_fpixels('1i') / 96.0
         except Exception:
             self.dpi_scale = 1.0
@@ -176,14 +180,13 @@ class BossFilterGUI:
         listbox_font = tkfont.Font(family=FONT_FAMILY, size=int(20 * self.dpi_scale * self.zoom_factor))
         self.root.option_add('*TCombobox*Listbox.font', listbox_font)
 
-        # 窗口初始化完成后居中显示
+        # 窗口初始化完成后居中显示（使用 DPI 感知前捕获的屏幕尺寸）
         self.root.update_idletasks()
         window_width = int(UI_CONFIG['window_base_width'] * effective_scale)
         window_height = int(UI_CONFIG['window_base_height'] * effective_scale)
 
-        # 获取屏幕分辨率，计算居中位置，窗口过大时缩小适配
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
+        screen_width = _screen_width
+        screen_height = _screen_height
         if window_width > screen_width:
             window_width = int(screen_width * 0.9)
         if window_height > screen_height:
@@ -727,6 +730,8 @@ class BossFilterGUI:
         # 薪资范围
         self.salary_min_var = tk.StringVar()
         self.salary_max_var = tk.StringVar()
+        self.salary_min_var.trace_add('write', self._validate_salary_input)
+        self.salary_max_var.trace_add('write', self._validate_salary_input)
         row_salary = ttk.Frame(basic_frame, style='TFrame')
         row_salary.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_salary, text="薪资范围:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
@@ -734,11 +739,13 @@ class BossFilterGUI:
         salary_min_entry = ttk.Entry(row_salary, textvariable=self.salary_min_var, width=8, font=self.font_button)
         salary_min_entry.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(salary_min_entry)
+        self.salary_min_entry = salary_min_entry
         ttk.Label(row_salary, text="K  ~", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
         salary_max_entry = ttk.Entry(row_salary, textvariable=self.salary_max_var, width=8, font=self.font_button)
         salary_max_entry.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(salary_max_entry)
+        self.salary_max_entry = salary_max_entry
         ttk.Label(row_salary, text="K", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
         ttk.Label(row_salary, text="  留空表示不限制薪资",
@@ -876,22 +883,29 @@ class BossFilterGUI:
         required_frame = ttk.LabelFrame(self.result_detail_frame, text="  必要条件（硬性约束）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
         required_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-        # 必要条件列表显示 - 字体与技能列表保持一致
+        # 必要条件列表显示
         self.required_listbox = tk.Listbox(required_frame, height=UI_CONFIG['listbox_height'],
-                                          font=(FONT_FAMILY, int(13 * self.dpi_scale * self.zoom_factor)),
+                                          font=self.font_button,
                                           borderwidth=1, highlightthickness=0)
         self.required_listbox.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 必要条件编辑
+        # 必要条件编辑 - 条件类型选择 + 关键词（逗号分隔）
         required_edit_frame = ttk.Frame(required_frame, style='TFrame')
         required_edit_frame.pack(fill="x")
-        ttk.Label(required_edit_frame, text="添加条件:", font=self.font_label,
+        ttk.Label(required_edit_frame, text="类型:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
+        self.required_cond_type_var = tk.StringVar(value="简单匹配")
+        cond_type_combo = ttk.Combobox(required_edit_frame, textvariable=self.required_cond_type_var,
+                                        values=["简单匹配", "OR（满足任一）", "AND（全部满足）"],
+                                        width=12, state="readonly", font=self.font_combo)
+        cond_type_combo.pack(side="left", padx=int(3 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(required_edit_frame, text="关键词:", font=self.font_label,
+                 background=self.colors['bg_card']).pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), 0))
         self.new_required_var = tk.StringVar()
-        required_edit = ttk.Entry(required_edit_frame, textvariable=self.new_required_var, width=UI_CONFIG['entry_width_required'], font=self.font_button)
-        required_edit.pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+        required_edit = ttk.Entry(required_edit_frame, textvariable=self.new_required_var, font=self.font_button)
+        required_edit.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor), fill="x", expand=True)
         self.bind_entry_context_menu(required_edit)
-        ttk.Button(required_edit_frame, text="添加", command=self.add_required_condition).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), int(3 * self.dpi_scale * self.zoom_factor)))
+        ttk.Button(required_edit_frame, text="添加", command=self.add_required_condition).pack(side="left", padx=(int(8 * self.dpi_scale * self.zoom_factor), int(3 * self.dpi_scale * self.zoom_factor)))
         ttk.Button(required_edit_frame, text="删除选中", command=self.delete_required_condition).pack(side="left", padx=(int(3 * self.dpi_scale * self.zoom_factor), 0))
 
         # ===== 打招呼话术模板 =====
@@ -3066,11 +3080,7 @@ class BossFilterGUI:
         required = rule.get("required_conditions", [])
         if isinstance(required, list):
             for cond in required:
-                if isinstance(cond, dict):
-                    # 复杂条件格式
-                    self.required_conditions_data.append(json.dumps(cond, ensure_ascii=False))
-                else:
-                    self.required_conditions_data.append(str(cond))
+                self.required_conditions_data.append(cond)
         self.refresh_required_listbox()
 
         # 加载打招呼话术模板
@@ -3103,7 +3113,12 @@ class BossFilterGUI:
         """刷新必要条件列表显示"""
         self.required_listbox.delete(0, tk.END)
         for cond in self.required_conditions_data:
-            self.required_listbox.insert(tk.END, cond)
+            if isinstance(cond, dict):
+                cond_type = cond.get("type", "or").upper()
+                items = ", ".join(cond.get("items", []))
+                self.required_listbox.insert(tk.END, f"{cond_type}: {items}")
+            else:
+                self.required_listbox.insert(tk.END, str(cond))
 
     def add_skill(self):
         """添加技能"""
@@ -3184,11 +3199,28 @@ class BossFilterGUI:
 
     def add_required_condition(self):
         """添加必要条件"""
-        cond = self.new_required_var.get().strip()
-        if not cond:
-            messagebox.showwarning("警告", "请输入条件")
+        cond_type = self.required_cond_type_var.get()
+        raw = self.new_required_var.get().strip()
+        if not raw:
+            messagebox.showwarning("警告", "请输入关键词")
             return
-        self.required_conditions_data.append(cond)
+
+        if cond_type == "简单匹配":
+            # 简单字符串匹配
+            self.required_conditions_data.append(raw)
+        elif cond_type == "OR（满足任一）":
+            items = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()]
+            if not items:
+                messagebox.showwarning("警告", "请输入至少一个关键词")
+                return
+            self.required_conditions_data.append({"type": "or", "items": items})
+        elif cond_type == "AND（全部满足）":
+            items = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()]
+            if not items:
+                messagebox.showwarning("警告", "请输入至少一个关键词")
+                return
+            self.required_conditions_data.append({"type": "and", "items": items})
+
         self.refresh_required_listbox()
         self.new_required_var.set("")
 
@@ -3201,6 +3233,19 @@ class BossFilterGUI:
         for index in reversed(selection):
             self.required_conditions_data.pop(index)
         self.refresh_required_listbox()
+
+    def _validate_salary_input(self, *args):
+        """实时验证薪资输入框内容（仅允许数字或空）"""
+        for var, entry in [(self.salary_min_var, self.salary_min_entry),
+                           (self.salary_max_var, self.salary_max_entry)]:
+            text = var.get()
+            if text == "":
+                # 空值合法，恢复默认样式
+                entry.configure(foreground=self.colors['text_primary'])
+            elif not text.isdigit():
+                entry.configure(foreground='red')
+            else:
+                entry.configure(foreground=self.colors['text_primary'])
 
     def _insert_requirement_template(self):
         """插入招聘需求模板到输入框（模板文本从 job_config.json 读取）"""
@@ -3287,7 +3332,7 @@ class BossFilterGUI:
             self.required_conditions_data = []
             required_conditions = job_config.get("required_conditions", [])
             for cond in required_conditions:
-                self.required_conditions_data.append(str(cond))
+                self.required_conditions_data.append(cond)
             self.refresh_required_listbox()
 
             # 显示解析结果
@@ -3386,15 +3431,7 @@ class BossFilterGUI:
         keywords = [{"name": s["name"], "weight": s["weight"]} for s in self.skills_data]
 
         # 从 required_conditions_data 构建必要条件列表
-        required_conditions = []
-        for cond in self.required_conditions_data:
-            # 尝试解析为 JSON（复杂条件）
-            try:
-                parsed = json.loads(cond)
-                required_conditions.append(parsed)
-            except json.JSONDecodeError:
-                # 简单字符串条件
-                required_conditions.append(cond)
+        required_conditions = list(self.required_conditions_data)  # 已是正确格式（str 或 dict）
 
         # 获取打招呼话术模板
         greet_template = self.greet_template_text.get("1.0", tk.END).strip()
@@ -3402,12 +3439,30 @@ class BossFilterGUI:
         # 获取原始招聘需求（从需求文档解析框）
         original_requirement = self.requirement_text.get("1.0", tk.END).strip()
 
+        # 验证薪资输入格式（非空则必须为数字）
+        salary_min = None
+        salary_max = None
+        salary_min_str = self.salary_min_var.get().strip()
+        salary_max_str = self.salary_max_var.get().strip()
+        if salary_min_str:
+            try:
+                salary_min = int(salary_min_str)
+            except ValueError:
+                messagebox.showwarning("警告", "薪资范围最低值必须为数字（如：12）")
+                return
+        if salary_max_str:
+            try:
+                salary_max = int(salary_max_str)
+            except ValueError:
+                messagebox.showwarning("警告", "薪资范围最高值必须为数字（如：15）")
+                return
+
         self.job_rules[normalized_job_name] = {
             "min_exp": int(self.min_exp_var.get()),
             "edu": self.edu_var.get(),
             "work_location": self.work_location_var.get().strip() or None,
-            "salary_min": int(self.salary_min_var.get()) if self.salary_min_var.get().strip() else None,
-            "salary_max": int(self.salary_max_var.get()) if self.salary_max_var.get().strip() else None,
+            "salary_min": salary_min,
+            "salary_max": salary_max,
             "keywords": keywords,
             "required_conditions": required_conditions,
             "greet_template": greet_template if greet_template else None,
