@@ -3471,10 +3471,44 @@ class BossFilterGUI:
                     prev_state = self.browser_status_indicator.cget("text")
                     self.browser_connected = False
                     self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
-                    self.browser_status_help.config(text="未检测到 Chrome 浏览器，请确保浏览器已启动")
                     self.start_btn.config(state="disabled")
-                    if not silent or prev_state != "🔴 未连接":
-                        self.append_log("❌ 未检测到 Chrome 调试端口，请先启动 Chrome 浏览器")
+
+                    # 自动启动 Chrome（仅在手动点击时）
+                    if not silent:
+                        self.browser_status_help.config(text="正在启动 Chrome 浏览器...")
+                        self.append_log("⚠️ 未检测到 Chrome 调试端口，正在自动启动 Chrome...")
+                        self.append_log("⏳ Chrome 启动中，每2秒检测一次...")
+                        # DrissionPage ChromiumPage() 原生支持无浏览器时自动启动
+                        from DrissionPage import ChromiumPage
+                        for attempt in range(1, 16):
+                            time.sleep(2)
+                            try:
+                                page = ChromiumPage()
+                                current_url = page.url
+                                if 'zhipin.com/web/chat/recommend' in current_url.lower():
+                                    self.browser_connected = True
+                                    self.browser_page = page
+                                    self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
+                                    self.browser_status_help.config(text="已连接到 BOSS 直聘推荐页面")
+                                    self.start_btn.config(state="normal")
+                                    self.append_log("✅ Chrome 已启动并连接成功")
+                                elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
+                                    self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
+                                    self.browser_status_help.config(text="浏览器已连接，请导航到推荐页面")
+                                    self.append_log("⚠️ Chrome 已启动，请导航到 https://www.zhipin.com/web/chat/recommend")
+                                else:
+                                    self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
+                                    self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘")
+                                    self.append_log("⚠️ Chrome 已启动，请导航到 BOSS 直聘")
+                                return
+                            except Exception as e:
+                                self.append_log(f"⏳ 等待 Chrome 就绪... ({attempt}/15)")
+                        self.append_log("❌ Chrome 启动超时（30秒），请手动检查")
+                        self.browser_status_help.config(text="Chrome 启动超时，请手动启动并开启调试端口")
+                    else:
+                        self.browser_status_help.config(text="未检测到 Chrome 浏览器，请确保浏览器已启动")
+                        if prev_state != "🔴 未连接":
+                            self.append_log("❌ 未检测到 Chrome 调试端口，请先启动 Chrome 浏览器")
                     return
 
                 from DrissionPage import ChromiumPage
