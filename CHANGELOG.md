@@ -1,14 +1,23 @@
 # 更新日志
 
-## v2.3 — 2026-05-13
+## v2.4 — 2026-05-13
+
+### 新增功能
+- **薪酬筛选全链路**：需求解析提取薪资范围（doc_parser）→ 配置文件持久化（salary_min/salary_max）→ 候选人筛选过滤（候选人期望最低薪资 >= 岗位上限 + 2K 淘汰）
+- **薪酬配置 UI**：岗位配置页"基本信息"区新增薪资范围输入框，留空不限制
+
+### 行为优化
+- **筛选优先级调整**：GUI 岗位配置表单 + filter_candidate 硬条件检查，学历判断均移到经验之前
 
 ### BUG修复（2026-05-13）
 - **PIL 打包缺失**：pack_venv 中漏装 Pillow，导致 EXE 在无 Python 环境电脑上启动报 `ModuleNotFoundError: No module named 'PIL'`。修复：安装 Pillow 到 pack_venv，build.py 改用 `--collect-all PIL` 完整收集所有图片格式插件
 - **Chrome 启动异常处理**：`FileNotFoundError`（Chrome 未安装）和 `chrome`/`errno` 关键词异常（Chrome 安装异常）分类处理，替代宽泛的超时提示
 - **依赖清理**：移除 requirements.txt 中已废弃的 `cdpkit`（DrissionPage 4.x 不再需要）
 
-### 构建改进（2026-05-13）
+### 构建改进
 - `build.py` 增加 `_check_dependencies()` 打包前验证：逐项 import 检查 7 个核心依赖，缺失时明确提示包名和修复命令，杜绝生成有缺陷的 EXE
+
+## v2.3 — 2026-05-13
 
 ### 图标系统升级（2026-05-12）
 - **全部图标 DPI 高清化**：使用 Pillow ImageDraw 在运行时程序化生成 21 个矢量精度图标，替代所有 emoji 字符图标
