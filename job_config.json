@@ -114,6 +114,9 @@
         "中级鸿蒙开发工程师": {
             "min_exp": 3,
             "edu": "本科",
+            "work_location": "南京",
+            "salary_min": 13,
+            "salary_max": 16,
             "keywords": [],
             "required_conditions": [
                 "统招本科"
