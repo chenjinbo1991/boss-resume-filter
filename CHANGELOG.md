@@ -19,9 +19,19 @@
 - **PIL 打包缺失**：pack_venv 中漏装 Pillow，导致 EXE 在无 Python 环境电脑上启动报 `ModuleNotFoundError: No module named 'PIL'`。修复：安装 Pillow 到 pack_venv，build.py 改用 `--collect-all PIL` 完整收集所有图片格式插件
 - **Chrome 启动异常处理**：`FileNotFoundError`（Chrome 未安装）和 `chrome`/`errno` 关键词异常（Chrome 安装异常）分类处理，替代宽泛的超时提示
 - **依赖清理**：移除 requirements.txt 中已废弃的 `cdpkit`（DrissionPage 4.x 不再需要）
+- **薪资解析面议边界**：`_extract_salary_range()` 未覆盖"面议"/"薪资面议"/"薪资可谈"等非数字描述，正则匹配前增加显式拦截（doc_parser.py + src/parser/requirement.py）
 
 ### 构建改进
 - `build.py` 增加 `_check_dependencies()` 打包前验证：逐项 import 检查 7 个核心依赖，缺失时明确提示包名和修复命令，杜绝生成有缺陷的 EXE
+- `build.py` 新增 `--release` 一键发布：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传，全流程自动化
+- `build.py` 新增 `--version X.Y` 参数：自动更新 `gui_main.py` 中 `__version__` 后执行打包/发布
+- `__version__` 收敛到 `gui_main.py` 模块变量：唯一版本号来源，UI 标签动态跟随，`build.py` AST 解析提取并核对
+- `.gitignore` 补充：`.agents/`、`.baoyu-skills/`、`skills-lock.json`、`wechat/`
+
+### 反爬健壮性（2026-05-15）
+- **原子性写入**：`save_candidates_all` 改为先写 `.tmp` 再 `os.replace()`，防止写入中途崩溃导致 `candidates_all.json` 数据损坏
+- **随机延迟抖动**：新增 `_human_delay(center, spread)` 函数，所有 `time.sleep` 调用带随机抖动（不同场景不同 spread），降低行为指纹识别风险
+- **安全验证阻断**：新增 `_detect_captcha()` 函数，检测 11 个验证码关键词 + 7 种常见验证码容器 CSS 选择器。在滚动扫描每轮开始、打招呼点击后、打招呼循环失败时三处调用，命中即停止自动化并提示人工处理
 
 ## v2.3 — 2026-05-13
 

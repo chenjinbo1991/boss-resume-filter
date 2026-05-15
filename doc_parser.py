@@ -68,9 +68,16 @@ def _extract_work_location(text: str) -> str:
 
 
 def _extract_salary_range(text: str):
-    """从招聘需求中提取薪资范围。返回 (min_k, max_k)，未匹配返回 (None, None)"""
+    """从招聘需求中提取薪资范围。返回 (min_k, max_k)，未匹配或面议返回 (None, None)"""
     if not text:
         return None, None
+
+    # 边界情况：面议/薪资open/可谈 等非数字薪资描述，直接跳过
+    non_numeric = ['面议', '薪资面议', '待遇面议', '薪资可谈', '薪资Open', '薪资open', '薪资OPEN']
+    for kw in non_numeric:
+        if kw in text:
+            return None, None
+
     patterns = [
         r'薪资(?:范围)?\s*[：:]\s*(\d+)\s*[kK]\s*[-~～\-]\s*(\d+)\s*[kK]',
         r'月薪\s*[：:]\s*(\d+)\s*[kK]\s*[-~～\-]\s*(\d+)\s*[kK]',

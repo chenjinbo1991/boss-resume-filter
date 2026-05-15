@@ -5,6 +5,7 @@ BOSS 直聘候选人智能提取工具 v2.4
 import time
 import json
 import re
+import random
 import threading
 from datetime import datetime
 from DrissionPage import ChromiumPage
@@ -14,6 +15,12 @@ import os
 class StopRequested(Exception):
     """停止请求异常 — 用于立即终止扫描流程"""
     pass
+
+
+def _human_delay(center, spread=0.3):
+    """模拟人类操作延迟，在 center ± spread/2 范围内随机抖动，降低行为指纹风险"""
+    return center + random.uniform(-spread / 2, spread / 2)
+
 
 try:
     import pandas as pd
@@ -804,8 +811,10 @@ def save_candidates_all(candidates_all):
         if c.get('greeting_in_progress') and c.get('greet_sent'):
             del c['greeting_in_progress']
 
-    with open(all_file, 'w', encoding='utf-8') as f:
+    tmp_file = all_file + ".tmp"
+    with open(tmp_file, 'w', encoding='utf-8') as f:
         json.dump(unique_candidates, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_file, all_file)
     print(f"已更新 {all_file} (共 {len(unique_candidates)} 个唯一候选人)")
 
 
@@ -837,7 +846,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
         stop_event: threading.Event，设位时立即停止扫描
     """
     print("正在提取候选人...")
-    time.sleep(1.0)
+    time.sleep(_human_delay(1.0, 0.5))
 
     iframe = get_iframe(page)
 
@@ -850,6 +859,12 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
         # 检查停止信号
         if stop_event and stop_event.is_set():
             raise StopRequested()
+
+        # 每轮检测验证码（防止安全弹窗后盲目继续滚动）
+        is_captcha, captcha_msg = _detect_captcha(page)
+        if is_captcha:
+            print(f"\n⚠️  检测到安全验证弹窗 ({captcha_msg})，暂停扫描。请手动完成验证后重新运行。")
+            break
 
         # 进度上报
         if progress_callback:
@@ -864,10 +879,10 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
                     var list = document.querySelector(".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]");
                     if(list) list.scrollTop += 800;
                 ''')
-                time.sleep(0.5)
+                time.sleep(_human_delay(0.5, 0.4))
             else:
                 page.run_js('window.scrollBy(0, 800)')
-                time.sleep(0.5)
+                time.sleep(_human_delay(0.5, 0.4))
 
         # 滚动后检测是否已到底（文本提示）
         if scroll_round > 0:
@@ -964,7 +979,7 @@ def send_greeting_on_list_page(page, geek_id, retry=0):
         if not card:
             # 虚拟列表可能未渲染到可视区，微微滚动触发渲染后重试
             target.run_js('window.scrollBy(0, 300)')
-            time.sleep(0.3)
+            time.sleep(_human_delay(0.3, 0.25))
             card = target.ele(card_css, timeout=2)
 
         if not card:
@@ -988,21 +1003,26 @@ def send_greeting_on_list_page(page, geek_id, retry=0):
         # 滚到可见区域再点击，防止被悬浮头部遮挡
         try:
             greet_btn.scroll.to_see(center=True)
-            time.sleep(0.1)
+            time.sleep(_human_delay(0.1, 0.08))
             greet_btn.click()
         except Exception:
             greet_btn.run_js('this.click()')
 
-        time.sleep(0.3)  # 等待按钮点击生效
+        time.sleep(_human_delay(0.3, 0.3))  # 等待按钮点击生效
 
         # 检测升级套餐/次数上限弹窗（重试一次，弹窗可能有渲染延迟）
         is_limited, limit_msg = _detect_limit_popup(page)
-        if not is_limited:
-            time.sleep(0.3)
+        is_captcha, captcha_msg = _detect_captcha(page)
+        if not is_limited and not is_captcha:
+            time.sleep(_human_delay(0.3, 0.3))
             is_limited, limit_msg = _detect_limit_popup(page)
+            if not is_captcha:
+                is_captcha, captcha_msg = _detect_captcha(page)
 
         if is_limited:
             return False, f"沟通次数已达上限: {limit_msg}"
+        if is_captcha:
+            return False, f"检测到安全验证: {captcha_msg}"
 
         return True, "成功"
 
@@ -1045,6 +1065,62 @@ def _detect_limit_popup(page):
                 return True, "主页面检测到限制弹窗"
         except Exception:
             pass
+
+        return False, ""
+
+    except Exception:
+        return False, ""
+
+
+def _detect_captcha(page):
+    """
+    检测是否弹出了 BOSS 直聘安全验证弹窗（滑块/图形验证码等）
+
+    BOSS 直聘常见验证形式：
+        - 滑块拼图验证（.captcha-slider, .slider-verify 等）
+        - 图形验证码（.geetest, .captcha-img 等）
+        - 安全提醒弹窗（"检测到异常操作"、"请完成安全验证"）
+
+    检测到验证码时暂停自动化并提示用户处理，避免盲目重试触发风控升级。
+
+    返回: (is_captcha: bool, detail: str)
+    """
+    captcha_keywords = [
+        "请完成安全验证", "验证码", "滑块验证", "请拖动滑块",
+        "拖拽拼图", "人机验证", "安全验证", "检测到异常操作",
+        "请先完成验证", "行为验证", "账户安全验证",
+    ]
+    checks = " || ".join(f'body.innerText.includes("{kw}")' for kw in captcha_keywords)
+    script = f'return (function(){{var body=document.body;return {checks};}})()'
+
+    try:
+        iframe = get_iframe(page)
+        if iframe:
+            try:
+                if iframe.run_js(script):
+                    return True, "iframe 检测到安全验证弹窗"
+            except Exception:
+                pass
+
+        try:
+            if page.run_js(script):
+                return True, "主页面检测到安全验证弹窗"
+        except Exception:
+            pass
+
+        # 额外检查常见验证码容器的 DOM 存在性（无文本提示的纯图形验证）
+        container_checks = [
+            '.geetest_panel', '.captcha-box', '.slider-captcha',
+            '.verify-captcha', '.captcha-container', '#captcha',
+            '.yoda-modal',  # BOSS 安全验证弹窗常见容器
+        ]
+        for selector in container_checks:
+            try:
+                el = page.ele(f'css:{selector}', timeout=0.3)
+                if el and el.states.is_displayed:
+                    return True, f"检测到验证码容器 ({selector})"
+            except Exception:
+                continue
 
         return False, ""
 
@@ -1266,9 +1342,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         iframe = get_iframe(page)
         target = iframe if iframe else page
         target.run_js('window.scrollBy(0, 200)')
-        time.sleep(0.3)
+        time.sleep(_human_delay(0.3, 0.25))
         target.run_js('window.scrollBy(0, -100)')
-        time.sleep(0.3)
+        time.sleep(_human_delay(0.3, 0.25))
 
         # 筛选需要打招呼的候选人
         if point_to_point_mode:
@@ -1309,9 +1385,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                     pct = int((i + 1) / len(to_greet_list) * 100)
                     progress_callback(pct, f"正在打招呼... {i + 1}/{len(to_greet_list)}")
 
-                # 每个打招呼间隔 0.5 秒
+                # 每个打招呼间隔 ~0.5 秒（带随机抖动）
                 if i > 0:
-                    time.sleep(0.5)
+                    time.sleep(_human_delay(0.5, 0.4))
 
                 print(f"  [{i+1}/{len(to_greet_list)}] {candidate['name']} ({candidate['recommend_level']}, {candidate['match_score']}分) {action}...", end=" ")
 
@@ -1319,7 +1395,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                 if i > 0 and i % 5 == 0:
                     iframe = get_iframe(page)
                     (iframe if iframe else page).run_js('window.scrollBy(0, 400)')
-                    time.sleep(0.2)
+                    time.sleep(_human_delay(0.2, 0.15))
 
                 success, msg = send_greeting_on_list_page(page, candidate['geek_id'])
 
@@ -1343,6 +1419,15 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                         print(f"⚠️  今日沟通次数已达上限！")
                         print(f"   BOSS 直聘已弹出升级套餐页面，后续打招呼不会真正发送")
                         print(f"   本次已成功打招呼：{greet_success_count} 人")
+                        print(f"{'='*60}")
+                        break
+
+                    # 安全验证（滑块/图形验证码）：暂停自动化，等待人工处理
+                    if "验证" in msg:
+                        print(f"\n{'='*60}")
+                        print(f"⚠️  检测到安全验证弹窗！")
+                        print(f"   请手动完成验证码后再继续。")
+                        print(f"   本次已成功打招呼：{greet_success_count} 人，{greet_fail_count} 人失败")
                         print(f"{'='*60}")
                         break
 
@@ -1514,7 +1599,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                 page = ChromiumPage()
                 print("\n浏览器已打开，请手动导航到候选人推荐页面")
                 print("等待 3 秒...")
-                time.sleep(3)
+                time.sleep(_human_delay(3.0, 2.0))
 
                 # 执行补打招呼
                 success_count = 0
@@ -1573,7 +1658,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         print("\n浏览器已打开，请手动导航到候选人推荐页面")
         print("例如：https://www.zhipin.com/web/chat/recommend")
         print("请确保页面完全加载后，等待 3 秒...")
-        time.sleep(3)
+        time.sleep(_human_delay(3.0, 2.0))
 
         job_rules, default_rule = load_job_config()
 

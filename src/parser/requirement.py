@@ -549,6 +549,11 @@ class RequirementParser:
 
     def _extract_salary_range(self) -> str:
         """提取薪资范围"""
+        # 边界情况：面议/可谈等非数字薪资描述
+        for kw in ['面议', '薪资面议', '待遇面议', '薪资可谈', '薪资Open', '薪资open']:
+            if kw in self.content:
+                return ""
+
         patterns = [
             r"薪资 [范围]?[：:]\s*(.+?)(?:\n|$)",
             r"薪酬 [：:]\s*(.+?)(?:\n|$)",
