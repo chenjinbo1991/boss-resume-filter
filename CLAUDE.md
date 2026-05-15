@@ -10,7 +10,7 @@ boss-resume-filter/
 ├── main.py               # 命令行入口
 ├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
-├── build.py              # PyInstaller 打包脚本
+├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── candidates_all.json   # 累积的候选人数据
@@ -25,6 +25,11 @@ boss-resume-filter/
 ├── README_文件管理.md      # 数据文件管理说明
 ├── DEPLOYMENT.md         # 部署说明（新电脑配置）
 ├── PACKAGING.md          # 打包指南
+├── src/                  # 模块化包（浏览器/匹配/解析/Web）
+│   ├── boss/             # 浏览器自动化、候选人抓取、岗位管理、初筛
+│   ├── matcher/          # 匹配引擎
+│   ├── parser/           # 需求解析、简历解析
+│   └── web/              # Streamlit Web 界面
 ├── tests/                # 测试脚本目录
 └── scripts/              # 辅助脚本目录
 ```
@@ -45,9 +50,13 @@ boss-resume-filter/
 
 ### 打包发布
 - `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~47MB），打包前自动验证依赖完整性
+- `python build.py --release`：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传（一键发布）
+- `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
+- `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
 - dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
 - job_config.json 和 api_config.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
 - 打包前 `_check_dependencies()` 逐项 import 验证核心依赖，缺失时中断并给出修复命令
+- 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；tag 冲突时自动 `--force`（master 除外）
 
 ## 代码规范
 - 使用 type hints

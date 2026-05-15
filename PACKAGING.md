@@ -35,6 +35,12 @@ pip install -r requirements.txt
 # 使用自动打包脚本（推荐）
 python build.py
 
+# 一键发布：打包 → 提交 → 打 tag → 推送 → GitHub Release
+python build.py --release
+
+# 自动更新版本号 + 一键发布
+python build.py --release --version 2.5
+
 # 或手动打包（不推荐，缺少依赖检查和 PIL 完整收集）
 pyinstaller --onefile --noconsole \
     --collect-all PIL \

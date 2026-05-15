@@ -138,6 +138,11 @@ boss-resume-filter/
 ├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── candidates_all.json   # 累积的候选人数据（累积、去重）
 ├── candidates_all.xlsx   # Excel 导出文件（多工作表 + 统计摘要）
+├── src/                  # 模块化包
+│   ├── boss/             # 浏览器自动化、候选人抓取、岗位管理
+│   ├── matcher/          # 匹配引擎
+│   ├── parser/           # 需求解析、简历解析
+│   └── web/              # Streamlit Web 界面
 ├── CLAUDE.md             # AI 协作规范
 ├── README.md             # 项目主文档
 ├── GUI 使用说明.md        # 图形界面详细说明

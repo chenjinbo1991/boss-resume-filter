@@ -47,3 +47,12 @@ Thumbs.db
 
 # 配置备份
 *.bak
+
+# Claude Code
+.claude/
+.agents/
+.baoyu-skills/
+skills-lock.json
+
+# 微信相关
+wechat/

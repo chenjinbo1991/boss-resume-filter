@@ -1,7 +1,10 @@
 """
-BOSS 简历筛选器 - 图形界面版本 v2.4
+BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
+
+__version__ = "2.4"
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
 import json
@@ -455,7 +458,7 @@ class BossFilterGUI:
         bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         bottom_frame.pack(side="bottom", fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
-        version_label = ttk.Label(bottom_frame, text="v2.4",
+        version_label = ttk.Label(bottom_frame, text=f"v{__version__}",
                                   font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
                                   foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
                                   cursor="hand2")
