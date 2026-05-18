@@ -2247,18 +2247,17 @@ class BossFilterGUI:
                             self.api_config["api_key"] = encrypted_key
 
                     # 从 keyring 读取所有 saved_models 的 API Key（按服务商）
+                    # 同时清理文件中可能已泄露的明文 Key（防御性清理）
                     for model_config in self.api_config["saved_models"]:
-                        provider = model_config.get("api_provider", "")
-                        if provider:
-                            api_key = get_api_key(provider)
-                            if api_key:
-                                model_config["api_key"] = api_key
+                        model_config.pop("api_key", None)
+                        model_config.pop("api_key_ref", None)
 
-                    # 检测是否有 saved_models 但 API Key 读取失败（新电脑场景）
+                    # 检测是否有 saved_models 但 keyring 中无对应 API Key（新电脑场景）
                     if self.api_config["saved_models"]:
                         has_missing_key = False
                         for m in self.api_config["saved_models"]:
-                            if not m.get("api_key"):
+                            provider = m.get("api_provider", "")
+                            if provider and not get_api_key(provider):
                                 has_missing_key = True
                                 break
                         if has_missing_key:
@@ -2281,6 +2280,16 @@ class BossFilterGUI:
             "saved_models": [],
             "providers": {}
         }
+
+    def _sanitize_config_for_save(self, config):
+        """移除所有 api_key 字段（顶层 + saved_models 内嵌），返回可安全写入磁盘的副本"""
+        clean = {k: v for k, v in config.items() if k != "api_key"}
+        if "saved_models" in clean:
+            clean["saved_models"] = [
+                {k: v for k, v in m.items() if k not in ("api_key", "api_key_ref")}
+                for m in clean["saved_models"]
+            ]
+        return clean
 
     def delete_selected_model(self):
         """删除选中的模型"""
@@ -2319,7 +2328,7 @@ class BossFilterGUI:
                 self.update_current_model_display()
             self.api_config["saved_models"] = self.saved_models
             try:
-                save_config = {k: v for k, v in self.api_config.items() if k != "api_key"}
+                save_config = self._sanitize_config_for_save(self.api_config)
                 with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
                     json.dump(save_config, f, ensure_ascii=False, indent=4)
             except Exception as e:
@@ -2352,13 +2361,6 @@ class BossFilterGUI:
             # 从系统钥匙串读取该服务商的 API Key
             saved_api_key = get_api_key(provider)
 
-            # 兼容旧配置（api_key_ref 字段）- 迁移到按服务商存储
-            if not saved_api_key and model_config.get("api_key_ref"):
-                old_api_key = model_config.get("api_key")
-                if old_api_key:
-                    save_api_key(provider, old_api_key)
-                    saved_api_key = old_api_key
-
             if not saved_api_key:
                 messagebox.showwarning("警告",
                     f"模型 '{model_name}' 的 API Key 未在系统钥匙串中找到\n\n"
@@ -2387,7 +2389,7 @@ class BossFilterGUI:
 
             # 保存到文件（排除 api_key，Key 仅存 keyring）
             try:
-                save_config = {k: v for k, v in self.api_config.items() if k != "api_key"}
+                save_config = self._sanitize_config_for_save(self.api_config)
                 with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
                     json.dump(save_config, f, ensure_ascii=False, indent=4)
             except Exception as e:
@@ -2447,7 +2449,7 @@ class BossFilterGUI:
                 })
 
             with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
-                json.dump(self.api_config, f, ensure_ascii=False, indent=4)
+                json.dump(self._sanitize_config_for_save(self.api_config), f, ensure_ascii=False, indent=4)
 
             # 更新内存中的模型列表
             self.saved_models = self.api_config["saved_models"]

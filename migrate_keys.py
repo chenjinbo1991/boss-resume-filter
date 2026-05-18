@@ -86,8 +86,11 @@ def migrate():
 
     # 清理 api_config.json 中的冗余字段
     for model_config in saved_models:
-        if "api_key_ref" in model_config:
-            del model_config["api_key_ref"]
+        model_config.pop("api_key_ref", None)
+        model_config.pop("api_key", None)
+
+    # 移除顶层 api_key
+    config.pop("api_key", None)
 
     # 保存清理后的配置
     with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:

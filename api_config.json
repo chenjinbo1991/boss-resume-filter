@@ -26,11 +26,6 @@
         {
             "api_provider": "qwen",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "model": "qwen3.6-max-preview"
-        },
-        {
-            "api_provider": "qwen",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
             "model": "deepseek-v4-pro"
         },
         {
