@@ -324,6 +324,48 @@ def _check_version_consistency():
     return version, exe_path, size_mb
 
 
+def _extract_changelog_release(version):
+    """从 CHANGELOG.md 提取当前版本的 Release 标题和正文。"""
+    changelog_path = BASE_DIR / "CHANGELOG.md"
+    if not changelog_path.exists():
+        print("[错误] CHANGELOG.md 不存在，Release 必须先写本地更新日志")
+        sys.exit(1)
+
+    content = changelog_path.read_text(encoding="utf-8")
+    pattern = re.compile(
+        rf"^##\s+(v{re.escape(version)}[^\n]*)\n(?P<body>.*?)(?=^##\s+v|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    match = pattern.search(content)
+    if not match:
+        print(f"[错误] CHANGELOG.md 中未找到 v{version} 段落")
+        print("请先在 CHANGELOG.md 顶部补充本版本发布说明，再执行 --release。")
+        sys.exit(1)
+
+    title = match.group(1).strip()
+    body = match.group("body").strip()
+    if not body:
+        print(f"[错误] CHANGELOG.md 中 v{version} 段落正文为空")
+        sys.exit(1)
+
+    required_sections = ["新增功能", "UI 改进", "行为优化", "构建改进"]
+    missing = []
+    for section in required_sections:
+        if not re.search(rf"^###\s+{re.escape(section)}\s*$", body, re.MULTILINE):
+            missing.append(section)
+
+    if missing:
+        print(f"[错误] CHANGELOG.md 中 v{version} 段落缺少发布分类：")
+        for section in missing:
+            print(f"  - {section}")
+        print("\n请按：新增功能 / UI 改进 / 行为优化 / 构建改进 分类整理后再发布。")
+        sys.exit(1)
+
+    print(f"  [OK] Release 标题来自 CHANGELOG.md：{title}")
+    print("  [OK] Release 说明来自 CHANGELOG.md 当前版本段落")
+    return title, body
+
+
 # ---------------------------------------------------------------------------
 #  Release 子步骤（仅 --release 模式调用）
 # ---------------------------------------------------------------------------
@@ -411,7 +453,7 @@ def _git_push(version):
     print(f"  [OK] {tag} 已推送")
 
 
-def _gh_release(version):
+def _gh_release(version, release_title, release_notes):
     """创建/更新 GitHub Release 并上传资源文件"""
     tag = f"v{version}"
     exe = DIST_DIR / "BOSS_ResumeFilter.exe"
@@ -439,13 +481,14 @@ def _gh_release(version):
     r = subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=BASE_DIR)
     if r.returncode != 0:
         # Release 不存在，创建它
-        from datetime import date
-        title = f"v{version} — {date.today().strftime('%Y-%m-%d')}"
-        subprocess.run(["gh", "release", "create", tag, "--title", title, "--notes", ""],
+        subprocess.run(["gh", "release", "create", tag, "--title", release_title, "--notes", release_notes],
                        cwd=BASE_DIR, check=True)
         print(f"  [OK] GitHub Release 已创建: {tag}")
     else:
         print(f"  [OK] GitHub Release 已存在: {tag}")
+        subprocess.run(["gh", "release", "edit", tag, "--title", release_title, "--notes", release_notes],
+                       cwd=BASE_DIR, check=True)
+        print("  [OK] GitHub Release 标题和说明已同步")
 
     # 上传资源
     for f, label in [(exe, "EXE"), (cfg, "Config"), (readme, "README")]:
@@ -544,6 +587,9 @@ def main():
             print(f"    ! {file} (源文件缺失)")
 
     version, exe_path, size_mb = _check_version_consistency()
+    release_title = release_notes = None
+    if args.release:
+        release_title, release_notes = _extract_changelog_release(version)
 
     # ---- Release 模式：提交 → 打 tag → 推送 → GitHub Release ----
     if args.release:
@@ -554,7 +600,7 @@ def main():
         _git_commit(version, allowed_paths=["gui_main.py"] if version_changed else [])
         _git_tag(version)
         _git_push(version)
-        _gh_release(version)
+        _gh_release(version, release_title, release_notes)
 
         print(f"\n{'='*60}")
         print(f"  v{version} 发布完成！")
