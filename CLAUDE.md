@@ -7,7 +7,6 @@ boss-resume-filter/
 ├── gui_main.py           # 图形界面主程序（v2.4）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
-├── main.py               # 命令行入口
 ├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
@@ -25,11 +24,6 @@ boss-resume-filter/
 ├── README_文件管理.md      # 数据文件管理说明
 ├── DEPLOYMENT.md         # 部署说明（新电脑配置）
 ├── PACKAGING.md          # 打包指南
-├── src/                  # 模块化包（浏览器/匹配/解析/Web）
-│   ├── boss/             # 浏览器自动化、候选人抓取、岗位管理、初筛
-│   ├── matcher/          # 匹配引擎
-│   ├── parser/           # 需求解析、简历解析
-│   └── web/              # Streamlit Web 界面
 ├── tests/                # 测试脚本目录
 └── scripts/              # 辅助脚本目录
 ```

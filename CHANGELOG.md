@@ -19,7 +19,7 @@
 - **PIL 打包缺失**：pack_venv 中漏装 Pillow，导致 EXE 在无 Python 环境电脑上启动报 `ModuleNotFoundError: No module named 'PIL'`。修复：安装 Pillow 到 pack_venv，build.py 改用 `--collect-all PIL` 完整收集所有图片格式插件
 - **Chrome 启动异常处理**：`FileNotFoundError`（Chrome 未安装）和 `chrome`/`errno` 关键词异常（Chrome 安装异常）分类处理，替代宽泛的超时提示
 - **依赖清理**：移除 requirements.txt 中已废弃的 `cdpkit`（DrissionPage 4.x 不再需要）
-- **薪资解析面议边界**：`_extract_salary_range()` 未覆盖"面议"/"薪资面议"/"薪资可谈"等非数字描述，正则匹配前增加显式拦截（doc_parser.py + src/parser/requirement.py）
+- **薪资解析面议边界**：`_extract_salary_range()` 未覆盖"面议"/"薪资面议"/"薪资可谈"等非数字描述，正则匹配前增加显式拦截（doc_parser.py）
 
 ### 构建改进
 - `build.py` 增加 `_check_dependencies()` 打包前验证：逐项 import 检查 7 个核心依赖，缺失时明确提示包名和修复命令，杜绝生成有缺陷的 EXE
@@ -32,6 +32,9 @@
 - **原子性写入**：`save_candidates_all` 改为先写 `.tmp` 再 `os.replace()`，防止写入中途崩溃导致 `candidates_all.json` 数据损坏
 - **随机延迟抖动**：新增 `_human_delay(center, spread)` 函数，所有 `time.sleep` 调用带随机抖动（不同场景不同 spread），降低行为指纹识别风险
 - **安全验证阻断**：新增 `_detect_captcha()` 函数，检测 11 个验证码关键词 + 7 种常见验证码容器 CSS 选择器。在滚动扫描每轮开始、打招呼点击后、打招呼循环失败时三处调用，命中即停止自动化并提示人工处理
+
+### BUG修复（2026-05-18）
+- **明文 API Key 泄露**：`load_api_config()` 将 keyring 中的明文 key 注入了 `saved_models` 字典（内存原地修改），导致后续任何一次保存/切换/删除模型操作都将明文 key 写回 `api_config.json` 磁盘文件。修复：不再注入 key，改为按需从 keyring 读取；新增 `_sanitize_config_for_save()` 防御层剥离顶层和嵌套 `api_key`；三个写入路径 + `migrate_keys.py` 全部使用该辅助方法
 
 ## v2.3 — 2026-05-13
 

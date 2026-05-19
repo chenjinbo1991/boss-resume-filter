@@ -131,18 +131,12 @@ boss-resume-filter/
 ├── gui_main.py            # 图形界面主程序（v2.4）
 ├── icons.py               # 图标绘制模块（Pillow 矢量图标）
 ├── doc_parser.py          # 文档解析器（简历解析）
-├── main.py               # 命令行入口
 ├── security.py           # API Key 安全存储模块
 ├── gui.bat               # GUI 启动脚本
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── candidates_all.json   # 累积的候选人数据（累积、去重）
 ├── candidates_all.xlsx   # Excel 导出文件（多工作表 + 统计摘要）
-├── src/                  # 模块化包
-│   ├── boss/             # 浏览器自动化、候选人抓取、岗位管理
-│   ├── matcher/          # 匹配引擎
-│   ├── parser/           # 需求解析、简历解析
-│   └── web/              # Streamlit Web 界面
 ├── CLAUDE.md             # AI 协作规范
 ├── README.md             # 项目主文档
 ├── GUI 使用说明.md        # 图形界面详细说明
