@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.4"
+__version__ = "2.5"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -16,6 +16,7 @@ import time
 import threading
 import queue
 import socket
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -148,7 +149,7 @@ class BossFilterGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("BOSS 简历筛选器 v2.4 - 智能候选人筛选工具")
+        self.root.title(f"BOSS 简历筛选器 v{__version__} - 智能候选人筛选工具")
 
         # 在 DPI 感知生效前捕获屏幕尺寸（此时与 tkinter geometry 同一虚拟坐标系）
         self.root.update_idletasks()
@@ -3565,15 +3566,57 @@ class BossFilterGUI:
         Args:
             silent: True 时只更新 UI 不写日志（用于自动轮询）
         """
+        if getattr(self, '_browser_check_running', False):
+            # 手动点击优先：标记待处理，当前 silent 检查结束后自动重试
+            if not silent:
+                self._pending_manual_check = True
+                self.append_log("⏳ 正在执行其他检测，稍后自动重试...")
+            return
+        self._browser_check_running = True
+
         def check():
             try:
                 if not silent:
                     self.append_log("正在检测浏览器连接...")
 
-                # 先检查 Chrome 调试端口是否在监听，避免 ChromiumPage() 自动启动浏览器
+                # 已有可用连接，直接复用，不做端口检查
+                if self.browser_page is not None:
+                    try:
+                        prev_help = self.browser_status_help.cget("text")
+                        current_url = self.browser_page.url
+                        if 'zhipin.com/web/chat/recommend' in current_url.lower():
+                            self.browser_connected = True
+                            self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
+                            self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
+                            self.start_btn.config(state="normal")
+                            if prev_help != "已连接到 BOSS 直聘推荐牛人页面":
+                                self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
+                        elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
+                            self.browser_connected = False
+                            self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
+                            self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 推荐牛人页面")
+                            self.start_btn.config(state="disabled")
+                            if prev_help != "浏览器已连接，请导航到 BOSS 推荐牛人页面":
+                                self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 推荐牛人页面")
+                        else:
+                            self.browser_connected = False
+                            self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
+                            self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
+                            self.start_btn.config(state="disabled")
+                            if prev_help != "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面":
+                                self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
+                        return
+                    except Exception:
+                        # 页面对象已失效，清理后走完整检测流程
+                        self.browser_page = None
+                        self.browser_connected = False
+
+                # 没有可用连接，检查 Chrome 调试端口
+                addr = getattr(self, 'browser_address', '127.0.0.1:9222')
+                host, port = addr.rsplit(':', 1)
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(1)
-                port_open = s.connect_ex(('127.0.0.1', 9222)) == 0
+                port_open = s.connect_ex((host, int(port))) == 0
                 s.close()
 
                 if not port_open:
@@ -3585,78 +3628,177 @@ class BossFilterGUI:
                     # 自动启动 Chrome（仅在手动点击时）
                     if not silent:
                         self.browser_status_help.config(text="正在启动 Chrome 浏览器...")
-                        self.append_log("⚠️ 未检测到 Chrome 调试端口，正在自动启动 Chrome...")
-                        # DrissionPage ChromiumPage() 原生支持无浏览器时自动启动
-                        from DrissionPage import ChromiumPage
-                        for attempt in range(1, 16):
-                            time.sleep(2)
-                            try:
-                                page = ChromiumPage()
+                        self.append_log("正在启动 Chrome 浏览器...")
+
+                        # 找到 Chrome 可执行文件
+                        candidates = [
+                            os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
+                            r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                            r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+                        ]
+                        chrome_path = next((p for p in candidates if os.path.exists(p)), None)
+                        if not chrome_path:
+                            self.browser_status_help.config(text="未找到 Chrome 浏览器，请安装后重试")
+                            self.append_log("❌ 未找到 Chrome 浏览器")
+                            return
+
+                        # 自动选一个空闲端口，避免 9222 被占用
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.bind(('127.0.0.1', 0))
+                        debug_port = s.getsockname()[1]
+                        s.close()
+
+                        # 清理 Chrome 锁文件，保留登录态（SingletonLock/Socket/Cookie
+                        # 是上次异常退出残留的，删掉即可，不影响 cookies）
+                        profile_dir = BASE_DIR / '.chrome_profile'
+                        profile_dir.mkdir(parents=True, exist_ok=True)
+                        for lock_file in ['SingletonLock', 'SingletonSocket', 'SingletonCookie']:
+                            lock_path = profile_dir / lock_file
+                            if lock_path.exists():
+                                try:
+                                    lock_path.unlink()
+                                except Exception:
+                                    pass
+
+                        # 用 subprocess 直接启动 Chrome（不依赖 DrissionPage 的启动逻辑）
+                        self.append_log(f"正在启动 Chrome（调试端口 {debug_port}）...")
+                        subprocess.Popen(
+                            [
+                                chrome_path,
+                                f'--remote-debugging-port={debug_port}',
+                                f'--user-data-dir={profile_dir}',
+                                '--no-first-run',
+                                '--no-default-browser-check',
+                            ],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+
+                        # 轮询等待端口就绪
+                        port_ready = False
+                        for i in range(30):
+                            time.sleep(1)
+                            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            s.settimeout(0.5)
+                            if s.connect_ex(('127.0.0.1', debug_port)) == 0:
+                                s.close()
+                                port_ready = True
+                                break
+                            s.close()
+                            if i == 0:
+                                self.append_log("⏳ 等待 Chrome 就绪...")
+                            elif i % 5 == 4:
+                                self.append_log(f"⏳ 等待 Chrome 就绪... ({i+1}/30)")
+
+                        if not port_ready:
+                            self.browser_status_help.config(text="Chrome 启动超时，请关闭所有 Chrome 窗口后重试")
+                            self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
+                            self.append_log("❌ Chrome 启动超时，调试端口未开启")
+                            return
+
+                        # 端口已开，用 DrissionPage 连接
+                        time.sleep(2)
+                        try:
+                            from DrissionPage import ChromiumPage, ChromiumOptions
+                            co = ChromiumOptions()
+                            co.set_address(f'127.0.0.1:{debug_port}')
+                            page = ChromiumPage(co)
+                            current_url = page.url
+                            if 'zhipin.com/web/chat/recommend' in current_url.lower():
+                                self.browser_connected = True
+                                self.browser_page = page
+                                self.browser_address = page.address
+                                self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
+                                self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
+                                self.start_btn.config(state="normal")
+                                self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
+                            elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
+                                self.browser_connected = True
+                                self.browser_page = page
+                                self.browser_address = page.address
+                                self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
+                                self.browser_status_help.config(text="浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                page.get('https://www.zhipin.com/web/chat/recommend')
+                                time.sleep(2)
                                 current_url = page.url
                                 if 'zhipin.com/web/chat/recommend' in current_url.lower():
                                     self.browser_connected = True
-                                    self.browser_page = page
                                     self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
-                                    self.browser_status_help.config(text="已连接到 BOSS 直聘推荐页面")
+                                    self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
                                     self.start_btn.config(state="normal")
-                                    self.append_log("✅ Chrome 已启动并连接成功")
-                                elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
-                                    self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                                    self.browser_status_help.config(text="浏览器已连接，请导航到推荐页面")
-                                    self.append_log("⚠️ Chrome 已启动，请导航到 https://www.zhipin.com/web/chat/recommend")
+                                    self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                                 else:
                                     self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                                    self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘")
-                                    self.append_log("⚠️ Chrome 已启动，请导航到 BOSS 直聘")
-                                return
-                            except FileNotFoundError:
-                                self.browser_status_help.config(text="未找到 Chrome 浏览器，请安装后重试")
-                                self.append_log("❌ 未找到 Chrome 浏览器，请安装 Chrome 或将 chrome.exe 加入 PATH")
-                                return
-                            except Exception as e:
-                                err_msg = str(e)
-                                if 'chrome' in err_msg.lower() or 'errno' in err_msg.lower():
-                                    self.browser_status_help.config(text="Chrome 浏览器异常，请检查安装")
-                                    self.append_log(f"❌ Chrome 启动失败：{err_msg}")
-                                    return
-                                self.append_log(f"⏳ 等待 Chrome 就绪... ({attempt}/15)")
+                                    self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 推荐牛人页面")
+                                    self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 推荐牛人页面")
+                            else:
+                                self.browser_connected = True
+                                self.browser_page = page
+                                self.browser_address = page.address
+                                self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
+                                self.browser_status_help.config(text="浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                page.get('https://www.zhipin.com/web/chat/recommend')
+                                time.sleep(2)
+                                current_url = page.url
+                                if 'zhipin.com/web/chat/recommend' in current_url.lower():
+                                    self.browser_connected = True
+                                    self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
+                                    self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
+                                    self.start_btn.config(state="normal")
+                                    self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
+                                else:
+                                    self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
+                                    self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
+                                    self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
+                        except Exception as e:
+                            self.browser_status_help.config(text="Chrome 连接失败，请重试")
+                            self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
+                            self.append_log(f"❌ Chrome 连接失败：{e}")
+                        return
                     else:
-                        self.browser_status_help.config(text="未检测到 Chrome 浏览器，请确保浏览器已启动")
+                        self.browser_status_help.config(text="未检测到 Chrome，请确保浏览器已启动")
                         if prev_state != "🔴 未连接":
-                            self.append_log("❌ 未检测到 Chrome 调试端口，请先启动 Chrome 浏览器")
+                            self.append_log("❌ 未检测到 Chrome 调试端口")
                     return
 
                 from DrissionPage import ChromiumPage
 
                 try:
-                    page = ChromiumPage()
+                    page = ChromiumPage(addr)
                     current_url = page.url
 
                     if 'zhipin.com/web/chat/recommend' in current_url.lower():
                         prev_connected = self.browser_connected
                         self.browser_connected = True
                         self.browser_page = page
+                        self.browser_address = page.address
                         self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
-                        self.browser_status_help.config(text="已连接到 BOSS 直聘推荐页面")
+                        self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
                         self.start_btn.config(state="normal")
                         if not silent or not prev_connected:
-                            self.append_log("✅ 浏览器连接成功")
+                            self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                     elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
                         prev_state = self.browser_status_indicator.cget("text")
                         self.browser_connected = False
+                        self.browser_page = page
+                        self.browser_address = page.address
                         self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                        self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐页面")
+                        self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                         self.start_btn.config(state="disabled")
                         if not silent or prev_state != "🟡 需导航":
-                            self.append_log("⚠️ 当前页面不是推荐页面，请导航到 https://www.zhipin.com/web/chat/recommend")
+                            self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                     else:
                         prev_state = self.browser_status_indicator.cget("text")
                         self.browser_connected = False
+                        self.browser_page = page
+                        self.browser_address = page.address
                         self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                        self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐页面")
+                        self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                         self.start_btn.config(state="disabled")
                         if not silent or prev_state != "🟡 需导航":
-                            self.append_log("⚠️ 当前页面不是 BOSS 直聘，请导航到 https://www.zhipin.com/web/chat/recommend")
+                            self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
 
                 except Exception as e:
                     prev_state = self.browser_status_indicator.cget("text")
@@ -3665,12 +3807,18 @@ class BossFilterGUI:
                     self.browser_status_help.config(text="未检测到 Chrome 浏览器，请确保浏览器已启动")
                     self.start_btn.config(state="disabled")
                     if not silent or prev_state != "🔴 未连接":
-                        self.append_log(f"❌ 浏览器连接失败：{e}")
+                        self.append_log("❌ 未检测到 Chrome 浏览器，请确保浏览器已启动")
 
             except ImportError:
                 self.browser_status_indicator.config(text="🔴 错误", foreground=self.colors['danger'])
                 self.browser_status_help.config(text="未安装 DrissionPage，请运行：pip install DrissionPage")
                 self.append_log("❌ DrissionPage 未安装")
+            finally:
+                self._browser_check_running = False
+                # 如果有被阻塞的手动检测请求，立即重新触发
+                if getattr(self, '_pending_manual_check', False):
+                    self._pending_manual_check = False
+                    self.root.after(100, lambda: self.check_browser_connection(silent=False))
 
         thread = threading.Thread(target=check)
         thread.daemon = True
@@ -3682,15 +3830,7 @@ class BossFilterGUI:
             return  # 已在运行
 
         def poll():
-            if getattr(self, '_browser_check_running', False):
-                # 上一次检测尚未完成，跳过本轮
-                self._browser_auto_check_id = self.root.after(2000, poll)
-                return
-            self._browser_check_running = True
-            try:
-                self.check_browser_connection(silent=True)
-            finally:
-                self._browser_check_running = False
+            self.check_browser_connection(silent=True)
             self._browser_auto_check_id = self.root.after(2000, poll)
 
         self._browser_auto_check_id = self.root.after(500, poll)  # 首次 0.5s 后检测，之后每 2s
@@ -3806,6 +3946,23 @@ class BossFilterGUI:
         if self.is_running:
             return
 
+        if not self.browser_connected:
+            messagebox.showwarning("未连接", "请先连接到 BOSS 直聘推荐页面后再运行")
+            return
+
+        if self.browser_page is not None:
+            try:
+                current_url = self.browser_page.url
+                if 'zhipin.com/web/chat/recommend' not in current_url.lower():
+                    messagebox.showwarning("页面错误", "请将浏览器导航到 BOSS 直聘推荐页面后再运行")
+                    return
+            except Exception:
+                messagebox.showwarning("连接丢失", "浏览器连接已丢失，请重新检测/连接")
+                return
+        else:
+            messagebox.showwarning("未连接", "请先检测/连接浏览器")
+            return
+
         self.is_running = True
         self.stop_event.clear()
         self.status_label.config(text="🟡 运行中...", foreground=self.colors['warning'])
@@ -3863,7 +4020,7 @@ class BossFilterGUI:
             from bossmaster import load_job_config, ChromiumPage, time, run_smart_scan
             import argparse
 
-            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v2.3 [图形界面模式]")
+            self.append_log(f">>> BOSS 直聘候选人智能提取工具 v{__version__} [图形界面模式]")
             self.append_log(f"滚动轮次：{rounds}, 自动打招呼：{greet_level_text}")
 
             # 获取选择的岗位
@@ -4294,7 +4451,7 @@ class BossFilterGUI:
 
     def show_about(self):
         """显示关于"""
-        messagebox.showinfo("关于", "BOSS 简历筛选器 v2.3\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+        messagebox.showinfo("关于", f"BOSS 简历筛选器 v{__version__}\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
 
     def show_changelog(self):
         """显示更新日志"""

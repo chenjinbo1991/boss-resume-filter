@@ -4,7 +4,7 @@
 ```
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
-├── gui_main.py           # 图形界面主程序（v2.4）
+├── gui_main.py           # 图形界面主程序（v2.5）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
@@ -89,11 +89,17 @@ boss-resume-filter/
 - GUI「停止」按钮设置 stop_event，工作线程在下次循环检查点立即停止
 - 停止时自动保存当前进度并导出 Excel
 
-### 浏览器自动检测（v2.2）
-- 进入运行页自动每 2 秒轮询 Chrome 调试端口（127.0.0.1:9222）
-- 端口检测先于 ChromiumPage() 调用，端口不通时区分场景：定时轮询跳过（silent），手动点击按钮则自动启动 Chrome
-- Chrome 启动失败时分类处理：FileNotFoundError → 提示安装 Chrome；其他 chrome 相关异常 → 提示检查安装
-- 离开运行页自动停止轮询
+### 浏览器自动检测（v2.5）
+- 进入运行页自动每 2 秒轮询 Chrome 连接状态
+- 手动点击"检测/连接浏览器"时自动启动 Chrome：动态端口（socket.bind(0)）+ 独立 profile（`.chrome_profile/`）+ subprocess 启动 + socket 轮询等待端口就绪（最长 30s）
+- Chrome 启动时仅清理锁文件（SingletonLock/Socket/Cookie），保留 profile 目录以维持登录态和 cookies
+- `_browser_check_running` 互斥标志在 `check_browser_connection()` 入口**同步**置位（不等线程启动），消除手动点击与 auto-poll 的竞态
+- 手动点击被 auto-poll 阻塞时设 `_pending_manual_check` 标志，auto-poll 结束后通过 `root.after(100)` 自动重新触发
+- 健康检查路径（复用 `self.browser_page`）用 `prev_help` 对比检测状态变更，无论 silent 或 manual 模式都在状态变化时输出日志
+- 所有浏览器状态变更的日志消息与 UI `browser_status_help` 提示文本保持一致
+- 端口预检（`socket.connect_ex`）防止自动启动浏览器
+- Chrome 启动失败时分类处理：`FileNotFoundError` → 提示安装 Chrome；其他 chrome 相关异常 → 提示检查安装
+- 实现位置：`gui_main.py:check_browser_connection()`、`gui_main.py:_start_browser_auto_check()`
 
 ### 反爬对抗（v2.4 健壮性）
 
