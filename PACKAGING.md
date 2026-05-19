@@ -70,11 +70,11 @@ pyinstaller --onefile --noconsole \
 
 Release 模式不会再执行 `git add -A`。除 `--version` 自动修改 `gui_main.py` 外，其他变更必须先手工提交，否则发布脚本会中断。
 
-Release 标题和说明必须先写在 `CHANGELOG.md` 对应版本段落中。`python build.py --release` 会自动提取该段落作为 GitHub Release 内容；如果缺少对应版本，或缺少以下分类，发布会直接中断：
+Release 标题和说明必须先写在 `CHANGELOG.md` 对应版本段落中。`python build.py --release` 会自动提取该段落作为 GitHub Release 内容；如果缺少对应版本，或未按以下顺序分类，发布会直接中断：
 
 - 新增功能
-- UI 改进
 - 行为优化
+- UI 改进
 - Bug 修复
 - 构建改进
 
