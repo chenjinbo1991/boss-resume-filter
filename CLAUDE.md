@@ -42,6 +42,12 @@ boss-resume-filter/
 - 双击 `gui.bat` 或 `python gui_main.py`
 - 侧边栏底部版本号可点击，弹出更新日志对话框查看 CHANGELOG.md 内容
 
+### 测试验证
+- 稳定单元回归：`python tests/run_unit_tests.py`
+- 导入烟测：`python tests/test_import.py`
+- 浏览器、BOSS 页面、人工登录、网络/API 测试只放在 `tests/manual/`，不纳入默认回归
+- 历史调试脚本放在 `tests/archive/`，默认不维护、不保证可运行
+
 ### 打包发布
 - `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~47MB），打包前自动验证依赖完整性
 - `python build.py --release`：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传（一键发布）

@@ -123,6 +123,17 @@ python bossmaster.py --greet --verbose
 - 下次运行时自动跳过已打招呼的候选人
 - 不会重复发送消息
 
+## 🧪 测试
+
+稳定单元回归不依赖浏览器、网络、人工登录或真实 `job_config.json`：
+
+```bash
+python tests/run_unit_tests.py
+python tests/test_import.py
+```
+
+需要 Chrome、BOSS 页面、人工登录或真实网络/API 的脚本放在 `tests/manual/`；历史调试脚本放在 `tests/archive/`，默认不作为回归测试。
+
 ## 📁 项目结构
 
 ```
