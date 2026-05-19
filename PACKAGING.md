@@ -32,6 +32,9 @@ pip install -r requirements.txt
 #### 步骤 2：执行打包
 
 ```bash
+# 仅执行发布前检查：不打包、不提交、不推送
+python build.py --check
+
 # 使用自动打包脚本（推荐）
 python build.py
 
@@ -49,6 +52,19 @@ pyinstaller --onefile --noconsole \
     --name "BOSS_ResumeFilter" \
     gui_main.py
 ```
+
+`--check` 会验证：
+
+- 核心依赖可导入
+- `.storage/` 未被 Git 跟踪
+- `.env`、`candidates_all.json`、`candidates_all.xlsx` 未被 Git 跟踪
+- `api_config.json` 不含明文 `api_key` / `api_key_ref`
+- 核心源码可通过 `py_compile`
+- `python tests/run_unit_tests.py` 通过
+- `python tests/test_import.py` 通过
+- 工作区干净
+
+Release 模式不会再执行 `git add -A`。除 `--version` 自动修改 `gui_main.py` 外，其他变更必须先手工提交，否则发布脚本会中断。
 
 #### 步骤 3：获取输出
 

@@ -1,12 +1,14 @@
 """
 BOSS 简历筛选器 - 打包脚本
 用法：
+  python build.py --check                仅执行发布前检查，不打包、不提交、不推送
   python build.py                      仅打包 + 版本核对
   python build.py --release            打包 → 提交 → 打 tag → 推送 → GitHub Release
   python build.py --release --version 2.5  自动更新 __version__ + 一键发布
 """
 import argparse
 import ast
+import json
 import os
 import re
 import shutil
@@ -20,6 +22,23 @@ DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
 VENV_DIR = BASE_DIR / "pack_venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
+SENSITIVE_TRACKED_PATHS = [
+    ".env",
+    "candidates_all.json",
+    "candidates_all.xlsx",
+]
+SOURCE_CHECK_FILES = [
+    "bossmaster.py",
+    "gui_main.py",
+    "doc_parser.py",
+    "security.py",
+    "build.py",
+    "icons.py",
+    "migrate_keys.py",
+    "tests/run_unit_tests.py",
+    "tests/test_import.py",
+    "tests/unit/test_core_logic.py",
+]
 
 
 def run_in_venv():
@@ -85,6 +104,108 @@ def _check_dependencies():
     print("  [OK] 依赖检查通过\n")
 
 
+def _run_checked(cmd, description):
+    """运行检查命令，失败时中断"""
+    print(f">>> {description}")
+    result = subprocess.run(cmd, cwd=BASE_DIR)
+    if result.returncode != 0:
+        print(f"[错误] {description} 失败")
+        sys.exit(result.returncode)
+
+
+def _git_output(args):
+    """返回 git 命令 stdout"""
+    result = subprocess.run(["git", *args], cwd=BASE_DIR, capture_output=True, text=True, check=True)
+    return result.stdout.strip()
+
+
+def _tracked_paths(paths):
+    """返回仍被 Git 跟踪的路径"""
+    tracked = []
+    for path in paths:
+        result = subprocess.run(["git", "ls-files", "--", path], cwd=BASE_DIR, capture_output=True, text=True)
+        if result.stdout.strip():
+            tracked.append(path)
+    return tracked
+
+
+def _check_storage_not_tracked():
+    tracked_count = len(_git_output(["ls-files", ".storage"]).splitlines())
+    if tracked_count:
+        print(f"[错误] .storage 仍有 {tracked_count} 个文件被 Git 跟踪")
+        print("请先执行：git rm -r --cached -- .storage")
+        sys.exit(1)
+    print("  [OK] .storage 未被 Git 跟踪")
+
+
+def _check_sensitive_files_not_tracked():
+    tracked = _tracked_paths(SENSITIVE_TRACKED_PATHS)
+    if tracked:
+        print("[错误] 以下本地敏感/运行数据仍被 Git 跟踪：")
+        for path in tracked:
+            print(f"  - {path}")
+        sys.exit(1)
+    print("  [OK] 敏感/运行数据未被 Git 跟踪")
+
+
+def _check_api_config_has_no_plaintext_key():
+    config_path = BASE_DIR / "api_config.json"
+    if not config_path.exists():
+        print("  [跳过] api_config.json 不存在")
+        return
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"[错误] api_config.json 不是合法 JSON：{e}")
+        sys.exit(1)
+
+    offenders = []
+    if config.get("api_key"):
+        offenders.append("api_key")
+    for idx, model in enumerate(config.get("saved_models", [])):
+        if isinstance(model, dict) and (model.get("api_key") or model.get("api_key_ref")):
+            offenders.append(f"saved_models[{idx}]")
+
+    if offenders:
+        print("[错误] api_config.json 含明文或旧版 API Key 引用：")
+        for item in offenders:
+            print(f"  - {item}")
+        sys.exit(1)
+    print("  [OK] api_config.json 不含明文 API Key")
+
+
+def _check_source_compiles():
+    files = [str(BASE_DIR / path) for path in SOURCE_CHECK_FILES if (BASE_DIR / path).exists()]
+    _run_checked([sys.executable, "-m", "py_compile", *files], "源码编译检查")
+
+
+def _run_unit_checks():
+    _run_checked([sys.executable, "tests/run_unit_tests.py"], "稳定单元回归")
+    _run_checked([sys.executable, "tests/test_import.py"], "导入烟测")
+
+
+def _preflight_checks(require_clean=True):
+    """发布/打包前检查"""
+    print("\n>>> 发布前检查")
+    _check_dependencies()
+    _check_storage_not_tracked()
+    _check_sensitive_files_not_tracked()
+    _check_api_config_has_no_plaintext_key()
+    _check_source_compiles()
+    _run_unit_checks()
+
+    if require_clean:
+        has_changes, status_text = _git_status()
+        if has_changes:
+            print("[错误] 工作区不干净，请先提交或撤销变更：\n")
+            for line in status_text.splitlines():
+                print(f"  {line}")
+            sys.exit(1)
+        print("  [OK] 工作区干净")
+
+    print(">>> 发布前检查通过\n")
+
+
 def _read_version():
     """AST 解析 gui_main.py 提取 __version__"""
     gui_path = BASE_DIR / "gui_main.py"
@@ -144,18 +265,35 @@ def _git_status():
     return bool(r.stdout.strip()), r.stdout.strip()
 
 
-def _git_commit(version):
-    """提交所有未暂存变更（gitignore 已排除 .claude/ dist/ 等）"""
+def _git_commit(version, allowed_paths=None):
+    """只提交明确允许的发布相关变更"""
     has_changes, status_text = _git_status()
     if not has_changes:
         print("  [跳过] 没有未提交的变更")
         return
 
+    allowed = set(allowed_paths or [])
+    changed = []
+    for line in status_text.splitlines():
+        # porcelain: XY path 或 XY old -> new
+        path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        changed.append(path)
+
+    unexpected = [path for path in changed if path not in allowed]
+    if unexpected:
+        print("[错误] Release 模式拒绝自动提交非发布文件：\n")
+        for line in status_text.splitlines():
+            print(f"  {line}")
+        print("\n请先手动提交这些变更，或只使用 --version 让发布脚本更新 gui_main.py。")
+        sys.exit(1)
+
     print(f"\n  待提交的变更：\n")
     for line in status_text.splitlines():
         print(f"    {line}")
 
-    subprocess.run(["git", "add", "-A"], cwd=BASE_DIR, check=True)
+    subprocess.run(["git", "add", *sorted(allowed)], cwd=BASE_DIR, check=True)
     msg = f"release: v{version}"
     subprocess.run(["git", "commit", "-m", msg], cwd=BASE_DIR, check=True)
     print(f"  [OK] 已提交：{msg}")
@@ -256,6 +394,8 @@ def _gh_release(version):
 
 def main():
     parser = argparse.ArgumentParser(description="BOSS 简历筛选器 - 打包及发布脚本")
+    parser.add_argument("--check", action="store_true",
+                        help="仅执行发布前检查，不打包、不提交、不推送")
     parser.add_argument("--release", action="store_true",
                         help="打包后自动提交→打tag→推送→GitHub Release上传")
     parser.add_argument("--version", type=str, default=None, metavar="X.Y",
@@ -264,11 +404,18 @@ def main():
 
     run_in_venv()
 
+    if args.check:
+        _preflight_checks(require_clean=True)
+        return
+
+    version_changed = False
+
     # ---- 版本号更新（在打包之前） ----
     if args.version:
         old = _read_version()
         if args.version != old:
             _write_version(args.version)
+            version_changed = True
         else:
             print(f"  [跳过] __version__ 已经是 \"{args.version}\"\n")
 
@@ -278,8 +425,8 @@ def main():
 ╚══════════════════════════════════════════════════════════════╝
 """)
 
-    # ---- 打包前：验证所有依赖可导入 ----
-    _check_dependencies()
+    # ---- 打包前：验证依赖、敏感路径、源码和测试 ----
+    _preflight_checks(require_clean=not version_changed)
 
     clean_dist()
 
@@ -330,7 +477,7 @@ def main():
         print(f"  Release 模式：v{version}")
         print(f"{'='*60}")
 
-        _git_commit(version)
+        _git_commit(version, allowed_paths=["gui_main.py"] if version_changed else [])
         _git_tag(version)
         _git_push(version)
         _gh_release(version)

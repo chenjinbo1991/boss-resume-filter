@@ -49,13 +49,15 @@ boss-resume-filter/
 - 历史调试脚本放在 `tests/archive/`，默认不维护、不保证可运行
 
 ### 打包发布
+- `python build.py --check`：仅执行发布前检查，不打包、不提交、不推送
 - `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~47MB），打包前自动验证依赖完整性
 - `python build.py --release`：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传（一键发布）
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
 - dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
 - job_config.json 和 api_config.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
-- 打包前 `_check_dependencies()` 逐项 import 验证核心依赖，缺失时中断并给出修复命令
+- 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、稳定单元回归和导入烟测
+- Release 模式不再 `git add -A`；只允许自动提交 `--version` 引起的 `gui_main.py` 版本号变化，其他变更必须先手工提交
 - 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；tag 冲突时自动 `--force`（master 除外）
 
 ## 代码规范
