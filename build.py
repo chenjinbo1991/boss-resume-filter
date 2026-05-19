@@ -41,6 +41,74 @@ SOURCE_CHECK_FILES = [
 ]
 
 
+def _find_conda_tcl_tk():
+    """Return Anaconda Tcl/Tk paths when the pack venv is based on conda Python."""
+    base_prefix = Path(sys.base_prefix).resolve()
+    tkinter_dir = base_prefix / "Lib" / "tkinter"
+    tkinter_pyd = base_prefix / "DLLs" / "_tkinter.pyd"
+    lib_dir = base_prefix / "Library" / "lib"
+    bin_dir = base_prefix / "Library" / "bin"
+    tcl_dir = lib_dir / "tcl8.6"
+    tk_dir = lib_dir / "tk8.6"
+    tcl_dll = bin_dir / "tcl86t.dll"
+    tk_dll = bin_dir / "tk86t.dll"
+
+    paths = {
+        "tkinter_dir": tkinter_dir,
+        "tkinter_pyd": tkinter_pyd,
+        "tcl_dir": tcl_dir,
+        "tk_dir": tk_dir,
+        "tcl_dll": tcl_dll,
+        "tk_dll": tk_dll,
+    }
+    if all(path.exists() for path in paths.values()):
+        return paths
+    return None
+
+
+def _check_tkinter_packaging_support():
+    """Fail before PyInstaller if Tcl/Tk cannot be located for a Tkinter GUI build."""
+    try:
+        import tkinter  # noqa: F401
+        import tkinter.ttk  # noqa: F401
+        import tkinter.font  # noqa: F401
+        import tkinter.filedialog  # noqa: F401
+        import tkinter.messagebox  # noqa: F401
+    except ImportError as e:
+        print(f"[错误] tkinter 导入失败：{e}")
+        sys.exit(1)
+
+    tcl_tk = _find_conda_tcl_tk()
+    if tcl_tk:
+        print("  [OK] Tcl/Tk 运行库已定位")
+        return
+
+    # Non-conda Python distributions normally let PyInstaller's tkinter hook
+    # find Tcl/Tk automatically. Keep the check permissive outside conda.
+    print("  [跳过] 未检测到 Anaconda Tcl/Tk 布局，交给 PyInstaller 自动收集")
+
+
+def _pyinstaller_tk_args():
+    """Return PyInstaller arguments and environment needed for Tkinter bundling."""
+    tcl_tk = _find_conda_tcl_tk()
+    if not tcl_tk:
+        return [], os.environ.copy()
+
+    env = os.environ.copy()
+    env["TCL_LIBRARY"] = str(tcl_tk["tcl_dir"])
+    env["TK_LIBRARY"] = str(tcl_tk["tk_dir"])
+
+    return [
+        "--collect-submodules", "tkinter",
+        "--add-data", f'{tcl_tk["tkinter_dir"]};tkinter',
+        "--add-binary", f'{tcl_tk["tkinter_pyd"]};.',
+        "--add-data", f'{tcl_tk["tcl_dir"]};tcl\\tcl8.6',
+        "--add-data", f'{tcl_tk["tk_dir"]};tcl\\tk8.6',
+        "--add-binary", f'{tcl_tk["tcl_dll"]};.',
+        "--add-binary", f'{tcl_tk["tk_dll"]};.',
+    ], env
+
+
 def run_in_venv():
     """如果在系统 Python 中运行，切换到 pack_venv 执行"""
     if Path(sys.executable).resolve() != VENV_PYTHON.resolve():
@@ -188,6 +256,7 @@ def _preflight_checks(require_clean=True):
     """发布/打包前检查"""
     print("\n>>> 发布前检查")
     _check_dependencies()
+    _check_tkinter_packaging_support()
     _check_storage_not_tracked()
     _check_sensitive_files_not_tracked()
     _check_api_config_has_no_plaintext_key()
@@ -430,6 +499,10 @@ def main():
 
     clean_dist()
 
+    tk_args, pyinstaller_env = _pyinstaller_tk_args()
+    if tk_args:
+        print("  [OK] 将 Anaconda Tcl/Tk 运行库加入 PyInstaller")
+
     cmd = [
         str(VENV_PYTHON), "-m", "PyInstaller",
         "--onefile",
@@ -442,6 +515,7 @@ def main():
         '--hidden-import=tkinter.font',
         '--hidden-import=tkinter.filedialog',
         '--hidden-import=tkinter.messagebox',
+        *tk_args,
         '--collect-all', 'PIL',
         '--exclude-module=PyQt5',
         '--exclude-module=PySide6',
@@ -453,7 +527,7 @@ def main():
 
     print(">>> PyInstaller 打包中...")
     os.chdir(BASE_DIR)
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, env=pyinstaller_env)
 
     if result.returncode != 0:
         print("\n[错误] 打包失败")

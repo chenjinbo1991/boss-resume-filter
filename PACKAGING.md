@@ -47,8 +47,12 @@ python build.py --release --version 2.5
 # 或手动打包（不推荐，缺少依赖检查和 PIL 完整收集）
 pyinstaller --onefile --noconsole \
     --collect-all PIL \
+    --collect-submodules tkinter \
     --hidden-import=tkinter \
     --hidden-import=tkinter.ttk \
+    --hidden-import=tkinter.font \
+    --hidden-import=tkinter.filedialog \
+    --hidden-import=tkinter.messagebox \
     --name "BOSS_ResumeFilter" \
     gui_main.py
 ```
@@ -65,6 +69,17 @@ pyinstaller --onefile --noconsole \
 - 工作区干净
 
 Release 模式不会再执行 `git add -A`。除 `--version` 自动修改 `gui_main.py` 外，其他变更必须先手工提交，否则发布脚本会中断。
+
+如果打包环境来自 Anaconda，`build.py` 会自动定位并打包：
+
+- `Lib/tkinter`
+- `DLLs/_tkinter.pyd`
+- `Library/lib/tcl8.6`
+- `Library/lib/tk8.6`（打包到 EXE 内部的 `tcl/tk8.6`）
+- `Library/bin/tcl86t.dll`
+- `Library/bin/tk86t.dll`
+
+不要绕过 `build.py` 直接手写 PyInstaller 命令，否则容易生成启动时报 `No module named 'tkinter'` 的 EXE。
 
 #### 步骤 3：获取输出
 
@@ -156,8 +171,12 @@ upx --best "dist/BOSS_ResumeFilter.exe"
 # 使用 --collect-all 指定完整收集
 pyinstaller --onefile --noconsole \
     --collect-all PIL \
+    --collect-submodules tkinter \
     --hidden-import=tkinter \
     --hidden-import=tkinter.ttk \
+    --hidden-import=tkinter.font \
+    --hidden-import=tkinter.filedialog \
+    --hidden-import=tkinter.messagebox \
     --name "BOSS_ResumeFilter" \
     gui_main.py
 ```
