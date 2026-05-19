@@ -4,6 +4,7 @@
         "高级Java/Python工程师": {
             "min_exp": 4,
             "edu": "本科",
+            "max_age": 35,
             "work_location": "南京",
             "salary_min": 12,
             "salary_max": 15,
@@ -114,6 +115,7 @@
         "中级鸿蒙开发工程师": {
             "min_exp": 3,
             "edu": "本科",
+            "max_age": 35,
             "work_location": "南京",
             "salary_min": 13,
             "salary_max": 16,

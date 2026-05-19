@@ -406,8 +406,10 @@ def parse_job_requirements(text: str) -> Dict:
 
     # 年龄限制
     age_match = re.search(r'年龄在？\s*(\d+)\s*岁', required_section)
+    max_age = None
     if age_match:
-        required_conditions.append(f'年龄≤{age_match.group(1)}岁')
+        max_age = int(age_match.group(1))
+        required_conditions.append(f'年龄≤{max_age}岁')
 
     # 从必要条件部分提取技术关键词（硬约束，只需满足其一）
     tech_condition_keywords = []
@@ -521,6 +523,7 @@ def parse_job_requirements(text: str) -> Dict:
         "work_location": _extract_work_location(text),
         "salary_min": salary_min,
         "salary_max": salary_max,
+        "max_age": max_age,
         "soft_skills": unique_soft_skills,  # 职位描述中的技能要求（用于评分）
         "required_conditions": required_conditions,
         "tech_conditions": tech_condition_keywords  # 必要条件中的技术要求（只需满足其一）

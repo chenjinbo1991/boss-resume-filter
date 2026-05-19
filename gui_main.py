@@ -731,6 +731,22 @@ class BossFilterGUI:
         min_exp_spin.bind('<Leave>', lambda e: min_exp_spin.unbind('<MouseWheel>'))
         ttk.Label(row2, text="年", font=self.font_label, background=self.colors['bg_card']).pack(side="left")
 
+        # 最大年龄
+        self.max_age_var = tk.StringVar(value="35")
+        row_age = ttk.Frame(basic_frame, style='TFrame')
+        row_age.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(row_age, text="最大年龄:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
+                 background=self.colors['bg_card']).pack(side="left")
+        max_age_spin = ttk.Spinbox(row_age, from_=0, to=99, textvariable=self.max_age_var, width=15, font=self.font_button)
+        max_age_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        max_age_spin.bind('<Enter>', lambda e: max_age_spin.bind('<MouseWheel>', lambda ev: 'break'))
+        max_age_spin.bind('<Leave>', lambda e: max_age_spin.unbind('<MouseWheel>'))
+        ttk.Label(row_age, text="岁", font=self.font_label, background=self.colors['bg_card']).pack(side="left")
+        ttk.Label(row_age, text="  留空表示不限制",
+                 font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
+                 foreground=self.colors['text_secondary'],
+                 background=self.colors['bg_card']).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), 0))
+
         # 薪资范围
         self.salary_min_var = tk.StringVar()
         self.salary_max_var = tk.StringVar()
@@ -3056,6 +3072,7 @@ class BossFilterGUI:
         job_name = self.config_job_combo.get()
         self.job_name_var.set(job_name)
         self.min_exp_var.set(str(rule.get("min_exp", 0)))
+        self.max_age_var.set(str(rule.get("max_age", 35)))
         self.edu_var.set(rule.get("edu", "不限"))
         self.work_location_var.set(rule.get("work_location", ""))
         salary_min = rule.get("salary_min")
@@ -3303,6 +3320,7 @@ class BossFilterGUI:
 
             # 设置经验
             self.min_exp_var.set(str(job_config.get("min_exp", 0)))
+            self.max_age_var.set(str(job_config.get("max_age", 35)))
 
             # 设置学历
             self.edu_var.set(job_config.get("edu", "本科"))
@@ -3466,6 +3484,7 @@ class BossFilterGUI:
         self.job_rules[normalized_job_name] = {
             "min_exp": int(self.min_exp_var.get()),
             "edu": self.edu_var.get(),
+            "max_age": int(self.max_age_var.get()) if self.max_age_var.get().strip() else None,
             "work_location": self.work_location_var.get().strip() or None,
             "salary_min": salary_min,
             "salary_max": salary_max,
@@ -3484,6 +3503,7 @@ class BossFilterGUI:
         """重置表单"""
         self.job_name_var.set("")
         self.min_exp_var.set("3")
+        self.max_age_var.set("35")
         self.edu_var.set("本科")
         self.work_location_var.set("")
         self.salary_min_var.set("")

@@ -492,13 +492,15 @@ def filter_candidate(candidate_text, rule):
             required_edu = edu_keywords.get(rule.get("edu", "不限"), 0)
 
             if rule.get("edu") == "本科":
-                non_regular = ["自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招"]
+                non_regular = ["自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
+                               "专升本", "电大", "远程教育", "成人高考", "成人教育", "脱产", "业余"]
                 if candidate_edu_level >= 5:
                     pass  # 硕士及以上直接通过
                 elif candidate_edu_level == 4:
                     is_non_regular = any(ne in candidate_text for ne in non_regular)
                     if is_non_regular:
-                        if "985" in candidate_text or "211" in candidate_text or "统招" in candidate_text:
+                        # 仅当出现"统招本科"或"全日制本科"完整短语才放行
+                        if re.search(r'(统招|全日制)\s*本科', candidate_text):
                             pass
                         else:
                             return False, 0, {"reason": "学历不符：要求统招本科"}
@@ -522,6 +524,13 @@ def filter_candidate(candidate_text, rule):
                 details['exp_bonus'] = min((exp_years - min_exp) * 4, EXP_MAX)
             # 找不到经验不再淘汰，仅不加分
 
+        # 2.2. 年龄上限（硬性条件）
+        max_age = rule.get("max_age")
+        if max_age is not None:
+            age_match = re.search(r'(\d+) 岁', candidate_text)
+            if age_match and int(age_match.group(1)) > max_age:
+                return False, 0, {"reason": f"年龄不符：要求≤{max_age}岁，实际{age_match.group(1)}岁"}
+
         # 2.5. 工作地点（硬性条件）
         work_location = rule.get("work_location")
         if work_location and work_location.strip():
@@ -533,12 +542,12 @@ def filter_candidate(candidate_text, rule):
                     return False, 0, {"reason": f"地点不符：要求{work_location}，期望{candidate_city}"}
 
         # 2.6. 薪资范围（硬性条件）
-        # 候选人期望最低薪资 >= 岗位薪资上限 + 2K → 过滤
+        # 候选人期望最低薪资 >= 岗位薪资上限 + 1K → 过滤
         salary_min = rule.get("salary_min")
         salary_max = rule.get("salary_max")
         if salary_min is not None and salary_max is not None:
             cand_min_k, _ = _parse_candidate_salary_range(candidate_text)
-            if cand_min_k is not None and cand_min_k >= salary_max + 2:
+            if cand_min_k is not None and cand_min_k >= salary_max + 1:
                 return False, 0, {"reason": f"薪资不匹配：岗位最高{salary_max}K，候选人期望最低{cand_min_k}K"}
 
         # 3. 必要条件
@@ -615,15 +624,21 @@ def check_required_condition(candidate_text, condition):
             # 硕士/博士自动满足（已具备本科学历）
             if "硕士" in candidate_text or "博士" in candidate_text:
                 return {"passed": True, "reason": ""}
-            has_regular = "统招" in candidate_text or "985" in candidate_text or "211" in candidate_text
-            has_bachelor = "本科" in candidate_text
-            if has_regular and has_bachelor:
+            # 明确的统招/全日制本科短语
+            if re.search(r'(统招|全日制)\s*本科', candidate_text):
                 return {"passed": True, "reason": ""}
-            # 检查是否明确是非统招
-            non_regular = ["自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招"]
-            if any(ne in candidate_text for ne in non_regular):
+            # 985/211 本科视为统招（需同时出现 985/211 和 本科，且无非统招标记）
+            has_regular_mark = "985" in candidate_text or "211" in candidate_text
+            has_bachelor = "本科" in candidate_text
+            non_regular = ["自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
+                           "专升本", "电大", "远程教育", "成人高考", "成人教育", "脱产", "业余"]
+            is_non_regular = any(ne in candidate_text for ne in non_regular)
+            if has_regular_mark and has_bachelor and not is_non_regular:
+                return {"passed": True, "reason": ""}
+            # 非统招明确标记 → 拒绝
+            if is_non_regular:
                 return {"passed": False, "reason": f"必要条件不满足：{condition}（非统招）"}
-            # 如果没有统招标记但有本科，也视为通过（宽松匹配）
+            # 无任何标记但有本科，宽松通过
             if has_bachelor:
                 return {"passed": True, "reason": ""}
             return {"passed": False, "reason": f"必要条件不满足：{condition}"}
