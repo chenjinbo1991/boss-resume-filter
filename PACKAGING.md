@@ -75,6 +75,7 @@ Release 标题和说明必须先写在 `CHANGELOG.md` 对应版本段落中。`p
 - 新增功能
 - UI 改进
 - 行为优化
+- Bug 修复
 - 构建改进
 
 如果打包环境来自 Anaconda，`build.py` 会自动定位并打包：

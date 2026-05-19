@@ -348,7 +348,7 @@ def _extract_changelog_release(version):
         print(f"[错误] CHANGELOG.md 中 v{version} 段落正文为空")
         sys.exit(1)
 
-    required_sections = ["新增功能", "UI 改进", "行为优化", "构建改进"]
+    required_sections = ["新增功能", "UI 改进", "行为优化", "Bug 修复", "构建改进"]
     missing = []
     for section in required_sections:
         if not re.search(rf"^###\s+{re.escape(section)}\s*$", body, re.MULTILINE):
@@ -358,7 +358,7 @@ def _extract_changelog_release(version):
         print(f"[错误] CHANGELOG.md 中 v{version} 段落缺少发布分类：")
         for section in missing:
             print(f"  - {section}")
-        print("\n请按：新增功能 / UI 改进 / 行为优化 / 构建改进 分类整理后再发布。")
+        print("\n请按：新增功能 / UI 改进 / 行为优化 / Bug 修复 / 构建改进 分类整理后再发布。")
         sys.exit(1)
 
     print(f"  [OK] Release 标题来自 CHANGELOG.md：{title}")
