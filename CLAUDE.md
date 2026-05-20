@@ -4,6 +4,7 @@
 ```
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
+├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── gui_main.py           # 图形界面主程序（v2.5）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -130,7 +131,7 @@ boss-resume-filter/
 - 学历档次加分：博士+15, 985/211硕士+13, 硕士+10, 985/211本科+8, 统招本科+5
 - 找不到工作经验不再淘汰（警告后放行），但也不加分
 - 推荐等级阈值：>=75 强烈推荐, >=65 推荐, >=55 待定
-- 实现位置：`filter_candidate()`, `_keyword_found()`, `_calc_edu_bonus()`
+- 实现位置：`filtering.py:filter_candidate()`, `filtering.py:_keyword_found()`, `filtering.py:_calc_edu_bonus()`；`bossmaster.py` 保留同名导入兼容旧调用
 - 淘汰原因合并：学历不符/经验不足/年龄不符/地点不符/薪资不匹配/评分不足 按大类合并，括号内动态显示实际招聘要求
 - 淘汰原因排序：学历不符/不足 → 经验不足 → 年龄不符 → 地点不符 → 薪资不匹配 → 评分不足(按分数段) → 其他，同类内按数量降序
 - 硬条件检查顺序（v2.5）：学历 → 经验 → 年龄 → 工作地点 → 薪资范围 → 必要条件 → 技术关键词
@@ -140,7 +141,7 @@ boss-resume-filter/
 - 三种模式：简单匹配（子串搜索）、OR（满足任一，大小写不敏感）、AND（全部满足）
 - 全角逗号（，）自动归一化为半角逗号分隔
 - 底层 `check_required_condition()` 支持三种格式：字符串、`{"type":"or","items":[...]}`、`{"type":"and","items":[...]}`
-- 实现位置：`bossmaster.py:check_required_condition()`、`gui_main.py:add_required_condition()`
+- 实现位置：`filtering.py:check_required_condition()`、`gui_main.py:add_required_condition()`；`bossmaster.py` 保留同名导入兼容旧调用
 
 ### 薪资输入验证（v2.4）
 - `StringVar.trace_add('write', callback)` 实时检测：非数字字符红色高亮，空值/合法数字恢复默认色
@@ -156,7 +157,7 @@ boss-resume-filter/
 
 ### 薪资范围筛选（v2.4 新增）
 - `doc_parser.py`：`_extract_salary_range()` 匹配"薪资范围：12k-15k"等模式
-- `bossmaster.py`：`_parse_candidate_salary_range()` 解析候选人 summary 第一行薪资
+- `filtering.py`：`_parse_candidate_salary_range()` 解析候选人 summary 第一行薪资
 - `filter_candidate()` 硬性条件检查 #2.6：候选人期望最低薪资 >= 岗位薪资上限 + 1K → 过滤
 - 岗位 salary_min/salary_max 均为 None 时跳过；候选人"面议"时跳过
 - 淘汰原因格式：`"薪资不匹配：岗位最高{max}K，候选人期望最低{min}K"`

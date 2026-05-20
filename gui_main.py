@@ -212,6 +212,8 @@ class BossFilterGUI:
         self.browser_connected = False
         self.browser_page = None
         self._browser_auto_check_id = None  # after() 回调 ID
+        self._browser_status_text = ""
+        self._browser_status_help_text = ""
 
         # 右键菜单引用列表（统一销毁）
         self._context_menus = []
@@ -2442,7 +2444,7 @@ class BossFilterGUI:
             self.api_config = {
                 "api_provider": provider,
                 "base_url": base_url,
-                "model": self.api_config.get("model", ""),
+                "model": model_name,
                 "saved_models": getattr(self, 'saved_models', []),
                 "providers": self.api_config.get("providers", {})
             }
@@ -3567,6 +3569,27 @@ class BossFilterGUI:
         """追加日志"""
         self.log_queue.put(message)
 
+    def run_on_ui(self, callback):
+        """在 Tk 主线程执行 UI 更新，避免后台线程直接操作控件。"""
+        self.root.after(0, callback)
+
+    def set_browser_ui(self, indicator_text=None, indicator_color=None, help_text=None, start_state=None):
+        """线程安全更新浏览器状态控件，并缓存状态文本供后台线程判断。"""
+        if indicator_text is not None:
+            self._browser_status_text = indicator_text
+        if help_text is not None:
+            self._browser_status_help_text = help_text
+
+        def apply_update():
+            if indicator_text is not None:
+                self.browser_status_indicator.config(text=indicator_text, foreground=indicator_color)
+            if help_text is not None:
+                self.browser_status_help.config(text=help_text)
+            if start_state is not None:
+                self.start_btn.config(state=start_state)
+
+        self.run_on_ui(apply_update)
+
     def update_log(self):
         """更新日志显示"""
         try:
@@ -3602,27 +3625,21 @@ class BossFilterGUI:
                 # 已有可用连接，直接复用，不做端口检查
                 if self.browser_page is not None:
                     try:
-                        prev_help = self.browser_status_help.cget("text")
+                        prev_help = self._browser_status_help_text
                         current_url = self.browser_page.url
                         if 'zhipin.com/web/chat/recommend' in current_url.lower():
                             self.browser_connected = True
-                            self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
-                            self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
-                            self.start_btn.config(state="normal")
+                            self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                             if prev_help != "已连接到 BOSS 直聘推荐牛人页面":
                                 self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                         elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
                             self.browser_connected = False
-                            self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                            self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 推荐牛人页面")
-                            self.start_btn.config(state="disabled")
+                            self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 推荐牛人页面", "disabled")
                             if prev_help != "浏览器已连接，请导航到 BOSS 推荐牛人页面":
                                 self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 推荐牛人页面")
                         else:
                             self.browser_connected = False
-                            self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                            self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
-                            self.start_btn.config(state="disabled")
+                            self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
                             if prev_help != "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面":
                                 self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                         return
@@ -3640,14 +3657,13 @@ class BossFilterGUI:
                 s.close()
 
                 if not port_open:
-                    prev_state = self.browser_status_indicator.cget("text")
+                    prev_state = self._browser_status_text
                     self.browser_connected = False
-                    self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
-                    self.start_btn.config(state="disabled")
+                    self.set_browser_ui("🔴 未连接", self.colors['danger'], start_state="disabled")
 
                     # 自动启动 Chrome（仅在手动点击时）
                     if not silent:
-                        self.browser_status_help.config(text="正在启动 Chrome 浏览器...")
+                        self.set_browser_ui(help_text="正在启动 Chrome 浏览器...")
                         self.append_log("正在启动 Chrome 浏览器...")
 
                         # 找到 Chrome 可执行文件
@@ -3658,7 +3674,7 @@ class BossFilterGUI:
                         ]
                         chrome_path = next((p for p in candidates if os.path.exists(p)), None)
                         if not chrome_path:
-                            self.browser_status_help.config(text="未找到 Chrome 浏览器，请安装后重试")
+                            self.set_browser_ui(help_text="未找到 Chrome 浏览器，请安装后重试")
                             self.append_log("❌ 未找到 Chrome 浏览器")
                             return
 
@@ -3711,8 +3727,7 @@ class BossFilterGUI:
                                 self.append_log(f"⏳ 等待 Chrome 就绪... ({i+1}/30)")
 
                         if not port_ready:
-                            self.browser_status_help.config(text="Chrome 启动超时，请关闭所有 Chrome 窗口后重试")
-                            self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
+                            self.set_browser_ui("🔴 未连接", self.colors['danger'], "Chrome 启动超时，请关闭所有 Chrome 窗口后重试")
                             self.append_log("❌ Chrome 启动超时，调试端口未开启")
                             return
 
@@ -3728,57 +3743,46 @@ class BossFilterGUI:
                                 self.browser_connected = True
                                 self.browser_page = page
                                 self.browser_address = page.address
-                                self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
-                                self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
-                                self.start_btn.config(state="normal")
+                                self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                                 self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                             elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
                                 self.browser_connected = True
                                 self.browser_page = page
                                 self.browser_address = page.address
-                                self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                                self.browser_status_help.config(text="浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
                                 self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
                                 page.get('https://www.zhipin.com/web/chat/recommend')
                                 time.sleep(2)
                                 current_url = page.url
                                 if 'zhipin.com/web/chat/recommend' in current_url.lower():
                                     self.browser_connected = True
-                                    self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
-                                    self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
-                                    self.start_btn.config(state="normal")
+                                    self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                                     self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                                 else:
-                                    self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                                    self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 推荐牛人页面")
+                                    self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 推荐牛人页面")
                                     self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 推荐牛人页面")
                             else:
                                 self.browser_connected = True
                                 self.browser_page = page
                                 self.browser_address = page.address
-                                self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                                self.browser_status_help.config(text="浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
                                 self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
                                 page.get('https://www.zhipin.com/web/chat/recommend')
                                 time.sleep(2)
                                 current_url = page.url
                                 if 'zhipin.com/web/chat/recommend' in current_url.lower():
                                     self.browser_connected = True
-                                    self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
-                                    self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
-                                    self.start_btn.config(state="normal")
+                                    self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                                     self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                                 else:
-                                    self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                                    self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
+                                    self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                                     self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                         except Exception as e:
-                            self.browser_status_help.config(text="Chrome 连接失败，请重试")
-                            self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
+                            self.set_browser_ui("🔴 未连接", self.colors['danger'], "Chrome 连接失败，请重试")
                             self.append_log(f"❌ Chrome 连接失败：{e}")
                         return
                     else:
-                        self.browser_status_help.config(text="未检测到 Chrome，请确保浏览器已启动")
+                        self.set_browser_ui(help_text="未检测到 Chrome，请确保浏览器已启动")
                         if prev_state != "🔴 未连接":
                             self.append_log("❌ 未检测到 Chrome 调试端口")
                     return
@@ -3794,44 +3798,35 @@ class BossFilterGUI:
                         self.browser_connected = True
                         self.browser_page = page
                         self.browser_address = page.address
-                        self.browser_status_indicator.config(text="🟢 已连接", foreground=self.colors['success'])
-                        self.browser_status_help.config(text="已连接到 BOSS 直聘推荐牛人页面")
-                        self.start_btn.config(state="normal")
+                        self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                         if not silent or not prev_connected:
                             self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                     elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
-                        prev_state = self.browser_status_indicator.cget("text")
+                        prev_state = self._browser_status_text
                         self.browser_connected = False
                         self.browser_page = page
                         self.browser_address = page.address
-                        self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                        self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
-                        self.start_btn.config(state="disabled")
+                        self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
                         if not silent or prev_state != "🟡 需导航":
                             self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                     else:
-                        prev_state = self.browser_status_indicator.cget("text")
+                        prev_state = self._browser_status_text
                         self.browser_connected = False
                         self.browser_page = page
                         self.browser_address = page.address
-                        self.browser_status_indicator.config(text="🟡 需导航", foreground=self.colors['warning'])
-                        self.browser_status_help.config(text="浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
-                        self.start_btn.config(state="disabled")
+                        self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
                         if not silent or prev_state != "🟡 需导航":
                             self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
 
                 except Exception as e:
-                    prev_state = self.browser_status_indicator.cget("text")
+                    prev_state = self._browser_status_text
                     self.browser_connected = False
-                    self.browser_status_indicator.config(text="🔴 未连接", foreground=self.colors['danger'])
-                    self.browser_status_help.config(text="未检测到 Chrome 浏览器，请确保浏览器已启动")
-                    self.start_btn.config(state="disabled")
+                    self.set_browser_ui("🔴 未连接", self.colors['danger'], "未检测到 Chrome 浏览器，请确保浏览器已启动", "disabled")
                     if not silent or prev_state != "🔴 未连接":
                         self.append_log("❌ 未检测到 Chrome 浏览器，请确保浏览器已启动")
 
             except ImportError:
-                self.browser_status_indicator.config(text="🔴 错误", foreground=self.colors['danger'])
-                self.browser_status_help.config(text="未安装 DrissionPage，请运行：pip install DrissionPage")
+                self.set_browser_ui("🔴 错误", self.colors['danger'], "未安装 DrissionPage，请运行：pip install DrissionPage")
                 self.append_log("❌ DrissionPage 未安装")
             finally:
                 self._browser_check_running = False
@@ -4006,10 +4001,11 @@ class BossFilterGUI:
 
     def run_worker(self):
         """运行工作线程"""
-        try:
-            import sys
-            from datetime import datetime
+        import sys
+        from datetime import datetime
 
+        old_stdout = sys.stdout
+        try:
             class LogRedirector:
                 def __init__(self, callback):
                     self.callback = callback
@@ -4028,7 +4024,6 @@ class BossFilterGUI:
                     self.buffer = ""
 
             log_redirector = LogRedirector(self.append_log)
-            old_stdout = sys.stdout
             sys.stdout = log_redirector
 
             rounds = int(self.rounds_var.get())
@@ -4109,16 +4104,17 @@ class BossFilterGUI:
         finally:
             sys.stdout = old_stdout
             self.is_running = False
-            self.status_label.config(text="🟢 就绪", foreground=self.colors['success'])
-            self.start_btn.config(state="normal")
-            self.stop_btn.config(state="disabled")
             self.append_log(f"[{datetime.now().strftime('%H:%M:%S')}] ✔ 运行完成")
 
-            # 重置进度条
-            self.root.after(0, lambda: self.progress_var.set(0))
-            self.root.after(0, lambda: self.progress_label.config(text="就绪"))
+            def finish_ui():
+                self.status_label.config(text="🟢 就绪", foreground=self.colors['success'])
+                self.start_btn.config(state="normal")
+                self.stop_btn.config(state="disabled")
+                self.progress_var.set(0)
+                self.progress_label.config(text="就绪")
+                self.root.after(100, self.refresh_results)
 
-            self.root.after(100, self.refresh_results)
+            self.run_on_ui(finish_ui)
 
     def on_closing(self):
         """窗口关闭处理 - 安全等待工作线程结束"""

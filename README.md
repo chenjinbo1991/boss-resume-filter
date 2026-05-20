@@ -142,6 +142,7 @@ python tests/test_import.py
 ```
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
+├── filtering.py          # 纯筛选规则模块
 ├── gui_main.py            # 图形界面主程序（v2.5）
 ├── icons.py               # 图标绘制模块（Pillow 矢量图标）
 ├── doc_parser.py          # 文档解析器（简历解析）
