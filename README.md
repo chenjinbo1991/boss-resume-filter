@@ -143,6 +143,7 @@ python tests/test_import.py
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
 ├── filtering.py          # 纯筛选规则模块
+├── storage.py            # 候选人数据持久化模块
 ├── gui_main.py            # 图形界面主程序（v2.5）
 ├── icons.py               # 图标绘制模块（Pillow 矢量图标）
 ├── doc_parser.py          # 文档解析器（简历解析）
@@ -197,7 +198,7 @@ boss-resume-filter/
 1. **浏览器要求**: 需要安装 Chrome 浏览器（程序可自动启动 Chrome 并导航到推荐页面）
 2. **手动导航**: 如果浏览器未自动导航到推荐页面，请手动导航到 BOSS 直聘推荐页面
 3. **网络稳定**: 保持网络连接稳定，避免中断
-4. **数据备份**: 定期备份 `candidates_all.json` 文件
+4. **数据备份**: 程序保存时会生成 `candidates_all.json.bak`，仍建议定期备份 `candidates_all.json`
 5. **中文数字支持**: 自动识别"三年"、"十二年"等中文数字格式
 
 ## 🔧 故障排查

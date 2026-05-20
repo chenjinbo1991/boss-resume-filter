@@ -1,5 +1,4 @@
 import bossmaster
-from bossmaster import save_candidates_all
 from filtering import (
     _calc_edu_bonus,
     _keyword_found,
@@ -8,6 +7,7 @@ from filtering import (
     filter_candidate,
     parse_experience_years,
 )
+from storage import load_candidates_all, save_candidates_all
 from doc_parser import _extract_salary_range
 import contextlib
 import io
@@ -32,6 +32,11 @@ def test_bossmaster_keeps_filtering_compatibility_exports():
     assert bossmaster.filter_candidate is filter_candidate
     assert bossmaster.check_required_condition is check_required_condition
     assert bossmaster.parse_experience_years is parse_experience_years
+
+
+def test_bossmaster_keeps_storage_compatibility_exports():
+    assert bossmaster.load_candidates_all is load_candidates_all
+    assert bossmaster.save_candidates_all is save_candidates_all
 
 
 def test_extract_job_salary_range_handles_numeric_and_negotiable_text():
@@ -186,3 +191,26 @@ def test_save_candidates_all_deduplicates_by_geek_id_and_job_name():
     assert java["greet_sent"] is True
     assert "greeting_in_progress" not in java
     assert python["match_score"] == 60
+
+
+def test_load_candidates_all_restores_from_backup_when_main_json_is_corrupt():
+    old_cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            os.chdir(tmpdir)
+            backup_data = [{"geek_id": "g1", "job_name": "Java", "greet_sent": True}]
+            with open("candidates_all.json", "w", encoding="utf-8") as f:
+                f.write("{broken json")
+            with open("candidates_all.json.bak", "w", encoding="utf-8") as f:
+                json.dump(backup_data, f, ensure_ascii=False)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                loaded = load_candidates_all()
+
+            with open("candidates_all.json", "r", encoding="utf-8") as f:
+                restored = json.load(f)
+        finally:
+            os.chdir(old_cwd)
+
+    assert loaded == backup_data
+    assert restored == backup_data

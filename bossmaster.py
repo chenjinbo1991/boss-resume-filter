@@ -20,6 +20,12 @@ from filtering import (
     filter_candidate,
     parse_experience_years,
 )
+from storage import (
+    get_greeted_geek_ids,
+    is_already_greeted,
+    load_candidates_all,
+    save_candidates_all,
+)
 
 
 class StopRequested(Exception):
@@ -407,91 +413,6 @@ def get_frame_scroll_info(frame):
     except Exception as e:
         print(f"获取滚动信息失败：{e}")
         return None
-
-
-def load_candidates_all():
-    """加载 candidates_all.json 中的已有候选人"""
-    all_file = "candidates_all.json"
-    if os.path.exists(all_file):
-        try:
-            with open(all_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"加载候选人数据失败：{e}")
-    return []
-
-
-def get_greeted_geek_ids(candidates_all):
-    """从 candidates_all 中提取已打招呼的 geek_id 集合"""
-    return set(c['geek_id'] for c in candidates_all if c.get('greet_sent') is True)
-
-
-
-
-def save_candidates_all(candidates_all):
-    """保存 candidates_all.json（覆盖旧文件）- 支持去重和中断恢复
-
-    去重规则：
-        - 基于 (geek_id, job_name) 组合去重，同一人在不同岗位各保留一条记录
-        - 同一岗位内保留分数高的记录
-        - 合并打招呼状态
-        - 清理 greeting_in_progress 标记（如果已保存成功）
-    """
-    all_file = "candidates_all.json"
-
-    # 去重：基于 (geek_id, job_name)，保留最新记录（分数高的）- O(n) 优化
-    seen = {}
-
-    for c in candidates_all:
-        geek_id = c.get('geek_id')
-        job_name = c.get('job_name', '')
-        if geek_id:
-            key = (geek_id, job_name)
-            if key not in seen:
-                seen[key] = c
-            else:
-                # 同岗位同一人：如果新记录分数更高或打过招呼，更新
-                old_c = seen[key]
-                if c.get('match_score', 0) > old_c.get('match_score', 0) or c.get('greet_sent', False):
-                    # 合并数据：保留打招呼状态
-                    if old_c.get('greet_sent', False) and not c.get('greet_sent', False):
-                        c['greet_sent'] = True
-                    # 保留 greeting_in_progress 标记
-                    if old_c.get('greeting_in_progress', False):
-                        c['greeting_in_progress'] = True
-                    seen[key] = c
-
-    # 直接从字典生成列表（避免 O(n²) 的列表查找）
-    unique_candidates = list(seen.values())
-
-    # 清理 completed 的 greeting_in_progress 标记（已打过招呼的不再需要标记）
-    for c in unique_candidates:
-        if c.get('greeting_in_progress') and c.get('greet_sent'):
-            del c['greeting_in_progress']
-
-    tmp_file = all_file + ".tmp"
-    with open(tmp_file, 'w', encoding='utf-8') as f:
-        json.dump(unique_candidates, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_file, all_file)
-    print(f"已更新 {all_file} (共 {len(unique_candidates)} 个唯一候选人)")
-
-
-def is_already_greeted(candidates_all, geek_id, job_name=None):
-    """检查是否已打过招呼（v2.2: 支持复合键 (geek_id, job_name)）
-
-    Args:
-        candidates_all: 候选人列表
-        geek_id: 候选人 ID
-        job_name: 岗位名称，传入时使用复合键检查，为 None 时仅按 geek_id 检查（向后兼容）
-    """
-    for c in candidates_all:
-        if c.get('geek_id') == geek_id and c.get('greet_sent') is True:
-            if job_name is not None:
-                if c.get('job_name', '') == job_name:
-                    return True
-            else:
-                return True
-    return False
 
 
 def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_callback=None, stop_event=None):

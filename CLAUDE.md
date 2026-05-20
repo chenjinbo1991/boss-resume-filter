@@ -5,6 +5,7 @@
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
+├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
 ├── gui_main.py           # 图形界面主程序（v2.5）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -112,12 +113,13 @@ boss-resume-filter/
 ### 去重机制
 - 基于 `(geek_id, job_name)` 复合键去重，保留分数高的记录
 - 合并打招呼状态（greet_sent）
-- save_candidates_all 使用 O(n) 算法（字典替代列表查找）
+- `storage.py:save_candidates_all()` 使用 O(n) 算法（字典替代列表查找）；`bossmaster.py` 保留同名导入兼容旧调用
 
 ### 保存策略
 - 正常流程：岗位处理完毕时统一保存（减少 IO）
 - 异常中断：KeyboardInterrupt / StopRequested 时立即兜底保存
 - 原子性写入：先写 `candidates_all.json.tmp`，成功后再 `os.replace()` 覆盖，防止中途崩溃导致数据文件损坏
+- 备份恢复：保存前复制旧 `candidates_all.json` 为 `candidates_all.json.bak`；加载主文件失败时自动尝试从 `.bak` 恢复
 
 ### 滚动提前终止
 - 文本提示检测（策略1）：每轮滚动**后**用 DrissionPage `@text():关键字` 模糊匹配"到底"/"没有更多"等提示文字，命中即停。检测移到滚动之后执行，避免误匹配页面常驻 footer 文本
