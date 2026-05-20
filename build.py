@@ -523,12 +523,6 @@ def main():
                         help="自动更新 gui_main.py 中的 __version__")
     args = parser.parse_args()
 
-    run_in_venv()
-
-    if args.check:
-        _preflight_checks(require_clean=True)
-        return
-
     version_changed = False
 
     # ---- 版本号更新（在打包之前） ----
@@ -539,6 +533,12 @@ def main():
             version_changed = True
         else:
             print(f"  [跳过] __version__ 已经是 \"{args.version}\"\n")
+
+    run_in_venv()
+
+    if args.check:
+        _preflight_checks(require_clean=True)
+        return
 
     print("""
 ╔══════════════════════════════════════════════════════════════╗
@@ -606,7 +606,7 @@ def main():
         print(f"  Release 模式：v{version}")
         print(f"{'='*60}")
 
-        _git_commit(version, allowed_paths=["gui_main.py"] if version_changed else [])
+        _git_commit(version, allowed_paths=["gui_main.py"] if args.version else [])
         _git_tag(version)
         _git_push(version)
         _gh_release(version, release_title, release_notes)
