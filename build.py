@@ -375,6 +375,35 @@ def _extract_changelog_release(version):
     return title, body
 
 
+def _check_readme_release(version):
+    """验证 README.md 已同步当前发布版本。"""
+    readme_path = BASE_DIR / "README.md"
+    if not readme_path.exists():
+        print("[错误] README.md 不存在，Release 必须先更新项目主页说明")
+        sys.exit(1)
+
+    content = readme_path.read_text(encoding="utf-8")
+    required_version_text = f"当前发布版本：v{version}"
+    if required_version_text not in content:
+        print(f"[错误] README.md 未同步当前发布版本：v{version}")
+        print(f"请在 README.md 顶部加入或更新：> {required_version_text}")
+        sys.exit(1)
+
+    release_heading = re.compile(rf"^###\s+v{re.escape(version)}(?:\s|$)", re.MULTILINE)
+    if not release_heading.search(content):
+        print(f"[错误] README.md 未找到 v{version} 功能摘要小节")
+        print(f"请在 README.md 功能特性中补充：### v{version} 新增功能")
+        sys.exit(1)
+
+    gui_version_text = f"gui_main.py            # 图形界面主程序（v{version}）"
+    if gui_version_text not in content:
+        print(f"[错误] README.md 项目结构中的 gui_main.py 版本未同步为 v{version}")
+        print(f"请将项目结构中的 gui_main.py 标注更新为：# 图形界面主程序（v{version}）")
+        sys.exit(1)
+
+    print(f"  [OK] README.md 已同步 v{version} 项目主页说明")
+
+
 # ---------------------------------------------------------------------------
 #  Release 子步骤（仅 --release 模式调用）
 # ---------------------------------------------------------------------------
@@ -599,6 +628,7 @@ def main():
     release_title = release_notes = None
     if args.release:
         release_title, release_notes = _extract_changelog_release(version)
+        _check_readme_release(version)
 
     # ---- Release 模式：提交 → 打 tag → 推送 → GitHub Release ----
     if args.release:
