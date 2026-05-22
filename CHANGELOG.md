@@ -17,6 +17,7 @@
 - **统计数据优质率**：岗位明细表的"通过率"列改为"优质率"（强烈推荐+推荐占比），打招呼率同步只显示百分比
 
 ### UI 改进
+- **更新日志页面重构**：从单文本框改为左右分栏——左侧版本历史列表（Listbox），右侧版本详情（Text）；点击版本标签切换内容；标题/分类/条目分级样式渲染
 - **明细窗口模态化**：首页统计弹窗、筛选结果统计弹窗、候选人详情弹窗全部改为模态窗口（`grab_set()`），打开期间禁止点击左侧栏导航和主窗口其他控件，必须先关闭弹窗才能继续操作主界面
 - **单个候选人打招呼**：筛选结果页右键菜单新增「打招呼」选项（仅对未打招呼候选人显示），确认后表格状态列立即显示"打招呼中..."提供即时反馈；后台线程调用 `send_greeting_on_list_page`（含智能滚动定位）完成打招呼，成功后自动更新 JSON 状态并刷新结果页和首页统计；失败时状态自动恢复为"未招呼"；浏览器未连接时自动尝试重连（读取持久化端口），无需切换到运行控制页
 - **候选人详情结构化展示**：右键"查看详情"弹窗从原始 JSON dump 改为结构化文本，核心信息速览（年龄/工作年限/薪资/求职状态）、教育信息（学校·专业·学历，正则匹配"河北科技学院计算机科学与技术本科"无分隔符格式）、评分信息、AI 评估（评估理由/调整值/原始分/模型）、技能匹配详情（含匹配数/总数）、候选人摘要；移除底部原始 JSON 数据块和城市显示
@@ -95,75 +96,59 @@
 - **稳定回归测试套件**：建立稳定单元回归测试套件，避免历史调试脚本污染默认验证链路
 - **Release 提交流程收紧**：Release 流程不再使用 `git add -A`，防止误提交本地缓存、浏览器状态或候选人数据
 
-## v2.4 — 2026-05-13
+## v2.4 — 薪资筛选 + 必要条件 UI + 反爬健壮性
 
 ### 新增功能
 - **薪酬筛选全链路**：需求解析提取薪资范围（doc_parser）→ 配置文件持久化（salary_min/salary_max）→ 候选人筛选过滤（候选人期望最低薪资 >= 岗位上限 + 2K 淘汰）
 - **薪酬配置 UI**：岗位配置页"基本信息"区新增薪资范围输入框，留空不限制
 - **薪资输入实时验证**：输入非数字字符时红色高亮提示，保存时二次校验弹窗警告
 
+### 行为优化
+- **筛选优先级调整**：GUI 岗位配置表单 + filter_candidate 硬条件检查，学历判断均移到经验之前
+- **原子性写入**：`save_candidates_all` 改为先写 `.tmp` 再 `os.replace()`，防止写入中途崩溃导致 `candidates_all.json` 数据损坏
+- **随机延迟抖动**：新增 `_human_delay(center, spread)` 函数，所有 `time.sleep` 调用带随机抖动（不同场景不同 spread），降低行为指纹识别风险
+- **安全验证阻断**：新增 `_detect_captcha()` 函数，检测 11 个验证码关键词 + 7 种常见验证码容器 CSS 选择器；在滚动扫描每轮开始、打招呼点击后、打招呼循环失败时三处调用，命中即停止自动化并提示人工处理
+
 ### UI 改进
 - **必要条件 UI 重构**：JSON 输入 → 下拉框选择类型（简单匹配/OR满足任一/AND全部满足）+ 逗号分隔关键词，无需手写 JSON
 - **必要条件全角逗号兼容**：全角逗号（，）自动归一化为半角，与半角逗号等效分隔
 - **DPI 屏幕居中修复**：在 `SetProcessDpiAwareness` 前捕获屏幕尺寸，多分辨率环境窗口正确居中
 
-### 行为优化
-- **筛选优先级调整**：GUI 岗位配置表单 + filter_candidate 硬条件检查，学历判断均移到经验之前
-
-### BUG修复（2026-05-13）
-- **PIL 打包缺失**：pack_venv 中漏装 Pillow，导致 EXE 在无 Python 环境电脑上启动报 `ModuleNotFoundError: No module named 'PIL'`。修复：安装 Pillow 到 pack_venv，build.py 改用 `--collect-all PIL` 完整收集所有图片格式插件
+### Bug 修复
+- **PIL 打包缺失**：pack_venv 中漏装 Pillow，导致 EXE 在无 Python 环境电脑上启动报 `ModuleNotFoundError: No module named 'PIL'`；修复：安装 Pillow 到 pack_venv，build.py 改用 `--collect-all PIL` 完整收集所有图片格式插件
 - **Chrome 启动异常处理**：`FileNotFoundError`（Chrome 未安装）和 `chrome`/`errno` 关键词异常（Chrome 安装异常）分类处理，替代宽泛的超时提示
 - **依赖清理**：移除 requirements.txt 中已废弃的 `cdpkit`（DrissionPage 4.x 不再需要）
 - **薪资解析面议边界**：`_extract_salary_range()` 未覆盖"面议"/"薪资面议"/"薪资可谈"等非数字描述，正则匹配前增加显式拦截（doc_parser.py）
+- **明文 API Key 泄露**：`load_api_config()` 将 keyring 中的明文 key 注入了 `saved_models` 字典（内存原地修改），导致后续任何一次保存/切换/删除模型操作都将明文 key 写回 `api_config.json` 磁盘文件；修复：不再注入 key，改为按需从 keyring 读取；新增 `_sanitize_config_for_save()` 防御层剥离顶层和嵌套 `api_key`；三个写入路径 + `migrate_keys.py` 全部使用该辅助方法
 
 ### 构建改进
-- `build.py` 增加 `_check_dependencies()` 打包前验证：逐项 import 检查 7 个核心依赖，缺失时明确提示包名和修复命令，杜绝生成有缺陷的 EXE
-- `build.py` 新增 `--release` 一键发布：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传，全流程自动化
-- `build.py` 新增 `--version X.Y` 参数：自动更新 `gui_main.py` 中 `__version__` 后执行打包/发布
-- `__version__` 收敛到 `gui_main.py` 模块变量：唯一版本号来源，UI 标签动态跟随，`build.py` AST 解析提取并核对
-- `.gitignore` 补充：`.agents/`、`.baoyu-skills/`、`skills-lock.json`、`wechat/`
+- **依赖验证**：`build.py` 增加 `_check_dependencies()` 打包前验证：逐项 import 检查 7 个核心依赖，缺失时明确提示包名和修复命令，杜绝生成有缺陷的 EXE
+- **一键发布**：`build.py` 新增 `--release` 一键发布：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传，全流程自动化
+- **版本号参数**：`build.py` 新增 `--version X.Y` 参数：自动更新 `gui_main.py` 中 `__version__` 后执行打包/发布
+- **版本号收敛**：`__version__` 收敛到 `gui_main.py` 模块变量：唯一版本号来源，UI 标签动态跟随，`build.py` AST 解析提取并核对
+- **.gitignore 补充**：`.agents/`、`.baoyu-skills/`、`skills-lock.json`、`wechat/`
 
-### 反爬健壮性（2026-05-15）
-- **原子性写入**：`save_candidates_all` 改为先写 `.tmp` 再 `os.replace()`，防止写入中途崩溃导致 `candidates_all.json` 数据损坏
-- **随机延迟抖动**：新增 `_human_delay(center, spread)` 函数，所有 `time.sleep` 调用带随机抖动（不同场景不同 spread），降低行为指纹识别风险
-- **安全验证阻断**：新增 `_detect_captcha()` 函数，检测 11 个验证码关键词 + 7 种常见验证码容器 CSS 选择器。在滚动扫描每轮开始、打招呼点击后、打招呼循环失败时三处调用，命中即停止自动化并提示人工处理
+## v2.3 — 图标系统升级 + 工作地点筛选
 
-### BUG修复（2026-05-18）
-- **明文 API Key 泄露**：`load_api_config()` 将 keyring 中的明文 key 注入了 `saved_models` 字典（内存原地修改），导致后续任何一次保存/切换/删除模型操作都将明文 key 写回 `api_config.json` 磁盘文件。修复：不再注入 key，改为按需从 keyring 读取；新增 `_sanitize_config_for_save()` 防御层剥离顶层和嵌套 `api_key`；三个写入路径 + `migrate_keys.py` 全部使用该辅助方法
+### 行为优化
+- **工作地点筛选**：`doc_parser.py` 从需求文档中提取工作地点，智能解析城市名（"南京市雨花区凯润大厦" → "南京"）；`bossmaster.py` filter_candidate 新增地点匹配逻辑，支持多地点（`/`、`、` 分隔）
+- **招聘需求示例按钮**：岗位配置页新增"招聘需求示例"按钮，一键填充模板到需求输入框；模板存储在 `job_config.json` → `requirement_template`；按钮默认禁用，仅"新建岗位"模式下可用
 
-## v2.3 — 2026-05-13
-
-### 图标系统升级（2026-05-12）
-- **全部图标 DPI 高清化**：使用 Pillow ImageDraw 在运行时程序化生成 21 个矢量精度图标，替代所有 emoji 字符图标
-- 图标按系统 DPI 自动缩放，100%/125%/150% 缩放比下均保持清晰锐利
-- 单色线条风格，暗色模式下自动适配配色
-- 侧边栏导航图标支持 hover/active 颜色切换
-- 眼睛切换按钮（API Key 密文显隐）使用 eye/eye_off 图标
-- 右键菜单项添加 clipboard/trash/export 图标
+### UI 改进
+- **图标 DPI 高清化**：使用 Pillow ImageDraw 在运行时程序化生成 21 个矢量精度图标，替代所有 emoji 字符图标；按系统 DPI 自动缩放，100%/125%/150% 缩放比下均保持清晰锐利；单色线条风格，暗色模式下自动适配配色
 - **首页图标语义化重构**：累计候选人→people(双人剪影)、强烈推荐→star(五角星)、推荐→thumbs_up(Lucide开源库坐标)、已打招呼→chat(聊天气泡)
+- **侧边栏导航图标**：支持 hover/active 颜色切换
+- **眼睛切换按钮**：API Key 密文显隐使用 eye/eye_off 图标
+- **右键菜单图标**：添加 clipboard/trash/export 图标
+- **候选人详情弹窗优化**：弹窗居中显示（withdraw/deiconify 模式，基于父窗口坐标精确定位）；窗口尺寸放大 600×500 → 700×580；正文字体放大 12 → 14
+- **工作地点配置**：岗位配置页新增"工作地点"输入框（位于学历右侧）
 
-### 候选人详情弹窗优化
-- 弹窗居中显示：采用 withdraw/deiconify 模式，基于父窗口坐标精确定位
-- 窗口尺寸放大：600×500 → 700×580
-- 正文字体放大：12 → 14
+### 构建改进
+- **EXE 输出名**：改为 `BOSS_ResumeFilter.exe`（GitHub Release 不支持中文文件名）
+- **Git 历史清理**：使用 `git filter-branch` 移除所有历史 commit 中的明文 API Key
+- **build.py EXE 名自动匹配** GitHub Release 上传需求
 
-### 工作地点配置与筛选（新增）
-- `doc_parser.py`：从需求文档中提取工作地点，智能解析城市名（"南京市雨花区凯润大厦" → "南京"）
-- `gui_main.py`：岗位配置页新增"工作地点"输入框（位于学历右侧）
-- `bossmaster.py`：filter_candidate 新增地点匹配逻辑，支持多地点（`/`、`、`分隔）
-- `job_config.json`：新增 `work_location` 字段
-
-### 招聘需求示例按钮（新增）
-- 岗位配置页新增"招聘需求示例"按钮，一键填充模板到需求输入框
-- 模板存储在 `job_config.json` → `requirement_template`，方便维护
-- 按钮默认禁用，仅"新建岗位"模式下可用
-
-### 构建与发布
-- EXE 输出名改为 `BOSS_ResumeFilter.exe`（GitHub Release 不支持中文文件名）
-- Git 历史清理：使用 `git filter-branch` 移除所有历史 commit 中的明文 API Key
-- `build.py` EXE 名自动匹配 GitHub 上传需求
-
-## v2.2 — 2026-05-12
+## v2.2 — 多岗位确认 + 停止机制 + 性能提升
 
 ### 新增功能
 - **多岗位确认机制**：多岗位间切换不再使用 15 秒倒计时，改为弹出对话框等待用户明确确认，取消即停止
@@ -175,25 +160,26 @@
 - **沟通上限检测**：`_detect_limit_popup()` 单次 JS 调用检查 16 个限制关键词，同时检测 page 和 iframe，命中立即停止打招呼
 - **淘汰原因展示重构**：同类合并（经验不足/学历不符/评分不足按分数段），括号内动态显示实际招聘要求，底部总数校验
 
-### 性能优化
+### 行为优化
 - **打招呼速度提升 12 倍**：`send_greeting_on_list_page()` 全面重写，CSS 选择器定位卡片 + 合并 XPath 查询 + 短超时
 - **滚动策略增强**：单次 JS 同时滚动 `window` 和滚动容器元素，一步 800px，等待缩短至 0.5s；Phase 2 小幅度 `scrollBy` 温和刷新
 - **滚动提前终止修复**：到底检测移到滚动之后执行，避免误匹配页面常驻 footer；连续空轮次阈值 5→10
 - **confirm_callback 轮询等待**：`event.wait(timeout=0.5)` 替代阻塞等待，支持 `stop_event` 中断
-- **全部 `time.sleep(10)` → `time.sleep(3)`**：页面等待时间优化
+- **页面等待时间优化**：全部 `time.sleep(10)` → `time.sleep(3)`
 
-### BUG修复
+### UI 改进
+- **多维度筛选控件**：工作年限、最大年龄、薪资范围、必要条件
+- **Spinbox 交互增强**：滚轮/键盘微调支持，增量单位 10，鼠标滚轮支持（符号判断兼容不同硬件），默认值 100
+
+### Bug 修复
 - **KeyboardInterrupt 穿透修复**：新增 `except KeyboardInterrupt` 分支（原只捕获 `Exception`），确保取消时 UI 状态正确恢复
 - **清理逻辑统一**：`sys.stdout` 恢复、按钮状态、进度条复位统一放到 `finally` 块
 - **打招呼等级过滤在初次扫描时无效**：`greet_level='normal'` 硬编码改为 `greet_level=args.greet_level` 透传
 - **Excel 导出非法字符报错**：岗位名含 `/` 等非法字符时清理 sheet name
 - **推荐阈值调整**：推荐 ≥60→≥65，待定 ≥45→≥55，过滤 <45→<55
 - **打包输出精简**：dist 辅助文件从 4 个精简为 2 个（README.md + job_config.json）
-- **滚动轮次 Spinbox 改进**：增量单位 10，鼠标滚轮支持（符号判断兼容不同硬件），默认值 100
 
----
-
-## v2.1 — 2026-05-08
+## v2.1 — 四维评分模型 + API Key 加密
 
 ### 新增功能
 - **四维评分模型**：`基础30 + 技能(0~35) + 经验超额(0~20) + 学历档次(0~15)`，区间 30-100
@@ -204,22 +190,20 @@
 - **API Key 按服务商统一管理**：同一服务商的所有模型共享一个 Key
 - **新电脑部署检测**：首次运行自动检测 Key 缺失并引导配置
 
-### 性能优化
+### 行为优化
 - **打包体积 931MB → 39.3MB**：venv 隔离打包策略
 - **build.py 自动虚拟环境切换**：无需手动激活 pack_venv
 - **dist 清理重试逻辑**：3 次重试 + 2 秒等待处理文件占用
-
-### BUG修复
 - **英文关键词子串误匹配**：`\b` 单词边界匹配修复 "AI" 误匹配 "email"、"main"
 - **泛化关键词清理**：剔除"数据库"（零区分信号）
-- **硕士/博士自动通过"统招本科"条件**：修复误杀 bug
 - **找不到经验不再淘汰**：警告后放行
+
+### Bug 修复
+- **硕士/博士自动通过"统招本科"条件**：修复误杀 bug
 - **侧边栏导航对齐**：Frame 容器 + `width=2` 固定 emoji 宽度
 - **鼠标悬停布局抖动**：只改变前景色不切换 ttk 样式
 
----
-
-## v2.0 — 2026-05-07
+## v2.0 — 图形界面 + AI 模型配置
 
 ### 新增功能
 - **图形界面 v2.0**：侧边栏导航（首页/岗位配置/运行控制/筛选结果/系统设置）
@@ -228,21 +212,19 @@
 - **API Key 明文/密文切换**：点击按钮切换显示
 - **高 DPI 自适应**：支持 4K 屏幕，全局缩放系数
 
-### 性能优化
+### 行为优化
 - **save_candidates_all O(n²)→O(n)**：字典替代列表查找，大数据量下性能提升显著
 - **批量保存优化**：成功打招呼立即保存，失败攒够 5 个再写文件
 - **测试连接高可用**：全新 Session + 并行双策略 + 3 次重试指数退避，成功率 50%→近 100%
 
-### BUG修复
+### Bug 修复
 - **7 处裸 except 规范化**：全部改为具体异常类型
 - **模型切换 API Key 丢失**：模型已存在时也更新 api_key/base_url
 - **页面索引冲突**：current_page_index 修复
 - **窗口关闭不安全**：join(timeout=5) 替代 sleep(1)
 - **DEBUG 日志清理**：移除所有调试输出
 
----
-
-## v1.0 — 2026-05-06
+## v1.0 — BOSS 直聘自动筛选
 
 ### 新增功能
 - **BOSS 直聘候选人自动提取**：基于 DrissionPage 的浏览器自动化

@@ -5486,7 +5486,7 @@ class BossFilterGUI:
         messagebox.showinfo("关于", f"BOSS 简历筛选器 v{__version__}\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
 
     def show_changelog(self):
-        """显示更新日志"""
+        """显示更新日志（版本列表 + 详情分栏）"""
         changelog_path = BASE_DIR / "CHANGELOG.md"
         if not changelog_path.exists():
             messagebox.showinfo("更新日志", "CHANGELOG.md 文件不存在")
@@ -5498,28 +5498,191 @@ class BossFilterGUI:
             messagebox.showerror("错误", f"读取更新日志失败：{e}")
             return
 
+        # 解析版本段落
+        versions = []  # list of (version_tag, subtitle, full_section_text)
+        current_version = None
+        current_lines = []
+        for line in content.splitlines():
+            if line.startswith("## v"):
+                if current_version:
+                    versions.append((current_version, current_lines[0], "\n".join(current_lines)))
+                rest = line[3:].strip()
+                tag = rest.split("—")[0].split("–")[0].split()[0].strip()
+                current_version = tag
+                current_lines = [line]
+            elif current_version:
+                current_lines.append(line)
+        if current_version:
+            versions.append((current_version, current_lines[0], "\n".join(current_lines)))
+
+        if not versions:
+            messagebox.showinfo("更新日志", "CHANGELOG.md 中没有版本记录")
+            return
+
         dialog = tk.Toplevel(self.root)
         dialog.title("更新日志")
-        dialog.geometry("780x580")
-        dialog.configure(bg=self.colors['bg_main'])
+        dialog.transient(self.root)
+        dialog.withdraw()
 
-        # 居中窗口
-        self._center_window(dialog, 780, 580)
+        dw, dh = 940, 620
+        self.root.update_idletasks()
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        x = rx + (rw - dw) // 2
+        y = ry + (rh - dh) // 2
+        dialog.geometry(f"{dw}x{dh}+{x}+{y}")
 
-        text_widget = tk.Text(dialog, wrap="word", borderwidth=0,
-                              font=('Microsoft YaHei UI', int(11 * self.dpi_scale * self.zoom_factor)),
+        fs = self.dpi_scale * self.zoom_factor
+
+        # ---- 左侧版本列表（深色侧边栏风格）----
+        sidebar_bg = '#2D3748'
+        left_frame = tk.Frame(dialog, bg=sidebar_bg, width=int(160 * fs))
+        left_frame.pack(side="left", fill="y")
+        left_frame.pack_propagate(False)
+
+        # 标题
+        tk.Label(left_frame, text="版本历史", bg=sidebar_bg, fg='#E2E8F0',
+                 font=(FONT_FAMILY, int(14 * fs), 'bold')).pack(
+            anchor="center", padx=int(16 * fs), pady=(int(20 * fs), int(12 * fs)))
+
+        # 版本列表
+        listbox_font = (FONT_FAMILY, int(12 * fs))
+        listbox = tk.Listbox(left_frame, width=16, font=listbox_font,
+                             bg=sidebar_bg, fg='#CBD5E0',
+                             selectbackground=self.colors['primary'],
+                             selectforeground='#FFFFFF',
+                             borderwidth=0, highlightthickness=0,
+                             activestyle='none',
+                             selectborderwidth=0,
+                             justify='center',
+                             relief='flat')
+        listbox.pack(fill="both", expand=True, padx=int(12 * fs), pady=int(4 * fs))
+
+        for tag, title_line, _ in versions:
+            listbox.insert("end", tag)
+
+        # ---- 右侧详情 ----
+        right_outer = tk.Frame(dialog, bg=self.colors['bg_main'])
+        right_outer.pack(side="left", fill="both", expand=True)
+
+        # 顶部标题栏
+        header_frame = tk.Frame(right_outer, bg=self.colors['bg_card'], height=int(72 * fs))
+        header_frame.pack(fill="x")
+        header_frame.pack_propagate(False)
+
+        version_title = tk.Label(header_frame, text="",
+                                 font=(FONT_FAMILY, int(16 * fs), 'bold'),
+                                 fg=self.colors['text_primary'], bg=self.colors['bg_card'])
+        version_title.pack(anchor="w", padx=int(20 * fs), pady=(int(14 * fs), 0))
+
+        version_subtitle = tk.Label(header_frame, text="",
+                                    font=(FONT_FAMILY, int(11 * fs)),
+                                    fg=self.colors['text_muted'], bg=self.colors['bg_card'])
+        version_subtitle.pack(anchor="w", padx=int(20 * fs))
+
+        # 分隔线
+        tk.Frame(right_outer, bg=self.colors['border'], height=1).pack(fill="x")
+
+        # 内容区
+        content_frame = tk.Frame(right_outer, bg=self.colors['bg_main'])
+        content_frame.pack(fill="both", expand=True)
+
+        text_widget = tk.Text(content_frame, wrap="word", borderwidth=0,
+                              font=('Microsoft YaHei UI', int(11 * fs)),
                               bg=self.colors['bg_main'], fg=self.colors['text_primary'],
-                              padx=int(20 * self.dpi_scale * self.zoom_factor),
-                              pady=int(15 * self.dpi_scale * self.zoom_factor),
-                              selectbackground=self.colors['primary'])
+                              padx=int(12 * fs), pady=int(12 * fs),
+                              selectbackground=self.colors['primary'],
+                              relief='flat', highlightthickness=0)
         text_widget.pack(side="left", fill="both", expand=True)
 
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=text_widget.yview)
+        scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=text_widget.yview)
         scrollbar.pack(side="right", fill="y")
         text_widget.configure(yscrollcommand=scrollbar.set)
 
-        text_widget.insert("1.0", content)
-        text_widget.configure(state="disabled")
+        # 配置 tag 样式
+        title_font = (FONT_FAMILY, int(13 * fs), 'bold')
+        section_font = (FONT_FAMILY, int(12 * fs), 'bold')
+        item_font = ('Microsoft YaHei UI', int(11 * fs))
+        text_widget.tag_configure("title", font=title_font, foreground=self.colors['primary'])
+        text_widget.tag_configure("section_new", font=section_font, foreground=self.colors['success'])
+        text_widget.tag_configure("section_opt", font=section_font, foreground=self.colors['primary'])
+        text_widget.tag_configure("section_ui", font=section_font, foreground=self.colors['purple'])
+        text_widget.tag_configure("section_fix", font=section_font, foreground=self.colors['danger'])
+        text_widget.tag_configure("section_build", font=section_font, foreground=self.colors['warning'])
+        text_widget.tag_configure("item", font=item_font, foreground=self.colors['text_secondary'])
+        text_widget.tag_configure("item_bold", font=(item_font[0], item_font[1], 'bold'), foreground=self.colors['text_primary'])
+
+        # 分类名 → tag 映射
+        section_map = {
+            '新增功能': 'section_new',
+            '行为优化': 'section_opt',
+            '性能优化': 'section_opt',
+            'UI 改进': 'section_ui',
+            'UI改进': 'section_ui',
+            'Bug 修复': 'section_fix',
+            'Bug修复': 'section_fix',
+            '构建改进': 'section_build',
+        }
+
+        def show_version(index):
+            tag, title_line, section = versions[index]
+            # 更新顶部标题
+            version_title.config(text=tag)
+            # 提取副标题（## v2.7 — LLM 智能评估... → LLM 智能评估...）
+            if "—" in title_line:
+                sub = title_line.split("—", 1)[1].strip()
+            elif "–" in title_line:
+                sub = title_line.split("–", 1)[1].strip()
+            else:
+                sub = ""
+            version_subtitle.config(text=sub)
+
+            text_widget.configure(state="normal")
+            text_widget.delete("1.0", "end")
+            for line in section.splitlines():
+                if line.startswith("## "):
+                    # 跳过标题行（header 栏已显示版本号和副标题）
+                    continue
+                elif line.startswith("### "):
+                    section_name = line[4:].strip()
+                    stag = section_map.get(section_name, 'section_opt')
+                    text_widget.insert("end", "\n" + section_name + "\n", stag)
+                elif line.startswith("- "):
+                    item_text = line[2:]
+                    # 整行统一 item tag，标题部分叠加 item_bold（同字号加粗）
+                    if item_text.startswith("**"):
+                        end_pos = item_text.find("**", 2)
+                        if end_pos > 0:
+                            title_part = item_text[2:end_pos]
+                            rest = item_text[end_pos + 2:]
+                            full_text = "  • " + title_part + rest + "\n\n"
+                            line_start = text_widget.index("end")
+                            text_widget.insert("end", full_text, "item")
+                            # 标题部分叠加 bold tag（4 = len("  • ")）
+                            bold_start = f"{line_start} + 4 chars"
+                            bold_end = f"{line_start} + {4 + len(title_part)} chars"
+                            text_widget.tag_add("item_bold", bold_start, bold_end)
+                        else:
+                            text_widget.insert("end", "  • " + item_text + "\n\n", "item")
+                    else:
+                        text_widget.insert("end", "  • " + item_text + "\n\n", "item")
+            text_widget.configure(state="disabled")
+            text_widget.yview_moveto(0)
+
+        def on_select(event):
+            sel = listbox.curselection()
+            if sel:
+                show_version(sel[0])
+
+        listbox.bind("<<ListboxSelect>>", on_select)
+
+        # 默认选中第一个版本（最新）
+        listbox.selection_set(0)
+        show_version(0)
+
+        dialog.deiconify()
 
 
 def main():

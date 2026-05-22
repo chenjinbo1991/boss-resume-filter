@@ -1,13 +1,8 @@
 {
     "api_provider": "qwen",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "model": "deepseek-v4-pro",
+    "model": "qwen3.7-max",
     "saved_models": [
-        {
-            "api_provider": "qwen",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "model": "qwen3.5-plus"
-        },
         {
             "api_provider": "qwen",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -31,7 +26,7 @@
         {
             "api_provider": "qwen",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "model": "qwen3.6-plus-2026-04-02"
+            "model": "qwen3.7-max"
         }
     ],
     "providers": {
