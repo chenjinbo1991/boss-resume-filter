@@ -29,6 +29,8 @@ candidates_all.xlsx
 dist/
 build/
 *.spec
+*.rar
+*.zip
 
 # 日志和调试
 *.log
