@@ -97,6 +97,7 @@ Release 标题和说明必须先写在 `CHANGELOG.md` 对应版本段落中。`p
 dist/
 ├── BOSS_ResumeFilter.exe   <-- 主程序
 ├── job_config.json        <-- 岗位配置
+├── selectors.json         <-- 页面选择器配置（DOM 变化时可直接编辑）
 └── README.md             <-- 说明文档
 ```
 
@@ -268,4 +269,4 @@ python gui_main.py
 
 ---
 
-**最后更新**: 2026-05-15
+**最后更新**: 2026-05-22

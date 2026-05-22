@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.6"
+__version__ = "2.7"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -17,7 +17,7 @@ import threading
 import queue
 import socket
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 from security import save_api_key, get_api_key, delete_api_key
@@ -37,6 +37,7 @@ CANDIDATES_PATH = BASE_DIR / "candidates_all.json"
 CANDIDATES_XLSX_PATH = BASE_DIR / "candidates_all.xlsx"
 CONFIG_BACKUP_PATH = BASE_DIR / "job_config.json.bak"
 API_CONFIG_PATH = BASE_DIR / "api_config.json"
+CHROME_DEBUG_PORT_FILE = BASE_DIR / ".chrome_debug_port"
 
 
 def get_font_family():
@@ -214,6 +215,7 @@ class BossFilterGUI:
         self._browser_auto_check_id = None  # after() 回调 ID
         self._browser_status_text = ""
         self._browser_status_help_text = ""
+        self._selectors_auto_checked = False  # 连接后选择器是否已自动检查
 
         # 右键菜单引用列表（统一销毁）
         self._context_menus = []
@@ -357,6 +359,7 @@ class BossFilterGUI:
             ("gear", "岗位配置", self.show_page_config),
             ("play", "运行控制", self.show_page_run),
             ("chart", "筛选结果", self.show_page_result),
+            ("star", "数据统计", self.show_page_stats),
         ]
 
         self.nav_labels = []
@@ -484,6 +487,7 @@ class BossFilterGUI:
         self.create_api_config_page()
         self.create_run_page()
         self.create_result_page()
+        self.create_stats_page()
 
         # 默认显示首页（current_page_index 在 show_page_home 中已设置为 0）
         self.show_page_home()
@@ -1391,6 +1395,7 @@ class BossFilterGUI:
                                        values=["全部岗位"], width=28, state="readonly",
                                        font=self.font_combo)
         self.job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        self.job_combo.bind("<<ComboboxSelected>>", self.on_run_job_selected)
         ttk.Label(row_job, text="(选择要处理的岗位，\"全部岗位\"依次处理)",
                  font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
                  foreground=self.colors['text_muted'],
@@ -1408,6 +1413,30 @@ class BossFilterGUI:
         greet_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row2, text="(自动打招呼的推荐等级)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
                  foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+
+        # AI 辅助评估开关
+        row_ai = ttk.Frame(param_frame, style='TFrame')
+        row_ai.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(row_ai, text="AI 评估:", font=self.font_label, width=12,
+                 background=self.colors['bg_card']).pack(side="left")
+        self.ai_eval_var = tk.BooleanVar(value=False)
+        # 自定义 ttk 样式：显式设置 indicator 大小，不依赖字体缩放
+        _cb_style = ttk.Style()
+        _indicator_size = int(20 * self.dpi_scale * self.zoom_factor)
+        _cb_style.configure('AIEval.TCheckbutton',
+                            font=self.font_combo,
+                            background=self.colors['bg_card'],
+                            indicatordiameter=_indicator_size)
+        _cb_style.map('AIEval.TCheckbutton',
+                      background=[('active', self.colors['bg_card'])])
+        ai_check = ttk.Checkbutton(row_ai, text="启用 AI 辅助评估",
+                                   variable=self.ai_eval_var,
+                                   style='AIEval.TCheckbutton')
+        ai_check.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(row_ai, text="(对通过筛选的候选人进行 LLM 二次评分，+-10分调整)",
+                 font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
+                 foreground=self.colors['text_muted'],
+                 background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
         # === 进度条 ===
         progress_frame = ttk.Frame(param_frame, style='TFrame')
@@ -1507,11 +1536,10 @@ class BossFilterGUI:
         self.result_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.result_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_results())
 
-        # 统计卡片区
+        # 统计卡片区（纵向卡片布局）
         stats_container = ttk.Frame(self.result_page, style='TFrame')
-        stats_container.pack(fill="x", pady=int(20 * self.dpi_scale * self.zoom_factor))
+        stats_container.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-        # 三个统计卡片 - 加彩色圆形图标（与首页风格统一）
         self.result_stats_vars = {}
         self.result_stats_greeted = {}
         self.result_stats_click = {}
@@ -1522,78 +1550,74 @@ class BossFilterGUI:
         ]
 
         for icon_name, label_text, var_name, color in stats_data:
-            card = ttk.Frame(stats_container, style='Card.TFrame')
-            card.pack(side="left", fill="x", expand=True, padx=int(15 * self.dpi_scale * self.zoom_factor), pady=int(12 * self.dpi_scale * self.zoom_factor))
+            card_frame = ttk.Frame(stats_container, style='Card.TFrame')
+            card_frame.pack(side="left", fill="x", expand=True, padx=int(12 * self.dpi_scale * self.zoom_factor))
 
-            # 图标容器 - 彩色圆形背景
+            # 彩色圆形图标（大号）
             icon_size = int(UI_CONFIG['stat_icon_size'] * self.dpi_scale * self.zoom_factor)
-            icon_canvas = tk.Canvas(card, width=icon_size, height=icon_size,
+            icon_canvas = tk.Canvas(card_frame, width=icon_size, height=icon_size,
                                     bg=self.colors['bg_card'], highlightthickness=0)
-            icon_canvas.pack(pady=(int(15 * self.dpi_scale * self.zoom_factor), int(5 * self.dpi_scale * self.zoom_factor)))
-
-            # 绘制彩色圆形背景
+            icon_canvas.pack(anchor="center",
+                            pady=(int(12 * self.dpi_scale * self.zoom_factor), int(4 * self.dpi_scale * self.zoom_factor)))
             margin = int(UI_CONFIG['icon_margin'] * self.dpi_scale * self.zoom_factor)
             icon_canvas.create_oval(margin, margin, icon_size - margin, icon_size - margin,
                                     fill=color, outline='')
-
-            # 在圆形上绘制白色图标（使用 PhotoImage）
             stat_icon = self.icons.stat(icon_name, 'white')
             icon_canvas.create_image(icon_size // 2, icon_size // 2, image=stat_icon)
             icon_canvas._icon_ref = stat_icon
 
-            # 数值标签（可点击）- 显示总数
+            # 数值
             var = tk.StringVar(value="0")
             self.result_stats_vars[var_name] = var
+            value_label = ttk.Label(card_frame, textvariable=var, font=self.font_stat,
+                                   foreground=color, background=self.colors['bg_card'],
+                                   cursor="hand2")
+            value_label.pack(anchor="center", pady=(0, int(2 * self.dpi_scale * self.zoom_factor)))
 
-            value_label = ttk.Label(card, textvariable=var,
-                                   font=self.font_stat, foreground=color,
-                                   background=self.colors['bg_card'])
-            value_label.pack(pady=(0, int(4 * self.dpi_scale * self.zoom_factor)))
-
-            # 已打招呼标签 - 小字
+            # 已打招呼
             greeted_var = tk.StringVar(value="0 已打招呼")
             self.result_stats_greeted[var_name] = greeted_var
+            greeted_label = ttk.Label(card_frame, textvariable=greeted_var,
+                                     font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
+                                     foreground=self.colors['text_muted'], background=self.colors['bg_card'])
+            greeted_label.pack(anchor="center", pady=(0, int(2 * self.dpi_scale * self.zoom_factor)))
 
-            greeted_label = ttk.Label(card, textvariable=greeted_var,
-                                     font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor)),
-                                     foreground=self.colors['text_secondary'],
-                                     background=self.colors['bg_card'])
-            greeted_label.pack(pady=(0, int(8 * self.dpi_scale * self.zoom_factor)))
-
-            # 卡片标题
-            text_label = ttk.Label(card, text=label_text,
-                                  font=self.font_stat_label, foreground=self.colors['text_secondary'],
-                                  background=self.colors['bg_card'])
-            text_label.pack(pady=(0, int(15 * self.dpi_scale * self.zoom_factor)))
+            # 标签
+            label = ttk.Label(card_frame, text=label_text, font=self.font_stat_label,
+                             foreground=self.colors['text_secondary'], background=self.colors['bg_card'])
+            label.pack(anchor="center", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
 
             # 绑定点击事件
             self.result_stats_click[var_name] = label_text
             value_label.bind("<Button-1>", lambda e, vt=var_name: self.show_result_stat_detail(vt))
+            label.bind("<Button-1>", lambda e, vt=var_name: self.show_result_stat_detail(vt))
 
         # 结果表格
         table_container = ttk.Frame(self.result_page, style='Card.TFrame')
-        table_container.pack(fill="both", expand=True, pady=int(15 * self.dpi_scale * self.zoom_factor))
+        table_container.pack(fill="both", expand=True, pady=int(8 * self.dpi_scale * self.zoom_factor))
 
-        # 表格 - 增加工作年限和薪资列，高度从 8 减为 6 以适配图标
-        columns = ("name", "exp", "salary", "score", "level", "status", "skills")
-        self.result_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=6)
+        # 表格
+        columns = ("name", "exp", "salary", "skills", "score", "ai_eval", "level", "status")
+        self.result_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=4)
 
         self.result_tree.heading("name", text="姓名")
         self.result_tree.heading("exp", text="工作年限")
         self.result_tree.heading("salary", text="薪资")
+        self.result_tree.heading("skills", text="技能匹配")
         self.result_tree.heading("score", text="匹配分")
+        self.result_tree.heading("ai_eval", text="AI评估")
         self.result_tree.heading("level", text="推荐指数")
         self.result_tree.heading("status", text="状态")
-        self.result_tree.heading("skills", text="技能匹配")
 
         # 设置列宽
-        self.result_tree.column("name", width=100, minwidth=80, anchor='center')
-        self.result_tree.column("exp", width=150, minwidth=120, anchor='center')  # 工作年限增宽
-        self.result_tree.column("salary", width=150, minwidth=120, anchor='center')  # 薪资增宽
-        self.result_tree.column("score", width=120, minwidth=90, anchor='center')  # 匹配分增宽
-        self.result_tree.column("level", width=130, minwidth=100, anchor='center')  # 推荐指数增宽
-        self.result_tree.column("status", width=90, minwidth=70, anchor='center')
-        self.result_tree.column("skills", width=250, minwidth=150, anchor='center')
+        self.result_tree.column("name", width=80, minwidth=60, anchor='center')
+        self.result_tree.column("exp", width=100, minwidth=80, anchor='center')
+        self.result_tree.column("salary", width=100, minwidth=80, anchor='center')
+        self.result_tree.column("skills", width=180, minwidth=120, anchor='center')
+        self.result_tree.column("score", width=70, minwidth=60, anchor='center')
+        self.result_tree.column("ai_eval", width=70, minwidth=60, anchor='center')
+        self.result_tree.column("level", width=110, minwidth=90, anchor='center')
+        self.result_tree.column("status", width=70, minwidth=60, anchor='center')
 
         # 设置表格字体和样式
         style = ttk.Style()
@@ -1604,12 +1628,12 @@ class BossFilterGUI:
         tree_scroll = ttk.Scrollbar(table_container, orient="vertical", command=self.result_tree.yview)
         self.result_tree.configure(yscrollcommand=tree_scroll.set)
 
-        self.result_tree.pack(side="left", fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
-        tree_scroll.pack(side="right", fill="y", pady=int(15 * self.dpi_scale * self.zoom_factor))
+        self.result_tree.pack(side="left", fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(12 * self.dpi_scale * self.zoom_factor))
+        tree_scroll.pack(side="right", fill="y", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         # 操作按钮 - 放在表格下方
         btn_frame = ttk.Frame(self.result_page, style='TFrame')
-        btn_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
+        btn_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(8 * self.dpi_scale * self.zoom_factor), int(12 * self.dpi_scale * self.zoom_factor)))
 
         icon_refresh_result = self.icons.button('refresh', self.colors['text_primary'])
         btn_refresh = ttk.Button(btn_frame, image=icon_refresh_result, text=" 刷新结果", compound=tk.LEFT, command=self.refresh_results)
@@ -1623,6 +1647,234 @@ class BossFilterGUI:
         btn_json = ttk.Button(btn_frame, image=icon_folder_json, text=" 打开 JSON", compound=tk.LEFT, command=self.open_json)
         btn_json._icon_ref = icon_folder_json
         btn_json.pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
+
+        icon_clear = self.icons.button('trash', self.colors['danger'])
+        btn_clear = ttk.Button(btn_frame, image=icon_clear, text=" 清空候选人", compound=tk.LEFT, command=self.clear_candidates)
+        btn_clear._icon_ref = icon_clear
+        btn_clear.pack(side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
+
+    def create_stats_page(self):
+        """创建数据统计页面 - 按岗位维度展示筛选和打招呼统计"""
+        self.stats_page = ttk.Frame(self.pages_frame, style='TFrame')
+
+        # 页面标题
+        header_frame = ttk.Frame(self.stats_page, style='TFrame')
+        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
+
+        title_label = ttk.Label(header_frame, text="数据统计",
+                               font=self.font_section, foreground=self.colors['text_primary'])
+        title_label.pack(anchor="w")
+
+        # 过滤条件行
+        filter_frame = ttk.Frame(self.stats_page, style='TFrame')
+        filter_frame.pack(fill="x", pady=(0, int(15 * self.dpi_scale * self.zoom_factor)))
+
+        ttk.Label(filter_frame, text="岗位过滤:", font=self.font_label,
+                 background=self.colors['bg_main']).pack(side="left")
+        self.stats_job_var = tk.StringVar(value="全部岗位")
+        self.stats_job_combo = ttk.Combobox(filter_frame, textvariable=self.stats_job_var,
+                                             values=["全部岗位"], width=28, state="readonly",
+                                             font=self.font_combo)
+        self.stats_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        self.stats_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_stats())
+
+        # 时间维度过滤
+        ttk.Label(filter_frame, text="时间范围:", font=self.font_label,
+                 background=self.colors['bg_main']).pack(side="left", padx=int(30 * self.dpi_scale * self.zoom_factor))
+        self.stats_time_var = tk.StringVar(value="全部")
+        time_combo = ttk.Combobox(filter_frame, textvariable=self.stats_time_var,
+                                   values=["今天", "本周", "全部"], width=12, state="readonly",
+                                   font=self.font_combo)
+        time_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        time_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_stats())
+
+        # 刷新按钮
+        icon_refresh_stats = self.icons.button('refresh', self.colors['text_primary'])
+        btn_refresh = ttk.Button(filter_frame, image=icon_refresh_stats, text=" 刷新",
+                                compound=tk.LEFT, command=self.refresh_stats)
+        btn_refresh._icon_ref = icon_refresh_stats
+        btn_refresh.pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
+
+        # 汇总统计卡片
+        summary_container = ttk.Frame(self.stats_page, style='TFrame')
+        summary_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
+
+        self.stats_summary_vars = {}
+        summary_items = [
+            ("people", "总候选人", "total", self.colors['primary']),
+            ("star", "强烈推荐", "strong", self.colors['purple']),
+            ("thumbs_up", "推荐", "recommended", self.colors['success']),
+            ("mail", "已打招呼", "greeted", self.colors['warning']),
+        ]
+
+        for icon_name, label_text, var_name, color in summary_items:
+            card = ttk.Frame(summary_container, style='Card.TFrame')
+            card.pack(side="left", fill="x", expand=True, padx=int(10 * self.dpi_scale * self.zoom_factor),
+                     pady=int(10 * self.dpi_scale * self.zoom_factor))
+
+            # 图标容器
+            icon_size = int(UI_CONFIG['stat_icon_size'] * self.dpi_scale * self.zoom_factor)
+            icon_canvas = tk.Canvas(card, width=icon_size, height=icon_size,
+                                   bg=self.colors['bg_card'], highlightthickness=0)
+            icon_canvas.pack(pady=(int(12 * self.dpi_scale * self.zoom_factor), int(5 * self.dpi_scale * self.zoom_factor)))
+
+            margin = int(UI_CONFIG['icon_margin'] * self.dpi_scale * self.zoom_factor)
+            icon_canvas.create_oval(margin, margin, icon_size - margin, icon_size - margin,
+                                   fill=color, outline='')
+
+            stat_icon = self.icons.stat(icon_name, 'white')
+            icon_canvas.create_image(icon_size // 2, icon_size // 2, image=stat_icon)
+            icon_canvas._icon_ref = stat_icon
+
+            # 数值
+            var = tk.StringVar(value="0")
+            self.stats_summary_vars[var_name] = var
+            value_label = ttk.Label(card, textvariable=var, font=self.font_stat,
+                                   foreground=color, background=self.colors['bg_card'])
+            value_label.pack(pady=(0, int(4 * self.dpi_scale * self.zoom_factor)))
+
+            # 标签
+            text_label = ttk.Label(card, text=label_text, font=self.font_stat_label,
+                                  foreground=self.colors['text_secondary'],
+                                  background=self.colors['bg_card'])
+            text_label.pack(pady=(0, int(12 * self.dpi_scale * self.zoom_factor)))
+
+        # 岗位明细表格
+        table_label = ttk.Label(self.stats_page, text="岗位明细",
+                               font=self.font_section, foreground=self.colors['text_primary'])
+        table_label.pack(anchor="w", padx=int(5 * self.dpi_scale * self.zoom_factor),
+                        pady=(int(20 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
+
+        table_container = ttk.Frame(self.stats_page, style='Card.TFrame')
+        table_container.pack(fill="both", expand=True, pady=int(10 * self.dpi_scale * self.zoom_factor))
+
+        columns = ("job", "total", "strong", "recommended", "pending", "greeted", "pass_rate", "greet_rate", "avg_score")
+        self.stats_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=8)
+
+        self.stats_tree.heading("job", text="岗位名称")
+        self.stats_tree.heading("total", text="总人数")
+        self.stats_tree.heading("strong", text="强烈推荐")
+        self.stats_tree.heading("recommended", text="推荐")
+        self.stats_tree.heading("pending", text="待定")
+        self.stats_tree.heading("greeted", text="已打招呼")
+        self.stats_tree.heading("pass_rate", text="优质率")
+        self.stats_tree.heading("greet_rate", text="打招呼率")
+        self.stats_tree.heading("avg_score", text="平均分")
+
+        self.stats_tree.column("job", width=200, minwidth=150, anchor='w')
+        self.stats_tree.column("total", width=90, minwidth=70, anchor='center')
+        self.stats_tree.column("strong", width=100, minwidth=80, anchor='center')
+        self.stats_tree.column("recommended", width=90, minwidth=70, anchor='center')
+        self.stats_tree.column("pending", width=90, minwidth=70, anchor='center')
+        self.stats_tree.column("greeted", width=110, minwidth=90, anchor='center')
+        self.stats_tree.column("pass_rate", width=90, minwidth=70, anchor='center')
+        self.stats_tree.column("greet_rate", width=100, minwidth=80, anchor='center')
+        self.stats_tree.column("avg_score", width=90, minwidth=70, anchor='center')
+
+        style = ttk.Style()
+        style.configure("Stats.Treeview", font=self.font_table,
+                       rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
+        style.configure("Stats.Treeview.Heading", font=self.font_button)
+        self.stats_tree.configure(style="Stats.Treeview")
+
+        tree_scroll = ttk.Scrollbar(table_container, orient="vertical", command=self.stats_tree.yview)
+        self.stats_tree.configure(yscrollcommand=tree_scroll.set)
+
+        self.stats_tree.pack(side="left", fill="both", expand=True,
+                            padx=int(15 * self.dpi_scale * self.zoom_factor),
+                            pady=int(15 * self.dpi_scale * self.zoom_factor))
+        tree_scroll.pack(side="right", fill="y", pady=int(10 * self.dpi_scale * self.zoom_factor))
+
+    def refresh_stats(self):
+        """刷新数据统计页面 - 按岗位维度聚合"""
+        try:
+            if not CANDIDATES_PATH.exists():
+                return
+
+            with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                candidates = json.load(f)
+
+            # 岗位过滤
+            selected_job = self.stats_job_var.get()
+            if selected_job != "全部岗位":
+                candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
+
+            # 时间范围过滤
+            time_range = self.stats_time_var.get()
+            if time_range != "全部":
+                now = datetime.now()
+                if time_range == "今天":
+                    cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                elif time_range == "本周":
+                    days_since_monday = now.weekday()
+                    cutoff = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    cutoff = None
+
+                if cutoff:
+                    cutoff_str = cutoff.strftime("%Y%m%d_%H%M%S")
+                    candidates = [c for c in candidates if c.get('batch_timestamp', '') >= cutoff_str]
+
+            # 汇总统计（只计 ≥55 分的候选人）
+            qualified = [c for c in candidates if c.get('match_score', 0) >= 55]
+            total = len(qualified)
+            strong = sum(1 for c in qualified if c.get('match_score', 0) >= 75)
+            recommended = sum(1 for c in qualified if 65 <= c.get('match_score', 0) < 75)
+            greeted = sum(1 for c in qualified if c.get('greet_sent', False))
+
+            self.stats_summary_vars['total'].set(str(total))
+            self.stats_summary_vars['strong'].set(str(strong))
+            self.stats_summary_vars['recommended'].set(str(recommended))
+            self.stats_summary_vars['greeted'].set(str(greeted))
+
+            # 清空表格
+            for item in self.stats_tree.get_children():
+                self.stats_tree.delete(item)
+
+            # 按岗位聚合
+            from collections import defaultdict
+            job_stats = defaultdict(lambda: {
+                'total': 0, 'strong': 0, 'recommended': 0, 'pending': 0,
+                'greeted': 0, 'scores': []
+            })
+
+            for c in candidates:
+                job = c.get('job_name', '未知')
+                score = c.get('match_score', 0)
+                if score < 55:
+                    continue  # 低于 55 分不计入统计
+
+                job_stats[job]['total'] += 1
+                if score >= 75:
+                    job_stats[job]['strong'] += 1
+                elif score >= 65:
+                    job_stats[job]['recommended'] += 1
+                else:
+                    job_stats[job]['pending'] += 1
+
+                if c.get('greet_sent', False):
+                    job_stats[job]['greeted'] += 1
+
+                job_stats[job]['scores'].append(score)
+
+            # 插入表格行
+            for job, stats in sorted(job_stats.items(), key=lambda x: x[1]['total'], reverse=True):
+                t = stats['total']
+                s = stats['strong']
+                r = stats['recommended']
+                p = stats['pending']
+                g = stats['greeted']
+                quality = s + r
+                pass_rate = f"{quality*100//t}%" if t > 0 else "—"
+                greet_rate = f"{g*100//t}%" if t > 0 else "—"
+                avg_score = f"{sum(stats['scores'])/len(stats['scores']):.1f}" if stats['scores'] else "—"
+
+                self.stats_tree.insert("", "end", values=(
+                    job, t, s, r, p, g, pass_rate, greet_rate, avg_score
+                ))
+
+        except Exception as e:
+            self.append_log(f"刷新统计失败：{e}")
 
     def show_page_home(self):
         """显示首页"""
@@ -1686,11 +1938,27 @@ class BossFilterGUI:
             pass
         self.refresh_results()
 
+    def show_page_stats(self):
+        """显示数据统计页面"""
+        self.hide_all_pages()
+        self.stats_page.pack(fill="both", expand=True)
+        self.current_page_index = 4
+        self.update_nav_highlight()
+        # 刷新岗位过滤列表
+        try:
+            from bossmaster import load_job_config
+            job_rules, _ = load_job_config()
+            jobs = ["全部岗位"] + list(job_rules.keys())
+            self.stats_job_combo['values'] = jobs
+        except Exception:
+            pass
+        self.refresh_stats()
+
     def show_page_api(self):
         """显示 API 配置页面（系统设置）"""
         self.hide_all_pages()
         self.api_config_page.pack(fill="both", expand=True)
-        self.current_page_index = 4
+        self.current_page_index = 5
         self.update_nav_highlight()
         # 重置滚动条位置到顶部
         if hasattr(self, 'api_canvas'):
@@ -1701,7 +1969,7 @@ class BossFilterGUI:
     def hide_all_pages(self):
         """隐藏所有页面"""
         self._stop_browser_auto_check()
-        for page in [self.home_page, self.config_page, self.api_config_page, self.run_page, self.result_page]:
+        for page in [self.home_page, self.config_page, self.api_config_page, self.run_page, self.result_page, self.stats_page]:
             page.pack_forget()
 
     def update_nav_highlight(self):
@@ -1825,6 +2093,9 @@ class BossFilterGUI:
                 if selected_job != "全部岗位":
                     candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
 
+                # 只统计 ≥55 分的候选人
+                candidates = [c for c in candidates if c.get('match_score', 0) >= 55]
+
                 total = len(candidates)
                 greeted = sum(1 for c in candidates if c.get('greet_sent', False))
                 # 强烈推荐：匹配分>=75
@@ -1873,10 +2144,10 @@ class BossFilterGUI:
                 if selected_job != "全部岗位":
                     candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
 
-            # 根据类型筛选候选人
+            # 根据类型筛选候选人（只统计 ≥55 分）
             if stat_type == 'total_home':
                 title = "累计候选人"
-                filtered = candidates
+                filtered = [c for c in candidates if c.get('match_score', 0) >= 55]
             elif stat_type == 'strong_home':
                 title = "强烈推荐"
                 filtered = [c for c in candidates if c.get('match_score', 0) >= 75]
@@ -1885,7 +2156,7 @@ class BossFilterGUI:
                 filtered = [c for c in candidates if 65 <= c.get('match_score', 0) < 75]
             elif stat_type == 'greeted_home':
                 title = "已打招呼"
-                filtered = [c for c in candidates if c.get('greet_sent', False)]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= 55 and c.get('greet_sent', False)]
             else:
                 return
 
@@ -1895,6 +2166,8 @@ class BossFilterGUI:
 
             # 创建详情窗口
             detail_window = tk.Toplevel(self.root)
+            detail_window.transient(self.root)
+            detail_window.grab_set()
             detail_window.title(title)
 
             # 设置固定大小并相对主窗口居中
@@ -1905,41 +2178,44 @@ class BossFilterGUI:
 
             # 标题 - 加大加粗
             title_label = ttk.Label(detail_window, text=title,
-                                   font=(FONT_FAMILY, int(26 * self.dpi_scale * self.zoom_factor)),
+                                   font=(FONT_FAMILY, int(18 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['primary'])
             title_label.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
             # 统计信息 - 显示总数和已打招呼数
             greeted_count = len([c for c in filtered if c.get('greet_sent', False)])
             count_label = ttk.Label(detail_window, text=f"共 {len(filtered)} 人，已打招呼 {greeted_count} 人",
-                                   font=(FONT_FAMILY, int(14 * self.dpi_scale * self.zoom_factor)),
+                                   font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['text_secondary'])
             count_label.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
+            count_label_ref = [count_label]
 
             # 表格容器
             table_frame = ttk.Frame(detail_window, style='Card.TFrame')
             table_frame.pack(fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
             # 创建表格 - 与筛选结果页主Treeview列完全一致（含推荐指数）
-            columns = ("name", "exp", "salary", "score", "level", "status", "skills")
+            columns = ("name", "exp", "salary", "skills", "score", "ai_eval", "level", "status")
             tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
 
             tree.heading("name", text="姓名")
             tree.heading("exp", text="工作年限")
             tree.heading("salary", text="薪资")
+            tree.heading("skills", text="技能匹配")
             tree.heading("score", text="匹配分")
+            tree.heading("ai_eval", text="AI评估")
             tree.heading("level", text="推荐指数")
             tree.heading("status", text="状态")
-            tree.heading("skills", text="技能匹配")
 
             # 设置列宽 - 与筛选结果页Treeview一致
-            tree.column("name", width=100, minwidth=80, anchor='center')
-            tree.column("exp", width=150, minwidth=120, anchor='center')
-            tree.column("salary", width=150, minwidth=120, anchor='center')
-            tree.column("score", width=120, minwidth=90, anchor='center')
-            tree.column("level", width=130, minwidth=100, anchor='center')
-            tree.column("status", width=90, minwidth=70, anchor='center')
-            tree.column("skills", width=250, minwidth=150, anchor='center')
+            tree.column("name", width=80, minwidth=60, anchor='center')
+            tree.column("exp", width=100, minwidth=80, anchor='center')
+            tree.column("salary", width=100, minwidth=80, anchor='center')
+            tree.column("skills", width=140, minwidth=100, anchor='center')
+            tree.column("score", width=70, minwidth=60, anchor='center')
+            tree.column("ai_eval", width=70, minwidth=60, anchor='center')
+            tree.column("level", width=120, minwidth=100, anchor='center')
+            tree.column("status", width=70, minwidth=60, anchor='center')
 
             # 设置表格字体和样式 - 与筛选结果页Treeview一致
             tree_style = ttk.Style()
@@ -1980,12 +2256,12 @@ class BossFilterGUI:
                                 d_win.title("候选人详情")
                                 d_win.transient(detail_window)
                                 d_win.withdraw()
-                                d_title = f"姓名：{vals[0]} | 匹配分：{vals[3]} | {vals[4]}"
+                                d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
                                 ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
                                          foreground=self.colors['primary']).pack(pady=15)
                                 tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
                                 tw.pack(fill='both', expand=True, padx=20, pady=10)
-                                tw.insert('1.0', json.dumps(c, ensure_ascii=False, indent=2))
+                                tw.insert('1.0', self._format_candidate_detail(c))
                                 self.bind_text_context_menu(tw, editable=False)
                                 d_win.update_idletasks()
                                 px = self.root.winfo_x()
@@ -2004,7 +2280,7 @@ class BossFilterGUI:
                         return
                     vals = tree.item(clicked_item, 'values')
                     name = vals[0]
-                    score = vals[3]
+                    score = vals[4]
                     # 通过 name+score 精确定位候选人，获取 geek_id
                     target_geek_id = None
                     for c in filtered_ref[0]:
@@ -2022,10 +2298,17 @@ class BossFilterGUI:
                         candidates = [c for c in candidates if c.get('geek_id') != target_geek_id]
                         with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
                             json.dump(candidates, f, ensure_ascii=False, indent=2)
-                    # 从表格中移除并刷新统计
+                    # 从表格中移除行
                     tree.delete(clicked_item)
+                    # 更新弹窗内统计标签
+                    new_total = len(filtered_ref[0])
+                    new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
+                    count_label_ref[0].config(text=f"共 {new_total} 人，已打招呼 {new_greeted} 人")
+                    # 刷新主界面统计
                     self.refresh_home_stats()
                     self.refresh_results()
+                    # 保持弹窗焦点
+                    detail_window.lift()
 
                 def export_selected():
                     selection = tree.selection()
@@ -2065,15 +2348,21 @@ class BossFilterGUI:
                 level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
                 status = "已招呼" if c.get('greet_sent', False) else "未招呼"
                 salary, exp = self._parse_salary_exp(c.get('summary', ''))
+                ai_adj = c.get('llm_adjustment')
+                if ai_adj is not None and c.get('llm_evaluated'):
+                    ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                else:
+                    ai_text = "—"
 
                 tree.insert("", "end", values=(
                     c.get('name', ''),
                     exp,
                     salary,
+                    c.get('skill_match_ratio', ''),
                     score,
+                    ai_text,
                     level,
-                    status,
-                    c.get('skill_match_ratio', '')
+                    status
                 ))
 
             # 窗口居中
@@ -2129,6 +2418,8 @@ class BossFilterGUI:
 
             # 创建详情窗口
             detail_window = tk.Toplevel(self.root)
+            detail_window.transient(self.root)
+            detail_window.grab_set()
             detail_window.title(title)
 
             # 设置固定大小并相对主窗口居中
@@ -2139,46 +2430,51 @@ class BossFilterGUI:
 
             # 标题
             title_label = ttk.Label(detail_window, text=title,
-                                   font=(FONT_FAMILY, int(26 * self.dpi_scale * self.zoom_factor)),
+                                   font=(FONT_FAMILY, int(18 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['primary'])
             title_label.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
             # 统计信息
             count_label = ttk.Label(detail_window, text=f"共 {total} 人，已打招呼 {greeted_count} 人",
-                                   font=(FONT_FAMILY, int(14 * self.dpi_scale * self.zoom_factor)),
+                                   font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['text_secondary'])
             count_label.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
+            count_label_ref = [count_label]
 
             # 表格容器
             table_frame = ttk.Frame(detail_window, style='Card.TFrame')
             table_frame.pack(fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
             # 创建表格
-            columns = ("name", "exp", "salary", "score", "status", "skills")
+            columns = ("name", "exp", "salary", "skills", "score", "ai_eval", "level", "status")
             tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=18)
 
             tree.heading("name", text="姓名")
             tree.heading("exp", text="工作年限")
             tree.heading("salary", text="薪资")
-            tree.heading("score", text="匹配分")
-            tree.heading("status", text="状态")
             tree.heading("skills", text="技能匹配")
+            tree.heading("score", text="匹配分")
+            tree.heading("ai_eval", text="AI评估")
+            tree.heading("level", text="推荐指数")
+            tree.heading("status", text="状态")
 
             # 设置列宽
-            tree.column("name", width=100, anchor='center')
-            tree.column("exp", width=120, anchor='center')
-            tree.column("salary", width=120, anchor='center')
-            tree.column("score", width=100, anchor='center')
-            tree.column("status", width=90, anchor='center')
-            tree.column("skills", width=400, anchor='center')
+            tree.column("name", width=80, anchor='center')
+            tree.column("exp", width=100, anchor='center')
+            tree.column("salary", width=100, anchor='center')
+            tree.column("skills", width=140, anchor='center')
+            tree.column("score", width=70, anchor='center')
+            tree.column("ai_eval", width=70, anchor='center')
+            tree.column("level", width=120, anchor='center')
+            tree.column("status", width=70, anchor='center')
 
-            # 设置表格字体和样式
+            # 设置表格字体和样式（与主界面一致）
             tree_style = ttk.Style()
             tree_style.configure("Detail.Treeview",
-                                font=(FONT_FAMILY, int(14 * self.dpi_scale * self.zoom_factor)),
-                                rowheight=int(36 * self.dpi_scale * self.zoom_factor))
+                                font=self.font_table,
+                                rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
             tree_style.configure("Detail.Treeview.Heading",
-                                font=(FONT_FAMILY, int(16 * self.dpi_scale * self.zoom_factor)))
+                                font=self.font_button)
             tree.configure(style="Detail.Treeview")
 
             # 添加滚动条
@@ -2191,23 +2487,130 @@ class BossFilterGUI:
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
+                level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
                 status = "已招呼" if c.get('greet_sent', False) else "未招呼"
                 salary, exp = self._parse_salary_exp(c.get('summary', ''))
+                ai_adj = c.get('llm_adjustment')
+                if ai_adj is not None and c.get('llm_evaluated'):
+                    ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                else:
+                    ai_text = "—"
 
                 tree.insert("", "end", values=(
                     c.get('name', ''),
                     exp,
                     salary,
+                    c.get('skill_match_ratio', ''),
                     score,
-                    status,
-                    c.get('skill_match_ratio', '')
+                    ai_text,
+                    level,
+                    status
                 ))
 
-            # 屏幕居中（用已映射的 self.root 查询屏幕尺寸）
-            detail_window.update_idletasks()
-            x = (self.root.winfo_screenwidth() - window_width) // 2
-            y = (self.root.winfo_screenheight() - window_height) // 2
-            detail_window.geometry(f"{window_width}x{window_height}+{max(0, x)}+{max(0, y)}")
+            # 绑定右键菜单 - 与筛选结果页一致
+            filtered_ref = [filtered]
+
+            def on_result_detail_right_click(event):
+                clicked_item = tree.identify_row(event.y)
+                if not clicked_item:
+                    return
+                tree.selection_set(clicked_item)
+
+                context_menu_font = (FONT_FAMILY, int(16 * self.dpi_scale * self.zoom_factor))
+                menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
+                icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
+                icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
+                icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+
+                def show_detail():
+                    vals = tree.item(clicked_item, 'values')
+                    if vals:
+                        for c in filtered_ref[0]:
+                            if c.get('name') == vals[0]:
+                                d_win = tk.Toplevel(detail_window)
+                                d_win.title("候选人详情")
+                                d_win.transient(detail_window)
+                                d_win.withdraw()
+                                d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
+                                ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
+                                         foreground=self.colors['primary']).pack(pady=15)
+                                tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
+                                tw.pack(fill='both', expand=True, padx=20, pady=10)
+                                tw.insert('1.0', self._format_candidate_detail(c))
+                                self.bind_text_context_menu(tw, editable=False)
+                                d_win.update_idletasks()
+                                px = self.root.winfo_x()
+                                py = self.root.winfo_y()
+                                pw = self.root.winfo_width()
+                                ph = self.root.winfo_height()
+                                dw, dh = 700, 580
+                                dx = px + (pw - dw) // 2
+                                dy = py + (ph - dh) // 2
+                                d_win.geometry(f"{dw}x{dh}+{max(0, dx)}+{max(0, dy)}")
+                                d_win.deiconify()
+                                break
+
+                def remove_candidate():
+                    if not messagebox.askyesno("确认删除", "确定要移除该候选人吗？"):
+                        return
+                    vals = tree.item(clicked_item, 'values')
+                    name = vals[0]
+                    score = vals[4]
+                    target_geek_id = None
+                    for c in filtered_ref[0]:
+                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                            target_geek_id = c.get('geek_id')
+                            break
+                    if not target_geek_id:
+                        return
+                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target_geek_id]
+                    if CANDIDATES_PATH.exists():
+                        with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                            candidates_all = json.load(f)
+                        candidates_all = [c for c in candidates_all if c.get('geek_id') != target_geek_id]
+                        with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
+                            json.dump(candidates_all, f, ensure_ascii=False, indent=2)
+                    tree.delete(clicked_item)
+                    # 更新弹窗内统计标签
+                    new_total = len(filtered_ref[0])
+                    new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
+                    count_label_ref[0].config(text=f"共 {new_total} 人，已打招呼 {new_greeted} 人")
+                    # 刷新主界面
+                    self.refresh_results()
+                    # 保持弹窗焦点
+                    detail_window.lift()
+
+                def export_selected():
+                    selection = tree.selection()
+                    if not selection:
+                        messagebox.showwarning("警告", "请先选择要导出的候选人")
+                        return
+                    selected_data = []
+                    for sel_item in selection:
+                        sv = tree.item(sel_item, 'values')
+                        for c in filtered_ref[0]:
+                            if c.get('name') == sv[0]:
+                                selected_data.append(c)
+                                break
+                    file_path = filedialog.asksaveasfilename(
+                        title="保存选中的候选人",
+                        defaultextension=".json",
+                        filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+                        initialfile=f"selected_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    )
+                    if file_path:
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            json.dump(selected_data, f, ensure_ascii=False, indent=2)
+                        messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
+
+                menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
+                menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=remove_candidate)
+                menu.add_separator()
+                menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=export_selected)
+                menu._icon_refs = [icon_detail, icon_trash_menu, icon_export_menu]
+                menu.tk_popup(event.x_root, event.y_root)
+
+            tree.bind('<Button-3>', on_result_detail_right_click)
 
         except Exception as e:
             messagebox.showerror("错误", f"显示详情失败：{e}")
@@ -3603,6 +4006,45 @@ class BossFilterGUI:
             pass
         self.root.after(100, self.update_log)
 
+    def _auto_check_selectors(self):
+        """连接成功后自动检查选择器健康状态（仅在 check() 工作线程中调用）
+
+        每次新连接到推荐牛人页面时执行一次，有异常弹窗提醒。
+        """
+        if self._selectors_auto_checked:
+            return
+        if not self.browser_connected or not self.browser_page:
+            return
+        self._selectors_auto_checked = True
+
+        try:
+            from bossmaster import check_selectors_health
+            results = check_selectors_health(self.browser_page)
+
+            ok_count = sum(1 for r in results if r['status'] == 'ok')
+            warn_count = sum(1 for r in results if r['status'] == 'warn')
+            fail_count = sum(1 for r in results if r['status'] == 'fail')
+
+            self.append_log(f"选择器自动检查：{ok_count} 正常 / {warn_count} 警告 / {fail_count} 失败")
+
+            for r in results:
+                icon = {'ok': '✅', 'warn': '⚠️', 'fail': '❌'}.get(r['status'], '?')
+                self.append_log(f"  {icon} [{r['group']}] {r['name']}: {r['detail']}")
+
+            if warn_count + fail_count > 0:
+                self.append_log("⚠️ 选择器异常可能导致扫描功能不正常，可编辑 selectors.json 修复")
+                # 主线程弹窗提醒
+                self.root.after(0, lambda: messagebox.showwarning(
+                    "选择器异常",
+                    f"选择器检查发现 {fail_count} 个失败、{warn_count} 个警告，"
+                    f"可能导致扫描功能不正常。\n\n"
+                    f"可编辑 selectors.json 修复，详见日志。"
+                ))
+            else:
+                self.append_log("✅ 所有选择器工作正常")
+        except Exception as e:
+            self.append_log(f"选择器自动检查失败：{e}")
+
     def check_browser_connection(self, silent=False):
         """检测浏览器连接状态
 
@@ -3634,9 +4076,9 @@ class BossFilterGUI:
                                 self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                         elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
                             self.browser_connected = False
-                            self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 推荐牛人页面", "disabled")
-                            if prev_help != "浏览器已连接，请导航到 BOSS 推荐牛人页面":
-                                self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 推荐牛人页面")
+                            self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
+                            if prev_help != "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面":
+                                self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                         else:
                             self.browser_connected = False
                             self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
@@ -3647,9 +4089,20 @@ class BossFilterGUI:
                         # 页面对象已失效，清理后走完整检测流程
                         self.browser_page = None
                         self.browser_connected = False
+                        self._selectors_auto_checked = False  # 页面失效，下次连接重新检查选择器
 
                 # 没有可用连接，检查 Chrome 调试端口
-                addr = getattr(self, 'browser_address', '127.0.0.1:9222')
+                # 优先读取上次持久化的端口号
+                addr = getattr(self, 'browser_address', None)
+                if not addr:
+                    try:
+                        saved_port = CHROME_DEBUG_PORT_FILE.read_text(encoding='utf-8').strip()
+                        if saved_port.isdigit():
+                            addr = f'127.0.0.1:{saved_port}'
+                    except OSError:
+                        pass
+                if not addr:
+                    addr = '127.0.0.1:9222'
                 host, port = addr.rsplit(':', 1)
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(1)
@@ -3710,6 +4163,12 @@ class BossFilterGUI:
                             stderr=subprocess.DEVNULL,
                         )
 
+                        # 持久化端口号，下次启动时可复用
+                        try:
+                            CHROME_DEBUG_PORT_FILE.write_text(str(debug_port), encoding='utf-8')
+                        except OSError:
+                            pass
+
                         # 轮询等待端口就绪
                         port_ready = False
                         for i in range(30):
@@ -3749,8 +4208,8 @@ class BossFilterGUI:
                                 self.browser_connected = True
                                 self.browser_page = page
                                 self.browser_address = page.address
-                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
-                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
+                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
                                 page.get('https://www.zhipin.com/web/chat/recommend')
                                 time.sleep(2)
                                 current_url = page.url
@@ -3759,14 +4218,14 @@ class BossFilterGUI:
                                     self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                                     self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                                 else:
-                                    self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 推荐牛人页面")
-                                    self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 推荐牛人页面")
+                                    self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
+                                    self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                             else:
                                 self.browser_connected = True
                                 self.browser_page = page
                                 self.browser_address = page.address
-                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
-                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 推荐牛人页面...")
+                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
+                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
                                 page.get('https://www.zhipin.com/web/chat/recommend')
                                 time.sleep(2)
                                 current_url = page.url
@@ -3780,6 +4239,7 @@ class BossFilterGUI:
                         except Exception as e:
                             self.set_browser_ui("🔴 未连接", self.colors['danger'], "Chrome 连接失败，请重试")
                             self.append_log(f"❌ Chrome 连接失败：{e}")
+                            self._selectors_auto_checked = False
                         return
                     else:
                         self.set_browser_ui(help_text="未检测到 Chrome，请确保浏览器已启动")
@@ -3821,6 +4281,7 @@ class BossFilterGUI:
                 except Exception as e:
                     prev_state = self._browser_status_text
                     self.browser_connected = False
+                    self._selectors_auto_checked = False  # 连接失败，下次重连重新检查选择器
                     self.set_browser_ui("🔴 未连接", self.colors['danger'], "未检测到 Chrome 浏览器，请确保浏览器已启动", "disabled")
                     if not silent or prev_state != "🔴 未连接":
                         self.append_log("❌ 未检测到 Chrome 浏览器，请确保浏览器已启动")
@@ -3829,6 +4290,9 @@ class BossFilterGUI:
                 self.set_browser_ui("🔴 错误", self.colors['danger'], "未安装 DrissionPage，请运行：pip install DrissionPage")
                 self.append_log("❌ DrissionPage 未安装")
             finally:
+                # 连接成功后自动检查选择器（仅首次）
+                if self.browser_connected and self.browser_page and not self._selectors_auto_checked:
+                    self._auto_check_selectors()
                 self._browser_check_running = False
                 # 如果有被阻塞的手动检测请求，立即重新触发
                 if getattr(self, '_pending_manual_check', False):
@@ -4043,6 +4507,24 @@ class BossFilterGUI:
             job_arg = None if selected_job == "全部岗位" else selected_job
 
             # 构造命令行参数
+            ai_eval_enabled = self.ai_eval_var.get()
+            ai_api_config = None
+            ai_api_key = None
+            if ai_eval_enabled:
+                try:
+                    ai_api_config = self.api_config
+                    from security import get_api_key
+                    ai_api_key = get_api_key(self.api_config.get('api_provider', ''))
+                    if not ai_api_key:
+                        self.append_log("AI 评估需要 API Key，但未配置，将跳过")
+                        ai_eval_enabled = False
+                    else:
+                        model_name = self.api_config.get('model', 'unknown')
+                        self.append_log(f"AI 辅助评估已启用（模型：{model_name}）")
+                except Exception as e:
+                    self.append_log(f"加载 API 配置失败：{e}，跳过 AI 评估")
+                    ai_eval_enabled = False
+
             args = argparse.Namespace(
                 clear=False,
                 job=job_arg,
@@ -4052,7 +4534,10 @@ class BossFilterGUI:
                 greet_names=None,
                 list_candidates=False,
                 rounds=rounds,
-                verbose=False
+                verbose=False,
+                ai_eval=ai_eval_enabled,
+                api_config=ai_api_config,
+                api_key=ai_api_key,
             )
 
             if job_arg:
@@ -4091,9 +4576,42 @@ class BossFilterGUI:
                     event.wait(timeout=0.5)
                 return event.result
 
+            def captcha_callback(detail):
+                """验证码弹窗通知 — 阻塞工作线程直到用户在 GUI 中响应
+
+                返回:
+                    True: 用户选择继续等待验证完成
+                    False: 用户选择跳过验证等待（中止当前操作）
+                """
+                result = [False]
+                done = threading.Event()
+
+                def show_dialog():
+                    answer = messagebox.askyesno(
+                        "检测到安全验证弹窗",
+                        f"程序检测到安全验证弹窗\n（{detail}）\n\n"
+                        "请在浏览器中手动完成验证。\n\n"
+                        "点击「是」继续等待验证完成\n"
+                        "点击「否」跳过验证等待，停止当前操作",
+                        parent=self.root,
+                    )
+                    result[0] = answer
+                    done.set()
+
+                self.root.after(0, show_dialog)
+                # 轮询等待，支持 stop_event 中断
+                while not done.is_set():
+                    if self.stop_event.is_set():
+                        result[0] = False
+                        done.set()
+                        break
+                    done.wait(timeout=0.5)
+                return result[0]
+
             # 调用 run_smart_scan 并传入参数和进度回调
             run_smart_scan(args, progress_callback=on_progress, confirm_callback=confirm_callback,
-                           stop_event=self.stop_event)
+                           stop_event=self.stop_event, existing_page=self.browser_page,
+                           captcha_callback=captcha_callback)
 
         except KeyboardInterrupt:
             self.append_log("用户取消岗位切换，已停止")
@@ -4127,6 +4645,16 @@ class BossFilterGUI:
                 self.root.destroy()
         else:
             self.root.destroy()
+
+    def on_run_job_selected(self, event=None):
+        """运行页选择岗位后，提醒切换到 BOSS 对应发布职位"""
+        selected = self.job_select_var.get()
+        if selected and selected != "全部岗位":
+            messagebox.showinfo(
+                "提示",
+                f"请在 BOSS 直聘「推荐牛人」页面，切换到「{selected}」职位后再开始运行。",
+                parent=self.root,
+            )
 
     def refresh_results(self):
         """刷新结果 - 增强版：支持表头排序、颜色标记和岗位过滤"""
@@ -4194,14 +4722,22 @@ class BossFilterGUI:
                     # 从 summary 中解析工作年限和薪资
                     salary, exp = self._parse_salary_exp(c.get('summary', ''))
 
+                    # AI 评估调整值
+                    ai_adj = c.get('llm_adjustment')
+                    if ai_adj is not None and c.get('llm_evaluated'):
+                        ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                    else:
+                        ai_text = "—"
+
                     self.result_tree.insert("", "end", values=(
                         c.get('name', ''),
                         exp,
                         salary,
+                        c.get('skill_match_ratio', ''),
                         score,
+                        ai_text,
                         level,
-                        status,
-                        c.get('skill_match_ratio', '')
+                        status
                     ), tags=(tag,))
 
                 # 存储原始数据用于排序和详情展示
@@ -4225,6 +4761,7 @@ class BossFilterGUI:
             "salary": "薪资",
             "score": "匹配分",
             "level": "推荐指数",
+            "ai_eval": "AI评估",
             "status": "状态",
             "skills": "技能匹配"
         }
@@ -4282,18 +4819,139 @@ class BossFilterGUI:
             context_menu_font = (FONT_FAMILY, int(16 * self.dpi_scale * self.zoom_factor))
             menu = tk.Menu(self.root, tearoff=0, font=context_menu_font)
             icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
+            icon_greet = self.icons.button('play', self.colors['success'])
             icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
             icon_export_menu = self.icons.button('export', self.colors['text_primary'])
             menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=lambda: self._show_candidate_detail(item))
+
+            # 打招呼：仅对未打招呼的候选人显示
+            values = self.result_tree.item(item, 'values')
+            if values and '未招呼' in str(values):
+                menu.add_command(label=" 打招呼", image=icon_greet, compound=tk.LEFT, command=lambda: self._greet_single_candidate(item))
+
             menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=lambda: self._remove_candidate(item))
             menu.add_separator()
             menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=lambda: self._export_selected())
 
             # 保持引用防止 GC
-            menu._icon_refs = [icon_detail, icon_trash_menu, icon_export_menu]
+            menu._icon_refs = [icon_detail, icon_greet, icon_trash_menu, icon_export_menu]
 
             # 显示菜单
             menu.tk_popup(event.x_root, event.y_root)
+
+    def _format_candidate_detail(self, c):
+        """格式化候选人详情为结构化文本（替代原始 JSON dump）"""
+        from bossmaster import extract_summary_info
+
+        summary = c.get('summary', '')
+        info = extract_summary_info(summary)
+
+        lines = []
+        lines.append("═" * 50)
+        lines.append(f"  姓名：{c.get('name', '未知')}")
+        lines.append(f"  岗位：{c.get('job_name', '未知')}")
+
+        # 核心信息速览
+        core_parts = []
+        age = info.get('age')
+        if age:
+            core_parts.append(f"{age} 岁")
+        exp = info.get('exp_years')
+        if exp:
+            core_parts.append(f"{exp} 年")
+        salary = info.get('salary')
+        if salary:
+            core_parts.append(f"期望薪资 {salary}")
+        status = info.get('job_status')
+        if status:
+            core_parts.append(status)
+        if core_parts:
+            lines.append(f"  {'｜'.join(core_parts)}")
+
+        # 学历/学校/专业 — 顺序：学校·专业·学历
+        edu_parts = []
+        edu = info.get('education')
+        # 从 summary 提取学校和专业（BOSS 格式为"河海大学计算机科学与技术本科"，无分隔符）
+        # 学校名以"大学"或"学院"结尾，后面是专业名，最后是学历等级
+        edu_entry_pat = re.compile(r'(.+(?:大学|学院))(.+?)(本科|硕士|博士|大专|MBA|EMBA)\s*$')
+        edu_nopat = re.compile(r'(.+(?:大学|学院))(本科|硕士|博士|大专|MBA|EMBA)\s*$')
+        for sline in summary.split('\n'):
+            sline = sline.strip()
+            m = edu_entry_pat.match(sline)
+            if m:
+                school, major, _ = m.group(1), m.group(2), m.group(3)
+                edu_parts.append(school)
+                if major:
+                    edu_parts.append(major)
+                break
+            m2 = edu_nopat.match(sline)
+            if m2:
+                edu_parts.append(m2.group(1))
+                break
+        # 学历等级放最后
+        if edu:
+            edu_parts.append(edu)
+        if edu_parts:
+            lines.append(f"  {'·'.join(edu_parts)}")
+
+        lines.append(f"  geek_id：{c.get('geek_id', '')}")
+        lines.append("═" * 50)
+
+        # 评分信息
+        lines.append("")
+        lines.append("【评分信息】")
+        score = c.get('match_score', 0)
+        level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
+        lines.append(f"  匹配分：{score}（{level}）")
+        lines.append(f"  技能匹配：{c.get('skill_match_ratio', '—')}")
+        if c.get('greet_sent'):
+            lines.append(f"  状态：已打招呼")
+        else:
+            lines.append(f"  状态：未打招呼")
+
+        # AI 评估信息
+        lines.append("")
+        if c.get('llm_evaluated'):
+            lines.append("【AI 评估】")
+            lines.append(f"  原始规则分：{c.get('rule_score', '—')}")
+            adj = c.get('llm_adjustment', 0)
+            sign = "+" if adj > 0 else ""
+            lines.append(f"  AI 调整值：{sign}{adj}")
+            lines.append(f"  调整后分数：{score}")
+            lines.append(f"  评估模型：{c.get('llm_model', '未知')}")
+            lines.append("")
+            lines.append(f"  AI评估：")
+            reason = c.get('llm_reason', '无')
+            # 自动换行
+            while len(reason) > 40:
+                lines.append(f"    {reason[:40]}")
+                reason = reason[40:]
+            lines.append(f"    {reason}")
+        else:
+            lines.append("【AI 评估】未启用")
+
+        # 技能匹配详情
+        skill_matches = c.get('skill_matches', [])
+        if skill_matches:
+            lines.append("")
+            ratio = c.get('skill_match_ratio', '')
+            lines.append(f"【技能匹配详情 {ratio}】")
+            for sm in skill_matches:
+                if isinstance(sm, dict):
+                    sname = sm.get('name', '')
+                    sweight = sm.get('weight', 1)
+                    lines.append(f"  ✓ {sname}（权重{sweight}）")
+                else:
+                    lines.append(f"  ✓ {sm}")
+
+        # 候选人摘要
+        if summary:
+            lines.append("")
+            lines.append("【候选人摘要】")
+            for sline in summary.split('\n'):
+                lines.append(f"  {sline}")
+
+        return '\n'.join(lines)
 
     def _show_candidate_detail(self, item):
         """显示候选人详情"""
@@ -4306,10 +4964,11 @@ class BossFilterGUI:
             detail_window = tk.Toplevel(self.root)
             detail_window.title("候选人详情")
             detail_window.transient(self.root)
+            detail_window.grab_set()
             detail_window.withdraw()
 
             # 标题
-            title = f"姓名：{values[0]} | 匹配分：{values[3]} | {values[4]}"
+            title = f"姓名：{values[0]} | 匹配分：{values[4]} | {values[6]}"
             ttk.Label(detail_window, text=title, font=(FONT_FAMILY, 16), foreground=self.colors['primary']).pack(pady=15)
 
             # 详情文本
@@ -4320,7 +4979,7 @@ class BossFilterGUI:
             # 查找对应候选人数据
             for i, c in enumerate(self.result_tree_data):
                 if c.get('name') == values[0]:
-                    detail_text = json.dumps(c, ensure_ascii=False, indent=2)
+                    detail_text = self._format_candidate_detail(c)
                     text_widget.insert('1.0', detail_text)
                     break
 
@@ -4339,13 +4998,191 @@ class BossFilterGUI:
         except Exception as e:
             messagebox.showerror("错误", f"查看详情失败：{e}")
 
+    def _greet_single_candidate(self, item):
+        """对单个候选人打招呼（在后台线程执行）"""
+        values = self.result_tree.item(item, 'values')
+        if not values:
+            return
+
+        name = values[0]
+        score = values[4]
+
+        # 查找候选人数据
+        candidate = None
+        geek_id = None
+        if hasattr(self, 'result_tree_data'):
+            for c in self.result_tree_data:
+                if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                    candidate = c
+                    geek_id = c.get('geek_id')
+                    break
+
+        if not geek_id:
+            messagebox.showwarning("警告", f"未找到候选人 {name} 的数据")
+            return
+
+        # 确认操作
+        job_name = candidate.get('job_name', '未知岗位')
+        if not messagebox.askyesno("确认打招呼",
+                                   f"确定要向 {name}（{candidate.get('recommend_level', '')}，{score}分）打招呼吗？\n\n"
+                                   f"岗位：{job_name}\n"
+                                   f"请确保浏览器已在该岗位的推荐牛人页面。",
+                                   parent=self.root):
+            return
+
+        # 立即更新表格状态为"打招呼中..."，给用户即时反馈
+        self.result_tree.set(item, 'status', '打招呼中...')
+        self.result_tree.update_idletasks()
+
+        # 后台线程执行打招呼
+        def greet_worker():
+            try:
+                # 浏览器未连接时自动尝试重连（读取持久化端口）
+                if not self.browser_page:
+                    self.append_log(f"[打招呼] 浏览器未连接，正在尝试重连...")
+                    def _revert_connecting():
+                        try:
+                            self.result_tree.set(item, 'status', '未招呼')
+                        except Exception:
+                            pass
+                    if not self._try_reconnect_browser():
+                        self.append_log(f"[打招呼] ❌ 浏览器重连失败，请先在「运行控制」页连接浏览器")
+                        self.root.after(0, _revert_connecting)
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "浏览器未连接",
+                            "无法连接到 Chrome 浏览器。\n请切换到「运行控制」页点击「检测/连接浏览器」。",
+                            parent=self.root))
+                        return
+                    self.append_log(f"[打招呼] ✅ 浏览器重连成功")
+
+                from bossmaster import send_greeting_on_list_page
+                self.append_log(f"[打招呼] 正在向 {name} 打招呼...")
+                success, msg = send_greeting_on_list_page(
+                    self.browser_page, geek_id, stop_event=self.stop_event
+                )
+                if success:
+                    self.append_log(f"[打招呼] ✅ {name} — {msg}")
+                    # 更新 JSON 中的 greet_sent 状态
+                    candidate['greet_sent'] = True
+                    self._update_greet_status(geek_id, job_name, True)
+                    # 同步更新 Excel 文件
+                    self._regenerate_excel()
+                    # 刷新结果页和首页统计
+                    self.root.after(0, self.refresh_results)
+                    self.root.after(0, self.refresh_home_stats)
+                else:
+                    self.append_log(f"[打招呼] ❌ {name} 失败：{msg}")
+                    # 恢复表格状态（item 可能已被刷新删除，需 try/except）
+                    def _revert_status():
+                        try:
+                            self.result_tree.set(item, 'status', '未招呼')
+                        except Exception:
+                            pass
+                    self.root.after(0, _revert_status)
+                    # 沟通次数上限
+                    if "上限" in msg or "次数" in msg:
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "沟通次数已达上限",
+                            "BOSS 直聘今日沟通次数已用完，请明天再试。",
+                            parent=self.root))
+            except Exception as e:
+                self.append_log(f"[打招呼] ❌ {name} 异常：{e}")
+                def _revert_status_exc():
+                    try:
+                        self.result_tree.set(item, 'status', '未招呼')
+                    except Exception:
+                        pass
+                self.root.after(0, _revert_status_exc)
+
+        threading.Thread(target=greet_worker, daemon=True).start()
+
+    def _try_reconnect_browser(self) -> bool:
+        """尝试重连浏览器（读取持久化端口，不启动新 Chrome）
+
+        用于筛选结果页打招呼等场景：用户可能没去过运行控制页，
+        但 Chrome 已经在运行（上次扫描启动的）。
+
+        Returns:
+            True 表示连接成功，self.browser_page 已赋值
+        """
+        import socket
+        try:
+            # 读取持久化端口
+            addr = getattr(self, 'browser_address', None)
+            if not addr:
+                try:
+                    saved_port = CHROME_DEBUG_PORT_FILE.read_text(encoding='utf-8').strip()
+                    if saved_port.isdigit():
+                        addr = f'127.0.0.1:{saved_port}'
+                except OSError:
+                    pass
+            if not addr:
+                addr = '127.0.0.1:9222'
+
+            host, port = addr.rsplit(':', 1)
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            port_open = s.connect_ex((host, int(port))) == 0
+            s.close()
+
+            if not port_open:
+                return False
+
+            # 端口开放，尝试 DrissionPage 连接
+            from DrissionPage import ChromiumPage, ChromiumOptions
+            co = ChromiumOptions()
+            co.set_address(f'{host}:{port}')
+            page = ChromiumPage(co)
+
+            self.browser_page = page
+            self.browser_address = page.address
+            self.browser_connected = True
+            return True
+
+        except Exception as e:
+            self.append_log(f"[浏览器] 重连失败：{e}")
+            self.browser_page = None
+            self.browser_connected = False
+            return False
+
+    def _update_greet_status(self, geek_id, job_name, greet_sent):
+        """更新 candidates_all.json 中指定候选人的打招呼状态"""
+        try:
+            if not CANDIDATES_PATH.exists():
+                return
+            with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                candidates = json.load(f)
+            updated = False
+            for c in candidates:
+                if c.get('geek_id') == geek_id and c.get('job_name', '').replace(" ", "") == job_name.replace(" ", ""):
+                    c['greet_sent'] = greet_sent
+                    updated = True
+                    break
+            if updated:
+                with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
+                    json.dump(candidates, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.append_log(f"[打招呼] 更新状态失败：{e}")
+
+    def _regenerate_excel(self):
+        """打招呼后同步更新 Excel 文件（静默，不弹窗）"""
+        try:
+            if not CANDIDATES_PATH.exists():
+                return
+            from bossmaster import export_to_excel
+            with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                candidates = json.load(f)
+            export_to_excel(candidates, str(CANDIDATES_XLSX_PATH))
+        except Exception as e:
+            self.append_log(f"[Excel] 同步更新失败：{e}")
+
     def _remove_candidate(self, item):
         """移除选中候选人"""
         if messagebox.askyesno("确认删除", "确定要移除该候选人吗？"):
             try:
                 values = self.result_tree.item(item, 'values')
                 name = values[0]
-                score = values[3]
+                score = values[4]
 
                 # 通过 name+score 精确定位候选人，获取 geek_id
                 target_geek_id = None
@@ -4440,6 +5277,185 @@ class BossFilterGUI:
             os.startfile(str(CANDIDATES_PATH))
         else:
             messagebox.showwarning("警告", "文件不存在")
+
+    def clear_candidates(self):
+        """清空候选人数据"""
+        if not CANDIDATES_PATH.exists():
+            messagebox.showinfo("提示", "暂无候选人数据")
+            return
+
+        # 读取当前岗位过滤条件
+        selected_job = self.result_job_var.get() if hasattr(self, 'result_job_var') else "全部岗位"
+        is_all_jobs = selected_job == "全部岗位"
+
+        # 统计已打招呼人数
+        greeted_count = 0
+        try:
+            with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                _candidates = json.load(f)
+            if is_all_jobs:
+                greeted_count = sum(1 for c in _candidates if c.get('greet_sent'))
+            else:
+                job_name = selected_job.replace(" ", "")
+                greeted_count = sum(1 for c in _candidates if c.get('greet_sent') and c.get('job_name', '') == job_name)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        # 构建确认对话框
+        dialog = tk.Toplevel(self.root)
+        dialog.title("清空候选人")
+        dialog.transient(self.root)
+        dialog.withdraw()
+
+        dialog_width = 460
+        dialog_height = 300
+        self._center_window(dialog, dialog_width, dialog_height)
+
+        # 标题
+        ttk.Label(dialog, text="清空候选人数据",
+                  font=(FONT_FAMILY, int(16 * self.dpi_scale * self.zoom_factor)),
+                  foreground=self.colors['danger']).pack(pady=(int(20 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
+
+        # 选项
+        choice_var = tk.StringVar(value="all" if is_all_jobs else "current")
+
+        radio_frame = ttk.Frame(dialog, style='TFrame')
+        radio_frame.pack(fill="x", padx=int(30 * self.dpi_scale * self.zoom_factor))
+
+        # 配置大号 RadioButton 样式
+        dialog_rb_font = (FONT_FAMILY, int(14 * self.dpi_scale * self.zoom_factor))
+        style = ttk.Style()
+        style.configure('ClearDialog.TRadiobutton', font=dialog_rb_font)
+        style.configure('ClearDialog.TCheckbutton', font=dialog_rb_font)
+
+        rb_current = ttk.Radiobutton(radio_frame,
+                                     text=f"清空当前岗位数据（{selected_job}）",
+                                     variable=choice_var, value="current",
+                                     style='ClearDialog.TRadiobutton')
+        rb_current.pack(anchor="w", pady=int(5 * self.dpi_scale * self.zoom_factor))
+        if is_all_jobs:
+            rb_current.config(state="disabled")
+
+        rb_all = ttk.Radiobutton(radio_frame,
+                                 text="清空全部数据（所有岗位）",
+                                 variable=choice_var, value="all",
+                                 style='ClearDialog.TRadiobutton')
+        rb_all.pack(anchor="w", pady=int(5 * self.dpi_scale * self.zoom_factor))
+
+        # 分隔线
+        ttk.Separator(dialog, orient="horizontal").pack(
+            fill="x", padx=int(30 * self.dpi_scale * self.zoom_factor),
+            pady=(int(10 * self.dpi_scale * self.zoom_factor), int(6 * self.dpi_scale * self.zoom_factor)))
+
+        # 保留已打招呼复选框
+        keep_greeted_var = tk.BooleanVar(value=True)
+        cb_frame = ttk.Frame(dialog, style='TFrame')
+        cb_frame.pack(fill="x", padx=int(30 * self.dpi_scale * self.zoom_factor),
+                       pady=(int(12 * self.dpi_scale * self.zoom_factor), 0))
+        cb_text = f"保留已打招呼的候选人（{greeted_count} 人）" if greeted_count > 0 else "保留已打招呼的候选人（无）"
+        cb_greeted = ttk.Checkbutton(cb_frame, text=cb_text,
+                                      variable=keep_greeted_var,
+                                      style='ClearDialog.TCheckbutton')
+        cb_greeted.pack(anchor="w")
+        if greeted_count == 0:
+            cb_greeted.config(state="disabled")
+            keep_greeted_var.set(False)
+
+        # 提示
+        ttk.Label(dialog, text="操作前会自动备份数据文件，清空后不可恢复",
+                  font=(FONT_FAMILY, int(13 * self.dpi_scale * self.zoom_factor)),
+                  foreground=self.colors['text_muted']).pack(pady=(int(12 * self.dpi_scale * self.zoom_factor), 0))
+
+        # 按钮
+        btn_frame = ttk.Frame(dialog, style='TFrame')
+        btn_frame.pack(pady=int(15 * self.dpi_scale * self.zoom_factor))
+
+        def do_clear():
+            choice = choice_var.get()
+            keep_greeted = keep_greeted_var.get()
+            dialog.destroy()
+
+            confirm_msg = "确定要清空候选人数据吗？\n\n操作前会自动备份，但清空后不可恢复。"
+            if keep_greeted and greeted_count > 0:
+                confirm_msg = f"确定要清空候选人数据吗？\n\n已打招呼的 {greeted_count} 人将被保留。\n操作前会自动备份，但清空后不可恢复。"
+            if not messagebox.askyesno("确认", confirm_msg):
+                return
+
+            try:
+                # 备份
+                backup_path = CANDIDATES_PATH.with_suffix('.json.bak')
+                shutil.copy2(CANDIDATES_PATH, backup_path)
+                self.append_log(f"已备份候选人数据到 {backup_path.name}")
+
+                with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                    candidates = json.load(f)
+
+                kept_count = 0
+
+                if choice == "current":
+                    # 清空当前岗位
+                    job_name = selected_job.replace(" ", "")
+                    other_jobs = [c for c in candidates if c.get('job_name', '') != job_name]
+                    current_job = [c for c in candidates if c.get('job_name', '') == job_name]
+
+                    if keep_greeted:
+                        kept = [c for c in current_job if c.get('greet_sent')]
+                        removed_list = [c for c in current_job if not c.get('greet_sent')]
+                        candidates = other_jobs + kept
+                        kept_count = len(kept)
+                    else:
+                        candidates = other_jobs
+                        removed_list = current_job
+
+                    removed = len(removed_list)
+
+                    with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
+                        json.dump(candidates, f, ensure_ascii=False, indent=2)
+
+                    log_msg = f"已清空岗位「{selected_job}」的 {removed} 条候选人数据"
+                    info_msg = f"已清空 {removed} 条候选人数据"
+                    if kept_count > 0:
+                        log_msg += f"，保留 {kept_count} 条已打招呼记录"
+                        info_msg += f"，保留 {kept_count} 条已打招呼记录"
+                    self.append_log(log_msg)
+                    messagebox.showinfo("完成", info_msg)
+                else:
+                    # 清空全部
+                    if keep_greeted:
+                        kept = [c for c in candidates if c.get('greet_sent')]
+                        removed = len(candidates) - len(kept)
+                        candidates = kept
+                        kept_count = len(kept)
+                    else:
+                        removed = len(candidates)
+                        candidates = []
+
+                    with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
+                        json.dump(candidates, f, ensure_ascii=False, indent=2)
+
+                    log_msg = f"已清空全部 {removed} 条候选人数据"
+                    info_msg = f"已清空全部 {removed} 条候选人数据"
+                    if kept_count > 0:
+                        log_msg += f"，保留 {kept_count} 条已打招呼记录"
+                        info_msg += f"，保留 {kept_count} 条已打招呼记录"
+                    self.append_log(log_msg)
+                    messagebox.showinfo("完成", info_msg)
+
+                # 同步 Excel
+                self._regenerate_excel()
+
+                # 刷新所有相关页面
+                self.refresh_results()
+                self.refresh_home_stats()
+                self.refresh_stats()
+
+            except Exception as e:
+                messagebox.showerror("错误", f"清空失败：{e}")
+
+        ttk.Button(btn_frame, text="确定", command=do_clear).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+        ttk.Button(btn_frame, text="取消", command=dialog.destroy).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+
+        dialog.deiconify()
 
     def show_help(self):
         """显示帮助"""

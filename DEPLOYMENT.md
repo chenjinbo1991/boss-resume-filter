@@ -8,6 +8,7 @@
 BOSS_ResumeFilter.exe
 README.md
 job_config.json
+selectors.json
 ```
 
 ### 2. 首次运行

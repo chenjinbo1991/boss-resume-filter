@@ -48,6 +48,13 @@ def save_candidates_all(candidates_all):
     """保存 candidates_all.json，支持去重、中断恢复和 .bak 备份。"""
     unique_candidates = _dedupe_candidates(candidates_all)
 
+    # 过滤低于 55 分的候选人（淘汰候选人不保留）
+    before_count = len(unique_candidates)
+    unique_candidates = [c for c in unique_candidates if c.get('match_score', 0) >= 55]
+    filtered_count = before_count - len(unique_candidates)
+    if filtered_count > 0:
+        print(f"已过滤 {filtered_count} 个低于 55 分的淘汰候选人")
+
     if os.path.exists(CANDIDATES_FILE):
         try:
             shutil.copy2(CANDIDATES_FILE, BACKUP_FILE)

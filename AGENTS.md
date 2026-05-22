@@ -5,8 +5,9 @@
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
+├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.5）
+├── gui_main.py           # 图形界面主程序（v2.6）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
@@ -14,6 +15,7 @@ boss-resume-filter/
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）
+├── selectors.json        # 页面选择器配置（CSS/XPath/关键词，DOM 变化时修改）
 ├── candidates_all.json   # 累积的候选人数据
 ├── candidates_all.xlsx   # Excel 导出文件
 ├── gui.bat               # GUI 启动脚本
@@ -39,6 +41,7 @@ boss-resume-filter/
 - 打招呼等级：`python bossmaster.py --greet --greet-level strong`（仅强烈推荐）或 `normal`（默认，强烈推荐+推荐）
 - 清空历史：`python bossmaster.py --clear --greet`
 - 输出详细评分：`python bossmaster.py --greet --verbose`
+- AI 辅助评估：`python bossmaster.py --greet --ai-eval`（对通过筛选的候选人进行 LLM 二次评分）
 
 ### 图形界面模式（推荐）
 - 双击 `gui.bat` 或 `python gui_main.py`
@@ -56,8 +59,8 @@ boss-resume-filter/
 - `python build.py --release`：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传（一键发布）
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
-- dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
-- job_config.json 和 api_config.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
+- dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json` + `selectors.json`
+- job_config.json、api_config.json 和 selectors.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 和 selectors.json 供用户编辑
 - 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、稳定单元回归和导入烟测
 - `build.py` 会显式收集 Anaconda Python 的 Tcl/Tk 运行库，防止 EXE 启动时报 `No module named 'tkinter'`
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 行为优化 / UI 改进 / Bug 修复 / 构建改进"顺序分类时直接中断
@@ -83,6 +86,7 @@ boss-resume-filter/
 - 过滤规则：只过滤「当前岗位已匹配且打过招呼」的候选人
 - 打招呼等级：`--greet-level strong`（仅强烈推荐 ≥75）或 `normal`（默认，强烈推荐+推荐 ≥65）
 - GUI 中「自动打招呼」下拉框对初次扫描和补打招呼均生效
+- 智能滚动定位：`_find_card_by_scroll()` 三阶段搜索（当前位置 → 滚到顶部 → 逐步向下 800px/步，最多 40 轮），同时滚动 window 和列表容器元素，确保虚拟列表中不在可视区的卡片也能被定位到
 - 沟通上限检测：`_detect_limit_popup()` 单次 JS 调用检测 16 个限制关键词（"今日沟通次数已用完"等），同时检查 page 和 iframe。检测到上限后停止后续打招呼并提示用户
 - 页面导航等待时间统一为 3 秒
 - 多岗位间切换：GUI 模式弹出确认对话框，用户确认后才继续（不再使用倒计时）；CLI 模式等待 Enter 确认
@@ -107,8 +111,8 @@ boss-resume-filter/
 ### 反爬对抗（v2.4 健壮性）
 
 - **随机延迟抖动**：`_human_delay(center, spread)` 辅助函数，所有 `time.sleep` 调用带随机抖动（不同场景不同 spread），降低行为指纹识别风险。倒计时显示保持精确 1s
-- **安全验证阻断**：`_detect_captcha()` 单次 JS 调用检测 11 个验证码关键词（"请完成安全验证"/"滑块验证"/"拖拽拼图"等），同时检查 7 个常见验证码容器 CSS 选择器。在滚动扫描每轮开始、打招呼点击后、打招呼循环失败时三处调用，命中即停止自动化并提示人工处理
-- 实现位置：`bossmaster.py:_human_delay()`、`bossmaster.py:_detect_captcha()`
+- **安全验证阻断**：`_detect_captcha()` 单次 JS 调用检测 10 个验证码弹窗专属关键词（"请完成安全验证"/"滑块验证"/"拖拽拼图"等，已排除"验证码"等泛化词），同时检查 9 个常见验证码容器 CSS 选择器。JS 使用 TreeWalker 只遍历可见文本节点，向上遍历检查 `getComputedStyle` 排除 `display:none` / `visibility:hidden` / `opacity:0` 的隐藏元素，并通过 `getBoundingClientRect` 检查视口位置排除屏幕外元素，避免误报。在滚动扫描每轮开始、打招呼点击后、打招呼循环失败时三处调用。检测到验证码后调用 `_wait_for_captcha_resolution()` 暂停程序并每 3 秒轮询验证状态，用户在浏览器中完成验证后自动恢复运行；支持 stop_event 中断和 5 分钟超时保护；GUI 模式通过 `captcha_callback` 弹出对话框通知用户，提供「继续等待」和「跳过验证」选项
+- 实现位置：`bossmaster.py:_human_delay()`、`bossmaster.py:_detect_captcha()`、`bossmaster.py:_wait_for_captcha_resolution()`；`gui_main.py:captcha_callback`
 
 ### 去重机制
 - 基于 `(geek_id, job_name)` 复合键去重，保留分数高的记录
@@ -118,25 +122,40 @@ boss-resume-filter/
 ### 保存策略
 - 正常流程：岗位处理完毕时统一保存（减少 IO）
 - 异常中断：KeyboardInterrupt / StopRequested 时立即兜底保存
+- 淘汰过滤：保存前自动过滤低于 55 分的淘汰候选人，不写入 `candidates_all.json`
 - 原子性写入：先写 `candidates_all.json.tmp`，成功后再 `os.replace()` 覆盖，防止中途崩溃导致数据文件损坏
 - 备份恢复：保存前复制旧 `candidates_all.json` 为 `candidates_all.json.bak`；加载主文件失败时自动尝试从 `.bak` 恢复
 
 ### 滚动提前终止
-- 文本提示检测（策略1）：每轮滚动**后**用 DrissionPage `@text():关键字` 模糊匹配"到底"/"没有更多"等提示文字，命中即停。检测移到滚动之后执行，避免误匹配页面常驻 footer 文本
-- 连续空轮次兜底（策略2）：连续 10 轮无新候选人自动终止，不依赖特定文案。同时滚动 window 和可能的滚动容器元素（`.candidate-list` 等），单次滚动 800px
+- 滚动位置检测（策略1）：`get_frame_scroll_info()` 检查 `atBottom` 标记，单次 JS 调用无 DOM 查找开销
+- 文本提示检测（策略2）：滚动位置到底后，再用 DrissionPage `@text():关键字` 模糊匹配"到底"/"没有更多"提示文字做二次确认
+- 连续空轮次兜底（策略3）：连续 5 轮无新候选人自动终止，不依赖特定文案。同时滚动 window 和可能的滚动容器元素（`.candidate-list` 等），单次滚动 800px
+- **批量提取优化**：`_extract_cards_batch()` 单次 JS 调用提取所有卡片数据（geek_id、文本、姓名），替代逐卡片的 N+1 网络调用，每轮从 ~90 次降到 ~4 次网络请求，耗时从 1.5-2.5s 降到 0.5-0.8s
 - 实现位置：`extract_candidates_by_comprehensive_analysis()` 函数
 
-### 评分体系（v2.1 重构）
-- 四维评分模型：`基础30 + 技能(0~35) + 经验超额(0~20) + 学历档次(0~15)`
+### 评分体系（v2.1 重构，v2.7 调整权重）
+- 四维评分模型：`基础25 + 技能(0~50) + 经验超额(0~15) + 学历档次(0~10)`
 - 英文关键词用 `\b` 单词边界匹配，避免子串误匹配（如 AI 不再匹配 email）
-- 经验超额加分：超出 min_exp 部分每年 +4 分，20 分封顶
-- 学历档次加分：博士+15, 985/211硕士+13, 硕士+10, 985/211本科+8, 统招本科+5
+- 经验超额加分：超出 min_exp 部分每年 +3 分，15 分封顶
+- 学历档次加分：博士+10, 985/211硕士+9, 硕士+7, 985/211本科+6, 统招本科+3
 - 找不到工作经验不再淘汰（警告后放行），但也不加分
 - 推荐等级阈值：>=75 强烈推荐, >=65 推荐, >=55 待定
 - 实现位置：`filtering.py:filter_candidate()`, `filtering.py:_keyword_found()`, `filtering.py:_calc_edu_bonus()`；`bossmaster.py` 保留同名导入兼容旧调用
 - 淘汰原因合并：学历不符/经验不足/年龄不符/地点不符/薪资不匹配/评分不足 按大类合并，括号内动态显示实际招聘要求
 - 淘汰原因排序：学历不符/不足 → 经验不足 → 年龄不符 → 地点不符 → 薪资不匹配 → 评分不足(按分数段) → 其他，同类内按数量降序
 - 硬条件检查顺序（v2.5）：学历 → 经验 → 年龄 → 工作地点 → 薪资范围 → 必要条件 → 技术关键词
+
+### AI 辅助评估（v2.7）
+- 对通过筛选的所有候选人（≥55 分）调用 LLM 做二次评估，最多 50 人/次
+- LLM 返回 `{"adjustment": ±10, "reason": "..."}` JSON，调整值叠加到规则评分上，clamp 到 [0, 100]
+- 调整后的分数重算推荐等级（≥75 强烈推荐, ≥65 推荐, ≥55 待定），直接影响打招呼决策
+- 候选人记录新增字段：`rule_score`（原始规则分）、`llm_evaluated`、`llm_adjustment`、`llm_reason`、`llm_model`
+- GUI 运行页「启用 AI 辅助评估」开关，默认关闭；结果表增加「AI评估」列显示调整值
+- CLI：`--ai-eval` 标志启用
+- API 配置复用 `api_config.json` + `security.py` keyring，不额外配置
+- 429 限流指数退避（2s→4s→8s），其他异常 graceful fallback（保留原始分数）
+- 每次调用间隔 1s + 随机抖动防限流；支持 stop_event 中断
+- 实现位置：`llm_eval.py:evaluate_batch()`、`llm_eval.py:_call_llm_api()`、`bossmaster.py:smart_scan_candidates()` 阶段 1.5
 
 ### 必要条件（v2.4 UI 重构）
 - GUI 使用下拉框选择条件类型 + 逗号分隔关键词，无需手写 JSON
@@ -174,6 +193,39 @@ boss-resume-filter/
 - `job_config.json` 顶层 `requirement_template` 字段存储模板文本
 - GUI「招聘需求示例」按钮默认禁用，仅"新建岗位"模式下可点击
 - 点击后一键填充模板到需求输入框
+
+### 数据统计看板
+- 侧边栏"数据统计"页（`create_stats_page()`），按岗位维度聚合筛选和打招呼数据
+- 过滤条件：岗位过滤下拉框 + 时间范围（今天/本周/全部）
+- 4 张汇总卡片：总候选人、强烈推荐、推荐、已打招呼（带彩色圆形图标）
+- 岗位明细 Treeview：岗位名称、总人数、强烈推荐、推荐、待定、已打招呼、优质率、打招呼率、平均分
+- 统计口径统一：首页统计卡片、首页明细弹窗、数据统计页汇总卡片、岗位明细表均只统计 ≥55 分的候选人
+- 数据来源：`candidates_all.json`
+- 优质率 = (强烈推荐 + 推荐) / 总人数
+- 时间过滤基于 `batch_timestamp` 字段（`%Y%m%d_%H%M%S` 格式字符串比较）
+
+### 候选人明细弹窗
+- 点击统计指标数字（筛选结果页的"通过/强烈推荐/推荐"人数、首页统计卡片的数字）弹出明细窗口
+- 表格列：姓名、工作年限、薪资、匹配分、推荐指数、状态、技能匹配
+- 右键菜单：查看详情（结构化详情窗口）、打招呼（仅未招呼候选人，智能滚动定位后后台线程执行）、移除此人（从列表和 JSON 删除并刷新，弹窗保持打开并更新统计）
+- 详情弹窗：`_format_candidate_detail()` 输出结构化文本，核心信息速览（年龄/工作年限/薪资/求职状态，`extract_summary_info()` 解析）、教育信息（学校·专业·学历，正则 `(.+(?:大学|学院))(.+?)(学历等级)$` 匹配无分隔符格式）、评分信息、AI 评估（评估理由/调整值/原始分/模型）、技能匹配详情（含匹配数/总数）、候选人摘要
+- 弹窗模态化：`transient(self.root)` + `grab_set()` 确保弹窗打开期间主窗口不可操作
+- 弹窗相对主窗口居中（`_center_window()`），字体与主界面统一（`self.font_table` / `self.font_button`）
+- 实现位置：`gui_main.py:_format_candidate_detail()`、`gui_main.py:_greet_single_candidate()`、`gui_main.py:show_result_stat_detail()`、`gui_main.py:show_stat_detail()`
+
+### 筛选结果列表
+- 显示 ≥55 分的所有候选人（强烈推荐 + 推荐 + 待定），按匹配分降序排列
+- 统计卡片"通过筛选"仅计 ≥65 分（强烈推荐+推荐），与列表总数不同属正常设计
+- 待定候选人（55-64 分）用 `pending` tag 标记低色背景，支持右键打招呼（依赖智能滚动定位）
+
+### 页面选择器配置（selectors.json）
+- 所有与 BOSS 直聘页面 DOM 交互的选择器集中在 `selectors.json`
+- 当 BOSS 前端 DOM 结构变化时，修改 `selectors.json` 即可，无需改代码
+- 选择器分组：`candidate_card`（卡片定位）、`name_extraction`（姓名提取）、`greet_button`（打招呼按钮）、`iframe`（推荐列表 iframe）、`scroll`（滚动控制）、`captcha_detection`（验证码检测）、`limit_detection`（限制弹窗检测）
+- 带 `{geek_id}` 占位符的模板选择器，运行时通过 `.format()` 注入实际值
+- 加载机制：`bossmaster.py:load_selectors()` 首次调用后缓存，`_sel(group, key, default)` 带默认值访问
+- 选择器自动检查：浏览器连接到推荐牛人页面后自动执行一次健康检查，有异常弹窗提醒；断开重连后重新检查
+- 健康检查函数：`bossmaster.py:check_selectors_health(page)` 返回诊断报告列表
 
 ## AI 模型配置（v2.0 新增）
 ### 支持的服务商

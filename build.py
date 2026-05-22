@@ -30,6 +30,9 @@ SENSITIVE_TRACKED_PATHS = [
 SOURCE_CHECK_FILES = [
     "bossmaster.py",
     "gui_main.py",
+    "filtering.py",
+    "storage.py",
+    "llm_eval.py",
     "doc_parser.py",
     "security.py",
     "build.py",
@@ -38,6 +41,8 @@ SOURCE_CHECK_FILES = [
     "tests/run_unit_tests.py",
     "tests/test_import.py",
     "tests/unit/test_core_logic.py",
+    "tests/unit/test_llm_eval.py",
+    "tests/unit/test_selectors.py",
 ]
 
 
@@ -591,6 +596,7 @@ def main():
         '--name', 'BOSS_ResumeFilter',
         '--add-data', f'{BASE_DIR / "job_config.json"};.',
         '--add-data', f'{BASE_DIR / "api_config.json"};.',
+        '--add-data', f'{BASE_DIR / "selectors.json"};.',
         '--hidden-import=tkinter',
         '--hidden-import=tkinter.ttk',
         '--hidden-import=tkinter.font',
@@ -615,7 +621,7 @@ def main():
         sys.exit(1)
 
     print("\n  更新辅助文件...")
-    for file in ["README.md", "job_config.json"]:
+    for file in ["README.md", "job_config.json", "selectors.json"]:
         src = BASE_DIR / file
         dst = DIST_DIR / file
         if src.exists():

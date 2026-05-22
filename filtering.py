@@ -101,7 +101,7 @@ def _keyword_found(text, keyword):
 
 
 def _calc_edu_bonus(text):
-    """计算学历加分（0~15）"""
+    """计算学历加分（0~10）"""
     bonus = 0
     has_985211 = any(mark in text for mark in ['985', '211', '双一流'])
     is_doctor = '博士' in text
@@ -109,11 +109,11 @@ def _calc_edu_bonus(text):
     is_bachelor = '本科' in text
 
     if is_doctor:
-        bonus = 15
+        bonus = 10
     elif is_master:
-        bonus = 13 if has_985211 else 10
+        bonus = 9 if has_985211 else 7
     elif is_bachelor:
-        bonus = 8 if has_985211 else 5
+        bonus = 6 if has_985211 else 3
 
     return bonus
 
@@ -121,8 +121,8 @@ def _calc_edu_bonus(text):
 def filter_candidate(candidate_text, rule):
     """候选人筛选逻辑，返回 (passed, score, details)。"""
     try:
-        skill_max = 35
-        exp_max = 20
+        skill_max = 50
+        exp_max = 15
 
         details = {
             'exp_matched': True,
@@ -168,7 +168,7 @@ def filter_candidate(candidate_text, rule):
             if exp_years is not None:
                 if min_exp > exp_years:
                     return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
-                details['exp_bonus'] = min((exp_years - min_exp) * 4, exp_max)
+                details['exp_bonus'] = min((exp_years - min_exp) * 3, exp_max)
 
         max_age = rule.get("max_age")
         if max_age is not None:
@@ -232,7 +232,7 @@ def filter_candidate(candidate_text, rule):
         else:
             skill_score_normalized = skill_max
 
-        score = 30 + skill_score_normalized + details['exp_bonus'] + details['edu_bonus']
+        score = 25 + skill_score_normalized + details['exp_bonus'] + details['edu_bonus']
         return True, score, details
 
     except Exception as e:

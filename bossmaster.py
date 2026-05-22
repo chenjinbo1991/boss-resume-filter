@@ -53,6 +53,29 @@ except ImportError:
     OPENPYXL_AVAILABLE = False
 
 
+_SELECTORS_CACHE = None
+
+
+def load_selectors():
+    """加载 selectors.json 选择器配置（首次调用后缓存）"""
+    global _SELECTORS_CACHE
+    if _SELECTORS_CACHE is not None:
+        return _SELECTORS_CACHE
+    try:
+        with open("selectors.json", "r", encoding="utf-8") as f:
+            _SELECTORS_CACHE = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"⚠️  加载 selectors.json 失败：{e}，使用内置默认值")
+        _SELECTORS_CACHE = {}
+    return _SELECTORS_CACHE
+
+
+def _sel(group, key, default=""):
+    """从 selectors.json 获取选择器值，找不到则返回 default"""
+    s = load_selectors()
+    return s.get(group, {}).get(key, default)
+
+
 def load_job_config():
     """从外部配置文件加载职位要求（支持多岗位）
     返回：(job_requirements, default_rule)
@@ -137,9 +160,11 @@ def extract_summary_info(text):
     lines = text.split('\n')
 
     # 薪资（第一行通常包含薪资）
-    salary_match = re.search(r'(\d+-?\d*)[Kk 千]', lines[0] if lines else '')
+    salary_match = re.search(r'(\d+(?:-\d+)?)[Kk千]', lines[0] if lines else '')
     if salary_match:
         info['salary'] = salary_match.group(1) + 'K'
+    elif '面议' in (lines[0] if lines else ''):
+        info['salary'] = '面议'
 
     # 年龄
     age_match = re.search(r'(\d+) 岁', text)
@@ -159,7 +184,7 @@ def extract_summary_info(text):
             break
 
     # 求职状态和公司
-    status_match = re.search(r'(离职 | 在职 | 在校 | 应届) - ([^\n]+)', text)
+    status_match = re.search(r'(离职|在职|在校|应届)[-·—]([^\n]+)', text)
     if status_match:
         info['job_status'] = status_match.group(1)
         info['company'] = status_match.group(2).strip()
@@ -329,10 +354,10 @@ def export_to_excel(candidates, filename):
 def get_iframe(page):
     """获取包含推荐列表的 iframe"""
     try:
-        frames = page.eles('tag:iframe')
+        frames = page.eles(_sel('iframe', 'selector', 'tag:iframe'))
         for frame in frames:
             src = frame.attr('src') or ''
-            if 'recommend' in src.lower():
+            if _sel('iframe', 'src_match', 'recommend') in src.lower():
                 return frame
         if frames:
             return frames[0]
@@ -345,7 +370,8 @@ def extract_name_from_card(card_element):
     """从候选人卡片中提取姓名"""
     try:
         # 方法 1: 查找 class=name 的独立元素
-        name_elements = card_element.eles('xpath:.//*[contains(@class, "name") and not(contains(@class, "wrap"))]')
+        name_elements = card_element.eles(_sel('name_extraction', 'name_xpath',
+            'xpath:.//*[contains(@class, "name") and not(contains(@class, "wrap"))]'))
         if name_elements:
             for ne in name_elements:
                 text = ne.text.strip() if ne.text else ""
@@ -356,7 +382,8 @@ def extract_name_from_card(card_element):
                         return text
 
         # 方法 2: 从 col-2 元素的第一行提取（姓名通常在开头）
-        col2_elements = card_element.eles('xpath:.//*[contains(@class, "col-2")]')
+        col2_elements = card_element.eles(_sel('name_extraction', 'col2_xpath',
+            'xpath:.//*[contains(@class, "col-2")]'))
         if col2_elements:
             col2_text = col2_elements[0].text.strip() if col2_elements[0].text else ""
             if col2_text:
@@ -415,7 +442,68 @@ def get_frame_scroll_info(frame):
         return None
 
 
-def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_callback=None, stop_event=None):
+def _extract_cards_batch(target):
+    """单次 JS 调用批量提取所有候选人卡片数据（替代逐卡片的 N+1 调用）
+
+    在 JS 端完成：遍历所有 [data-geekid] 卡片，提取 geek_id、innerText、姓名。
+    姓名提取逻辑复用 extract_name_from_card() 的两种策略。
+
+    Args:
+        target: DrissionPage 的 page 或 iframe 对象
+
+    Returns:
+        list[dict]: [{'geek_id': str, 'name': str, 'text': str}, ...]
+    """
+    script = '''
+    return (function(){
+        var cards = document.querySelectorAll('[data-geekid]');
+        var results = [];
+        var invalidNames = '推荐,位置,面议,优势,推荐牛人,编组,备份,立即,沟通,聊天,联系,在线,今日,最近,邀请,投递,刷新,收藏,点赞,分享,高级,资深,初级,中级,离职,在职,看看,职位'.split(',');
+        for (var c = 0; c < cards.length; c++) {
+            var card = cards[c];
+            var geekId = card.getAttribute('data-geekid');
+            if (!geekId) continue;
+            var rawText = card.innerText || '';
+            if (rawText.length < 30) continue;
+            var name = '';
+            var nameEls = card.querySelectorAll('[class*="name"]:not([class*="wrap"])');
+            for (var i = 0; i < nameEls.length; i++) {
+                var t = (nameEls[i].innerText || '').trim();
+                if (t.length >= 2 && t.length <= 4 && /^[\\u4e00-\\u9fff]+$/.test(t)) {
+                    name = t; break;
+                }
+            }
+            if (!name) {
+                var col2 = card.querySelectorAll('[class*="col-2"]');
+                if (col2.length > 0) {
+                    var ct = (col2[0].innerText || '').trim();
+                    var fl = ct.split('\\n')[0].trim();
+                    var pn = '';
+                    for (var j = 0; j < fl.length; j++) {
+                        var code = fl.charCodeAt(j);
+                        if (code >= 0x4e00 && code <= 0x9fff) {
+                            pn += fl[j];
+                            if (pn.length > 4) break;
+                        } else break;
+                    }
+                    if (pn.length >= 2 && pn.length <= 4 && invalidNames.indexOf(pn) === -1) {
+                        name = pn;
+                    }
+                }
+            }
+            results.push({geek_id: geekId, name: name || '未知', text: rawText});
+        }
+        return results;
+    })()
+    '''
+    try:
+        return target.run_js(script) or []
+    except Exception as e:
+        print(f"批量提取候选人数据失败：{e}")
+        return []
+
+
+def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_callback=None, stop_event=None, captcha_callback=None):
     """通过全面分析提取候选人
 
     Args:
@@ -439,60 +527,66 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
         if stop_event and stop_event.is_set():
             raise StopRequested()
 
-        # 每轮检测验证码（防止安全弹窗后盲目继续滚动）
-        is_captcha, captcha_msg = _detect_captcha(page)
-        if is_captcha:
-            print(f"\n⚠️  检测到安全验证弹窗 ({captcha_msg})，暂停扫描。请手动完成验证后重新运行。")
-            break
+        # 验证码检测：每 3 轮一次（降低调用频率，弹窗一旦出现 1.5s 内必然可见）
+        if scroll_round % 3 == 0:
+            is_captcha, captcha_msg = _detect_captcha(page)
+            if is_captcha:
+                print(f"\n⚠️  检测到安全验证弹窗 ({captcha_msg})")
+                if not _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg):
+                    break
 
         # 进度上报
         if progress_callback:
             pct = int((scroll_round + 1) / max_rounds * 100)
             progress_callback(pct, f"正在扫描候选人... 第{scroll_round + 1}/{max_rounds}轮")
+
         # 先滚动（第一轮跳过）
         if scroll_round > 0:
             if iframe:
                 # 同时滚动 window 和可能的滚动容器（BOSS 直聘虚拟列表的实际滚动目标）
-                iframe.run_js('''
+                _scroll_sel = _sel('scroll', 'container_js_selectorors',
+                    '.candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]')
+                iframe.run_js(f'''
                     window.scrollBy(0, 800);
-                    var list = document.querySelector(".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]");
+                    var list = document.querySelector("{_scroll_sel}");
                     if(list) list.scrollTop += 800;
                 ''')
-                time.sleep(_human_delay(0.5, 0.4))
+                time.sleep(_human_delay(0.8, 0.5))
             else:
                 page.run_js('window.scrollBy(0, 800)')
-                time.sleep(_human_delay(0.5, 0.4))
+                time.sleep(_human_delay(0.8, 0.5))
 
-        # 滚动后检测是否已到底（文本提示）
-        if scroll_round > 0:
-            bottom_hint = None
-            try:
-                bottom_hint = target.ele('@text():到底', timeout=0.3)
-                if not bottom_hint:
-                    bottom_hint = target.ele('@text():没有更多', timeout=0.3)
-            except Exception:
-                pass
-            if bottom_hint:
-                print(f"检测到'到底'提示，第 {scroll_round + 1} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
-                break
+            # 到底检测：滚动位置优先（单次 JS 调用，无 DOM 查找）
+            scroll_info = get_frame_scroll_info(iframe) if iframe else None
+            if scroll_info and scroll_info.get('atBottom'):
+                # 兜底：再用文本确认一次
+                bottom_hint = None
+                try:
+                    _bottom_texts = _sel('scroll', 'bottom_texts', ["到底", "没有更多"])
+                    bottom_hint = target.ele(f'@text():{_bottom_texts[0]}', timeout=0.3)
+                    if not bottom_hint and len(_bottom_texts) > 1:
+                        bottom_hint = target.ele(f'@text():{_bottom_texts[1]}', timeout=0.3)
+                except Exception:
+                    pass
+                if bottom_hint:
+                    print(f"检测到'到底'提示，第 {scroll_round + 1} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
+                    break
 
-        # 收集候选人
+        # 收集候选人（单次 JS 批量提取，替代逐卡片的 N+1 调用）
         candidates_in_round = []
         current_round_ids = set()
 
         try:
-            all_elements = target.eles('xpath://*[@data-geekid]')
-            for element in all_elements:
-                geek_id = element.attr('data-geekid')
+            batch = _extract_cards_batch(target)
+            for item in batch:
+                geek_id = item['geek_id']
                 if not geek_id or geek_id in seen_geek_ids or geek_id in current_round_ids:
                     continue
 
                 current_round_ids.add(geek_id)
 
-                text = element.text.strip() if element.text else ""
-                if len(text) < 30:
-                    continue
-
+                text = item['text']
+                # 内容过滤（Python 端，零网络开销）
                 has_candidate_info = (
                     '经验' in text or '本科' in text or '硕士' in text or
                     'Java' in text or '开发' in text or '工程师' in text or
@@ -501,8 +595,11 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
                 if not has_candidate_info:
                     continue
 
-                name = extract_name_from_card(element)
-                candidates_in_round.append({'geek_id': geek_id, 'name': name, 'summary': text})
+                candidates_in_round.append({
+                    'geek_id': geek_id,
+                    'name': item['name'],
+                    'summary': text,
+                })
 
         except Exception as e:
             print(f"提取候选人元素失败(轮次{scroll_round + 1}): {e}")
@@ -518,7 +615,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
         # 连续空轮次检测（兜底策略，不依赖特定文案）
         if new_count == 0:
             consecutive_empty += 1
-            if consecutive_empty >= 10:
+            if consecutive_empty >= 5:
                 print(f"连续 {consecutive_empty} 轮无新候选人，第 {scroll_round + 1} 轮提前终止（累计 {total_count} 个候选人）")
                 break
         else:
@@ -534,16 +631,100 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
     return all_candidates
 
 
-def send_greeting_on_list_page(page, geek_id, retry=0):
+def _find_card_by_scroll(target, card_css, stop_event=None, max_scrolls=40, scroll_px=800):
+    """智能滚动定位候选人卡片
+
+    BOSS 直聘使用虚拟列表，只渲染视口内的卡片。此函数通过系统性滚动搜索
+    不在当前视口的候选人，解决补打招呼和右键打招呼找不到卡片的问题。
+
+    策略：
+    1. 先检查当前位置（最快路径，刚扫描完的场景）
+    2. 滚到顶部建立已知起点
+    3. 从顶部向下逐步滚动，每步检查卡片是否渲染
+
+    Args:
+        target: DrissionPage 的 page 或 iframe 对象
+        card_css: CSS 选择器字符串（含 data-geekid）
+        stop_event: threading.Event，设置时立即放弃搜索
+        max_scrolls: 最大滚动次数（默认 40，覆盖约 32000px 的列表高度）
+        scroll_px: 每次滚动像素（默认 800）
+
+    Returns:
+        card element 或 None
+    """
+    # Phase 1: 当前位置快速检查
+    try:
+        card = target.ele(card_css, timeout=1)
+        if card:
+            return card
+    except Exception:
+        pass
+
+    # Phase 2: 滚到顶部
+    try:
+        target.run_js('''
+            window.scrollTo(0, 0);
+            var list = document.querySelector(".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]");
+            if(list) list.scrollTop = 0;
+        ''')
+    except Exception:
+        pass
+    time.sleep(_human_delay(0.5, 0.3))
+
+    # 检查顶部位置
+    try:
+        card = target.ele(card_css, timeout=1)
+        if card:
+            return card
+    except Exception:
+        pass
+
+    # Phase 3: 从顶部向下逐步滚动搜索
+    prev_scroll = -1
+    for _ in range(max_scrolls):
+        if stop_event and stop_event.is_set():
+            return None
+
+        try:
+            target.run_js(f'''
+                window.scrollBy(0, {scroll_px});
+                var list = document.querySelector(".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]");
+                if(list) list.scrollTop += {scroll_px};
+            ''')
+        except Exception:
+            break
+        time.sleep(_human_delay(0.3, 0.2))
+
+        try:
+            card = target.ele(card_css, timeout=0.5)
+            if card:
+                return card
+        except Exception:
+            pass
+
+        # 检测是否已到底（scrollTop 不再变化）
+        try:
+            cur_scroll = target.run_js('return document.documentElement.scrollTop || document.body.scrollTop || 0')
+            if cur_scroll == prev_scroll:
+                break
+            prev_scroll = cur_scroll
+        except Exception:
+            pass
+
+    return None
+
+
+def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_callback=None):
     """
     在列表页直接向候选人打招呼（极速优化版）
 
     优化要点：
-    - 移除 scrollTo(0,0)，避免破坏虚拟列表 DOM
+    - 智能滚动搜索替代单次 300px 滚动，系统性定位不在可视区的卡片
     - CSS 选择器替代 //* 全局 XPath 扫描
     - 合并按钮文本查询为单次 XPath OR 表达式，消灭循环等待叠加
     - 所有 ele() 调用设短超时，不再死等默认 10s
     - 点击后检测升级套餐/次数上限弹窗，防止假成功
+    - 检测到安全验证弹窗时暂停等待用户处理，验证完成后自动重试
 
     返回：(是否成功，消息)
     """
@@ -552,28 +733,26 @@ def send_greeting_on_list_page(page, geek_id, retry=0):
         target = iframe if iframe else page
 
         # CSS 选择器按 data-geekid 属性定位卡片，比 //* 快几个数量级
-        card_css = f'css:[data-geekid="{geek_id}"]'
+        card_css = _sel('candidate_card', 'card_by_id_css',
+                        'css:[data-geekid="{geek_id}"]').format(geek_id=geek_id)
         card = target.ele(card_css, timeout=2)
 
         if not card:
-            # 虚拟列表可能未渲染到可视区，微微滚动触发渲染后重试
-            target.run_js('window.scrollBy(0, 300)')
-            time.sleep(_human_delay(0.3, 0.25))
-            card = target.ele(card_css, timeout=2)
+            # 智能滚动搜索：当前位置 → 滚到顶部 → 逐步向下（最多 40 轮 × 800px）
+            card = _find_card_by_scroll(target, card_css, stop_event=stop_event)
 
         if not card:
-            return False, "未找到卡片(可能在虚拟列表可视区外)"
+            return False, "未找到卡片(滚动搜索后仍不在可视区)"
 
         parent = card.parent()
         if not parent:
             return False, "未找到卡片父容器"
 
         # 合并 XPath：单次查询匹配三种按钮文本，彻底消灭 for 循环 + 默认超时叠加
-        xpath_query = (
+        xpath_query = _sel('greet_button', 'button_xpath',
             'xpath:.//*[text()="继续沟通" or text()="立即沟通" or text()="打招呼" '
             'or contains(text(), "继续沟通") or contains(text(), "立即沟通") '
-            'or contains(text(), "打招呼")]'
-        )
+            'or contains(text(), "打招呼")]')
         greet_btn = parent.ele(xpath_query, timeout=2)
 
         if not greet_btn:
@@ -601,7 +780,19 @@ def send_greeting_on_list_page(page, geek_id, retry=0):
         if is_limited:
             return False, f"沟通次数已达上限: {limit_msg}"
         if is_captcha:
-            return False, f"检测到安全验证: {captcha_msg}"
+            print(f"\n   打招呼时检测到安全验证弹窗 ({captcha_msg})")
+            if _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg):
+                # 验证完成后重新检测弹窗状态
+                time.sleep(_human_delay(0.5, 0.3))
+                is_limited, limit_msg = _detect_limit_popup(page)
+                is_captcha, captcha_msg = _detect_captcha(page)
+                if is_limited:
+                    return False, f"沟通次数已达上限: {limit_msg}"
+                if is_captcha:
+                    return False, f"验证后仍存在安全弹窗: {captcha_msg}"
+                return True, "成功（验证后继续）"
+            else:
+                return False, f"安全验证未完成: {captcha_msg}"
 
         return True, "成功"
 
@@ -619,12 +810,12 @@ def _detect_limit_popup(page):
     返回: (is_limited: bool, detail: str)
     """
     # 所有限制弹窗关键词，用 || 合并为一条 JS 表达式
-    limit_keywords = [
+    limit_keywords = _sel('limit_detection', 'keywords', [
         "次数已用完", "沟通次数", "今日上限", "升级套餐",
         "立即升级", "联系次数", "已达上限", "今日剩余",
         "开通套餐", "购买套餐", "次数不足", "免费次数",
         "升级VIP", "VIP无限沟通", "体验VIP", "今日免费",
-    ]
+    ])
     checks = " || ".join(f'body.innerText.includes("{kw}")' for kw in limit_keywords)
     script = f'return (function(){{var body=document.body;return {checks};}})()'
 
@@ -664,35 +855,60 @@ def _detect_captcha(page):
 
     返回: (is_captcha: bool, detail: str)
     """
-    captcha_keywords = [
-        "请完成安全验证", "验证码", "滑块验证", "请拖动滑块",
-        "拖拽拼图", "人机验证", "安全验证", "检测到异常操作",
-        "请先完成验证", "行为验证", "账户安全验证",
-    ]
-    checks = " || ".join(f'body.innerText.includes("{kw}")' for kw in captcha_keywords)
-    script = f'return (function(){{var body=document.body;return {checks};}})()'
+    captcha_keywords = _sel('captcha_detection', 'keywords', [
+        "请完成安全验证", "滑块验证", "请拖动滑块",
+        "拖拽拼图", "检测到异常操作", "请先完成验证",
+        "行为验证", "请完成验证", "拖动下方滑块", "请按住滑块",
+    ])
+
+    # 构建只检查可见文本节点的 JS（排除 display:none / visibility:hidden / 视口外元素）
+    # \\n in Python → \n in JS (literal newline inside JS string)
+    kw_js = "\\n".join(captcha_keywords)
+    script = (
+        'return (function(){'
+        'var kws=("' + kw_js + '").split("\\n");'
+        'function vis(el){'
+        'var n=el;'
+        'while(n&&n.nodeType===1){'
+        'var s=getComputedStyle(n);'
+        'if(s.display==="none"||s.visibility==="hidden"||s.opacity==="0")return false;'
+        'n=n.parentElement;}'
+        'var r=el.getBoundingClientRect();'
+        'if(r.width<10||r.height<10)return false;'
+        'var vw=window.innerWidth,vh=window.innerHeight;'
+        'if(r.bottom<0||r.top>vh||r.right<0||r.left>vw)return false;'
+        'return true;}'
+        'var tw=document.createTreeWalker(document.body,4,null);'
+        'var nd;'
+        'while(nd=tw.nextNode()){'
+        'if(nd.parentElement&&vis(nd.parentElement)){'
+        'for(var i=0;i<kws.length;i++){if(nd.textContent.indexOf(kws[i])!==-1)return kws[i];}}}'
+        'return "";})()'
+    )
 
     try:
         iframe = get_iframe(page)
         if iframe:
             try:
-                if iframe.run_js(script):
-                    return True, "iframe 检测到安全验证弹窗"
+                matched_kw = iframe.run_js(script)
+                if matched_kw:
+                    return True, f"iframe 检测到安全验证弹窗（匹配词：{matched_kw}）"
             except Exception:
                 pass
 
         try:
-            if page.run_js(script):
-                return True, "主页面检测到安全验证弹窗"
+            matched_kw = page.run_js(script)
+            if matched_kw:
+                return True, f"主页面检测到安全验证弹窗（匹配词：{matched_kw}）"
         except Exception:
             pass
 
         # 额外检查常见验证码容器的 DOM 存在性（无文本提示的纯图形验证）
-        container_checks = [
+        container_checks = _sel('captcha_detection', 'css_selectors', [
             '.geetest_panel', '.captcha-box', '.slider-captcha',
             '.verify-captcha', '.captcha-container', '#captcha',
-            '.yoda-modal',  # BOSS 安全验证弹窗常见容器
-        ]
+            '.yoda-modal',
+        ])
         for selector in container_checks:
             try:
                 el = page.ele(f'css:{selector}', timeout=0.3)
@@ -707,6 +923,58 @@ def _detect_captcha(page):
         return False, ""
 
 
+def _wait_for_captcha_resolution(page, stop_event=None, max_wait=300, captcha_callback=None, detail=""):
+    """
+    等待用户手动完成安全验证（验证码/滑块）。
+
+    每隔 3 秒检查验证码是否已消失。用户完成验证后自动恢复。
+    支持 stop_event 中断和最大等待时间。
+
+    参数:
+        page: DrissionPage 页面对象
+        stop_event: threading.Event，设置时立即返回 False
+        max_wait: 最大等待秒数（默认 5 分钟），超时返回 False
+        captcha_callback: callable(detail) -> bool，检测到验证码时调用，
+            用于 GUI 弹窗通知用户。返回 True 继续等待，False 中止。
+            若为 None 则仅通过日志通知。
+
+    返回:
+        True: 验证已完成，可继续
+        False: 用户中止或超时
+    """
+    print(f"\n⚠️  检测到安全验证弹窗，请在浏览器中手动完成验证。")
+    print(f"   程序将自动检测验证状态，完成后继续运行...（最长等待 {max_wait} 秒）")
+
+    # 通知 GUI 弹窗
+    if captcha_callback:
+        try:
+            user_continue = captcha_callback(detail)
+            if not user_continue:
+                print("   用户选择跳过验证等待。")
+                return False
+        except Exception:
+            pass
+
+    elapsed = 0
+    check_interval = 3
+    while elapsed < max_wait:
+        if stop_event and stop_event.is_set():
+            print("   用户中止，停止等待验证。")
+            return False
+        time.sleep(check_interval)
+        elapsed += check_interval
+        is_still, _ = _detect_captcha(page)
+        if not is_still:
+            print(f"✅ 验证已完成，继续运行...")
+            return True
+        if elapsed % 15 == 0:
+            remaining = max_wait - elapsed
+            print(f"   仍在等待验证...（剩余 {remaining} 秒，可随时在浏览器中完成验证）")
+
+    print(f"⏰ 等待验证超时（{max_wait} 秒），停止当前操作。")
+    return False
+
+
 def verify_greeting_success(page, geek_id, debug=False):
     """
     验证打招呼是否成功（快速版 - 直接检查按钮文本）
@@ -714,7 +982,8 @@ def verify_greeting_success(page, geek_id, debug=False):
     try:
         # 直接查找该候选人的"继续沟通"或"已沟通"标记
         # 使用更精确的 XPath，减少查询范围
-        cards = page.eles(f'xpath://*[@data-geekid="{geek_id}"]')
+        _geek_attr = _sel('candidate_card', 'geek_id_attr', 'data-geekid')
+        cards = page.eles(f'xpath://*[@{_geek_attr}="{geek_id}"]')
         if not cards:
             return True, "点击已执行"
         
@@ -726,10 +995,13 @@ def verify_greeting_success(page, geek_id, debug=False):
         all_text = parent.text
         
         # 检查是否包含成功标记
-        if '已沟通' in all_text or '沟通过' in all_text or '已发送' in all_text:
+        _success_marks = _sel('greeting_verify', 'success_marks', ["已沟通", "沟通过", "已发送"])
+        _continue_mark = _sel('greeting_verify', 'continue_mark', "继续沟通")
+
+        if any(mark in all_text for mark in _success_marks):
             return True, "找到成功标记"
-        
-        if '继续沟通' in all_text:
+
+        if _continue_mark in all_text:
             return True, "按钮为'继续沟通'"
         
         # 默认成功
@@ -738,11 +1010,120 @@ def verify_greeting_success(page, geek_id, debug=False):
     except Exception:
         return True, "点击已执行"
 
-def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None):
+
+def check_selectors_health(page):
+    """选择器健康检查：逐一测试 selectors.json 中的关键选择器，返回诊断报告。
+
+    返回: list[dict]，每项包含:
+        - group: 选择器组名
+        - name: 选择器名称
+        - status: 'ok' | 'warn' | 'fail'
+        - detail: 描述信息
+    """
+    results = []
+    sel = load_selectors()
+
+    def _check(name, test_fn, group="", expect_found=True):
+        try:
+            found = test_fn()
+            if expect_found and found:
+                results.append({'group': group, 'name': name, 'status': 'ok',
+                               'detail': f'找到 {found} 个匹配元素'})
+            elif expect_found and not found:
+                results.append({'group': group, 'name': name, 'status': 'warn',
+                               'detail': '未找到匹配元素（可能页面未加载或选择器已失效）'})
+            else:
+                results.append({'group': group, 'name': name, 'status': 'ok',
+                               'detail': '检查通过'})
+        except Exception as e:
+            results.append({'group': group, 'name': name, 'status': 'fail',
+                           'detail': f'异常：{type(e).__name__}: {str(e)[:80]}'})
+
+    # 1. iframe 检测
+    iframe_sel = _sel('iframe', 'selector', 'tag:iframe')
+    def _test_iframe():
+        frames = page.eles(iframe_sel)
+        return len(frames) if frames else 0
+    _check('iframe', _test_iframe, group='iframe', expect_found=False)
+
+    # 2. 候选人卡片
+    cards_sel = _sel('candidate_card', 'all_cards_xpath', 'xpath://*[@data-geekid]')
+    iframe = get_iframe(page)
+    target = iframe if iframe else page
+    def _test_cards():
+        els = target.eles(cards_sel)
+        return len(els) if els else 0
+    _check('all_cards', _test_cards, group='candidate_card')
+
+    # 3. 验证码容器（不应存在）
+    captcha_css = _sel('captcha_detection', 'css_selectors', [])
+    captcha_found = []
+    for css in captcha_css:
+        try:
+            el = page.ele(f'css:{css}', timeout=0.3)
+            if el and el.states.is_displayed:
+                captcha_found.append(css)
+        except Exception:
+            continue
+    if captcha_found:
+        results.append({'group': 'captcha_detection', 'name': 'css_containers',
+                       'status': 'warn', 'detail': f'检测到验证码容器: {captcha_found}'})
+    else:
+        results.append({'group': 'captcha_detection', 'name': 'css_containers',
+                       'status': 'ok', 'detail': '无验证码弹窗'})
+
+    # 4. 限制弹窗关键词
+    limit_kws = _sel('limit_detection', 'keywords', [])
+    if limit_kws:
+        checks = " || ".join(f'body.innerText.includes("{kw}")' for kw in limit_kws)
+        script = f'return (function(){{var body=document.body;return {checks};}})()'
+        try:
+            triggered = target.run_js(script)
+            if triggered:
+                results.append({'group': 'limit_detection', 'name': 'keywords',
+                               'status': 'warn', 'detail': '检测到限制弹窗关键词'})
+            else:
+                results.append({'group': 'limit_detection', 'name': 'keywords',
+                               'status': 'ok', 'detail': '无限制弹窗'})
+        except Exception as e:
+            results.append({'group': 'limit_detection', 'name': 'keywords',
+                           'status': 'fail', 'detail': f'JS 执行失败：{str(e)[:60]}'})
+
+    # 5. 打招呼按钮（需要至少有卡片才能检测）
+    btn_xpath = _sel('greet_button', 'button_xpath', '')
+    if btn_xpath and _test_cards() > 0:
+        try:
+            cards = target.eles(cards_sel)
+            if cards:
+                parent = cards[0].parent()
+                if parent:
+                    btn = parent.ele(btn_xpath, timeout=1)
+                    results.append({'group': 'greet_button', 'name': 'button_xpath',
+                                   'status': 'ok' if btn else 'warn',
+                                   'detail': '找到按钮' if btn else '第一张卡片未找到按钮'})
+        except Exception as e:
+            results.append({'group': 'greet_button', 'name': 'button_xpath',
+                           'status': 'fail', 'detail': str(e)[:80]})
+
+    # 6. selectors.json 文件完整性
+    expected_groups = ['candidate_card', 'name_extraction', 'greet_button',
+                       'iframe', 'scroll', 'captcha_detection', 'limit_detection']
+    missing = [g for g in expected_groups if g not in sel]
+    if missing:
+        results.append({'group': 'config', 'name': 'selectors.json',
+                       'status': 'warn', 'detail': f'缺少配置组: {missing}'})
+    else:
+        results.append({'group': 'config', 'name': 'selectors.json',
+                       'status': 'ok', 'detail': f'配置文件完整 ({len(sel)} 组)'})
+
+    return results
+
+def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None):
     """
     智能扫描候选人 - 两阶段模式
 
     阶段 1: 滚动收集所有候选人并筛选（不打招呼）
+    阶段 1.5: AI 辅助评估（可选，对通过筛选的候选人进行 LLM 二次评分）
     阶段 2: 按分数从高到低依次打招呼
 
     Args:
@@ -756,6 +1137,11 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         list_candidates: 是否仅列出候选人，不打招呼
         progress_callback: 进度回调 callable(percentage, description)，percentage 0-100
         stop_event: threading.Event，设位时立即停止
+        ai_eval: 是否启用 AI 辅助评估
+        api_config: API 配置字典（base_url, model），AI 评估时使用
+        api_key: API Key 字符串，AI 评估时使用
+        captcha_callback: callable(detail) -> bool，检测到验证码时调用，
+            用于 GUI 弹窗通知用户。返回 True 继续等待，False 中止。
     """
     job_name = job_info['job_name']
 
@@ -791,7 +1177,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         print(f"已加载 candidates_all.json：累计 {len(all_existing_ids)} 个候选人，{len(greeted_geek_ids)} 人已打招呼")
 
     # === 阶段 1: 滚动收集所有候选人 ===
-    raw_candidates = extract_candidates_by_comprehensive_analysis(page, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event)
+    raw_candidates = extract_candidates_by_comprehensive_analysis(page, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event, captcha_callback=captcha_callback)
     print(f"原始提取到 {len(raw_candidates)} 个唯一候选人")
 
     # 过滤当前岗位已匹配且打过招呼的候选人
@@ -899,6 +1285,26 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         if accounted != len(raw_candidates):
             print(f"⚠️  数量不一致：通过({len(passed_candidates)}) + 淘汰({total_failed}) = {accounted} ≠ 原始({len(raw_candidates)})")
 
+    # === 阶段 1.5: AI 辅助评估（可选）===
+    if ai_eval and api_config and api_key and passed_candidates:
+        from llm_eval import evaluate_batch
+        rule = job_info['rule']
+        job_requirement = rule.get('original_requirement', '')
+        if not job_requirement:
+            job_requirement = f"岗位：{job_name}，{rule.get('min_exp', 0)}年经验，{rule.get('edu', '不限')}学历"
+
+        print(f"\n=== AI 辅助评估（共 {len(passed_candidates)} 人，最多评估 50 人）===")
+        passed_candidates = evaluate_batch(
+            passed_candidates, job_requirement, api_config, api_key,
+            max_candidates=50,
+            progress_callback=progress_callback,
+            stop_event=stop_event,
+        )
+        # 重新排序（分数可能变化）
+        passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
+        llm_count = sum(1 for c in passed_candidates if c.get('llm_evaluated'))
+        print(f"AI 评估完成：{llm_count} 人已评估")
+
     # === 仅列出候选人，不打招呼 ===
     if list_candidates and passed_candidates:
         print("\n=== 候选人列表 ===")
@@ -976,7 +1382,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                     (iframe if iframe else page).run_js('window.scrollBy(0, 400)')
                     time.sleep(_human_delay(0.2, 0.15))
 
-                success, msg = send_greeting_on_list_page(page, candidate['geek_id'])
+                success, msg = send_greeting_on_list_page(page, candidate['geek_id'], stop_event=stop_event, captcha_callback=captcha_callback)
 
                 if success:
                     greet_success_count += 1
@@ -1076,7 +1482,7 @@ def _show_job_navigation_prompt(current_idx, total, next_job_name, confirm_callb
             print("  继续处理...\n")
 
 
-def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None):
+def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None, existing_page=None, captcha_callback=None):
     """运行智能扫描（支持多岗位）
 
     参数：
@@ -1084,6 +1490,9 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         progress_callback: 进度回调 callable(percentage, description)，GUI 模式使用
         confirm_callback: 岗位切换确认回调 callable(current_idx, total, next_job_name) -> bool，GUI 模式使用
         stop_event: threading.Event，设置时立即停止扫描
+        existing_page: 已有的浏览器页面对象（GUI 模式传入，避免重复连接）
+        captcha_callback: callable(detail) -> bool，检测到验证码时调用，
+            用于 GUI 弹窗通知用户。返回 True 继续等待，False 中止。
     """
     import argparse
 
@@ -1100,6 +1509,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         parser.add_argument('--list-candidates', action='store_true', help='仅列出候选人，不打招呼')
         parser.add_argument('--rounds', type=int, default=100, help='最大滚动轮次（默认 100，推荐 50-200）')
         parser.add_argument('--verbose', action='store_true', help='输出详细评分信息（显示技能匹配详情）')
+        parser.add_argument('--ai-eval', action='store_true', help='启用 AI 辅助评估：对通过筛选的候选人进行 LLM 二次评分')
         args = parser.parse_args()
 
     # 确定运行模式
@@ -1175,8 +1585,12 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                     print(f"  ... 还有 {len(to_greet) - 10} 个")
 
                 # 需要打开浏览器进行打招呼
-                page = ChromiumPage()
-                print("\n浏览器已打开，请手动导航到候选人推荐页面")
+                if existing_page:
+                    page = existing_page
+                    print("使用 GUI 已连接的浏览器")
+                else:
+                    page = ChromiumPage()
+                    print("\n浏览器已打开，请手动导航到候选人推荐页面")
                 print("等待 3 秒...")
                 time.sleep(_human_delay(3.0, 2.0))
 
@@ -1190,7 +1604,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                         geek_id = c.get('geek_id')
                         name = c.get('name', '未知')
                         print(f"[{i+1}/{len(to_greet)}] 正在向 {name} 打招呼...", end=" ")
-                        success, msg = send_greeting_on_list_page(page, geek_id)
+                        success, msg = send_greeting_on_list_page(page, geek_id, stop_event=stop_event, captcha_callback=captcha_callback)
                         if success:
                             # 检查是否真的成功（不是"可能需手动确认"）
                             if "可能需手动确认" in msg:
@@ -1230,12 +1644,37 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
     page = None
     all_candidates = []  # 保存所有岗位的候选人
 
-    try:
-        print("正在连接到浏览器...")
-        page = ChromiumPage()
+    # 加载 AI 评估所需的 API 配置
+    ai_api_config = getattr(args, 'api_config', None)
+    ai_api_key = getattr(args, 'api_key', None)
+    if getattr(args, 'ai_eval', False) and (ai_api_config is None or ai_api_key is None):
+        try:
+            with open('api_config.json', 'r', encoding='utf-8') as f:
+                ai_api_config = json.load(f)
+            from security import get_api_key
+            ai_api_key = get_api_key(ai_api_config.get('api_provider', ''))
+            if not ai_api_key:
+                print("⚠️  AI 评估需要 API Key，但未配置，将跳过 AI 评估")
+                args.ai_eval = False
+            else:
+                model_name = ai_api_config.get('model', 'unknown')
+                print(f"AI 辅助评估已启用（模型：{model_name}）")
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"⚠️  加载 API 配置失败：{e}，将跳过 AI 评估")
+            args.ai_eval = False
+    elif getattr(args, 'ai_eval', False):
+        model_name = ai_api_config.get('model', 'unknown') if ai_api_config else 'unknown'
+        print(f"AI 辅助评估已启用（模型：{model_name}）")
 
-        print("\n浏览器已打开，请手动导航到候选人推荐页面")
-        print("例如：https://www.zhipin.com/web/chat/recommend")
+    try:
+        if existing_page:
+            page = existing_page
+            print("使用 GUI 已连接的浏览器")
+        else:
+            print("正在连接到浏览器...")
+            page = ChromiumPage()
+            print("\n浏览器已打开，请手动导航到候选人推荐页面")
+            print("例如：https://www.zhipin.com/web/chat/recommend")
         print("请确保页面完全加载后，等待 3 秒...")
         time.sleep(_human_delay(3.0, 2.0))
 
@@ -1284,7 +1723,11 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                                greet_level=args.greet_level, greet_names_list=None,
                                                list_candidates=args.list_candidates,
                                                progress_callback=progress_callback,
-                                               stop_event=stop_event)
+                                               stop_event=stop_event,
+                                               ai_eval=getattr(args, 'ai_eval', False),
+                                               api_config=ai_api_config,
+                                               api_key=ai_api_key,
+                                               captcha_callback=captcha_callback)
             all_candidates.extend(candidates)
 
         # 最后生成 Excel 文件

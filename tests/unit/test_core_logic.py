@@ -60,11 +60,11 @@ def test_keyword_matching_uses_word_boundaries_for_english_terms():
 
 
 def test_education_bonus_tiers_are_stable():
-    assert _calc_edu_bonus("博士学历") == 15
-    assert _calc_edu_bonus("211 硕士") == 13
-    assert _calc_edu_bonus("硕士") == 10
-    assert _calc_edu_bonus("985 本科") == 8
-    assert _calc_edu_bonus("统招本科") == 5
+    assert _calc_edu_bonus("博士学历") == 10
+    assert _calc_edu_bonus("211 硕士") == 9
+    assert _calc_edu_bonus("硕士") == 7
+    assert _calc_edu_bonus("985 本科") == 6
+    assert _calc_edu_bonus("统招本科") == 3
 
 
 def test_required_conditions_support_string_or_and():
@@ -191,6 +191,30 @@ def test_save_candidates_all_deduplicates_by_geek_id_and_job_name():
     assert java["greet_sent"] is True
     assert "greeting_in_progress" not in java
     assert python["match_score"] == 60
+
+
+def test_save_candidates_all_filters_below_55():
+    """低于 55 分的候选人不应写入 candidates_all.json"""
+    old_cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            os.chdir(tmpdir)
+            with contextlib.redirect_stdout(io.StringIO()):
+                save_candidates_all([
+                    {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+                    {"geek_id": "g2", "job_name": "Java", "match_score": 55},
+                    {"geek_id": "g3", "job_name": "Java", "match_score": 54},
+                    {"geek_id": "g4", "job_name": "Java", "match_score": 30},
+                ])
+
+            with open("candidates_all.json", "r", encoding="utf-8") as f:
+                saved = json.load(f)
+        finally:
+            os.chdir(old_cwd)
+
+    assert len(saved) == 2
+    ids = {c["geek_id"] for c in saved}
+    assert ids == {"g1", "g2"}
 
 
 def test_load_candidates_all_restores_from_backup_when_main_json_is_corrupt():

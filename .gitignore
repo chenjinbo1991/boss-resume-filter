@@ -19,6 +19,7 @@ output/
 # 浏览器运行状态（含 Cookies、登录态、历史记录、本地存储）
 .storage/
 .chrome_profile/
+.chrome_debug_port
 
 # 候选人数据（累积数据，本地存储）
 candidates_all.json
