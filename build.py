@@ -597,6 +597,7 @@ def main():
         '--add-data', f'{BASE_DIR / "job_config.json"};.',
         '--add-data', f'{BASE_DIR / "api_config.json"};.',
         '--add-data', f'{BASE_DIR / "selectors.json"};.',
+        '--add-data', f'{BASE_DIR / "CHANGELOG.md"};.',
         '--hidden-import=tkinter',
         '--hidden-import=tkinter.ttk',
         '--hidden-import=tkinter.font',

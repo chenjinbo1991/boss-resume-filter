@@ -5487,7 +5487,12 @@ class BossFilterGUI:
 
     def show_changelog(self):
         """显示更新日志（版本列表 + 详情分栏）"""
-        changelog_path = BASE_DIR / "CHANGELOG.md"
+        import sys
+        # PyInstaller --add-data 解压到 _MEIPASS，优先从那里读取
+        meipass = getattr(sys, '_MEIPASS', None)
+        changelog_path = (Path(meipass) / "CHANGELOG.md") if meipass else None
+        if not changelog_path or not changelog_path.exists():
+            changelog_path = BASE_DIR / "CHANGELOG.md"
         if not changelog_path.exists():
             messagebox.showinfo("更新日志", "CHANGELOG.md 文件不存在")
             return
