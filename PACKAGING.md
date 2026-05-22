@@ -101,6 +101,8 @@ dist/
 └── README.md             <-- 说明文档
 ```
 
+CHANGELOG.md 通过 `--add-data` 嵌入 EXE 内部（PyInstaller 解压到 `_MEIPASS`），无需单独分发。
+
 ### 3. 部署到目标电脑
 
 **注意：首次在新电脑部署需要重新配置 API Key。**

@@ -30,6 +30,7 @@
 - **清空候选人按钮**：筛选结果页新增「清空候选人」按钮，支持清空当前岗位或全部岗位数据，操作前自动备份；新增"保留已打招呼的候选人"复选框（默认勾选），清空时自动保留已沟通过的候选人；复选框与清空范围单选框之间增加分隔线，视觉区分清空范围选择与保留选项
 
 ### Bug 修复
+- **EXE 更新日志缺失**：`CHANGELOG.md` 未加入 PyInstaller `--add-data`，导致 EXE 在其他电脑上点击版本更新日志提示文件不存在；修复：打包时嵌入 `CHANGELOG.md`，`show_changelog()` 优先从 `sys._MEIPASS` 读取
 - **清空候选人同步更新 Excel**：清空操作后同步重新生成 `candidates_all.xlsx`，避免 Excel 与 JSON 数据不一致
 - **手动打招呼同步更新 Excel**：右键打招呼成功后，除更新 JSON 外同步重新生成 `candidates_all.xlsx`，避免 Excel 中的打招呼状态与 JSON 不一致
 - **候选人明细弹窗删除后保持打开**：首页和筛选结果页的明细弹窗中删除候选人后，弹窗不再关闭退回主界面，而是保持打开并即时更新统计标签（"共 X 人，已打招呼 Y 人"）；弹窗设为 `transient(self.root)` 始终置顶于主窗口
@@ -42,6 +43,8 @@
 - **浏览器状态消息去重**：统一所有分支的提示文本为"BOSS 直聘推荐牛人页面"，避免不同文案触发重复通知
 
 ### 构建改进
+- **CHANGELOG.md 嵌入 EXE**：`build.py` 将 `CHANGELOG.md` 加入 `--add-data`，EXE 运行时从 `_MEIPASS` 解压读取，无需单独分发
+- **.gitignore 补充**：`*.rar`、`*.zip` 打包产物格式
 - **selectors.json 打包集成**：`build.py` 将 `selectors.json` 加入 EXE 内嵌和 dist 分发
 - **SOURCE_CHECK_FILES 补全**：发布前编译检查覆盖 `filtering.py`、`storage.py`、`llm_eval.py` 和新增测试文件
 - **单元测试扩充**：从 41 条扩展到 55 条，新增 LLM 评估（28 条）、选择器加载（13 条）和保存过滤（1 条）测试

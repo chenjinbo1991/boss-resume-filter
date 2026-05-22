@@ -60,7 +60,8 @@ boss-resume-filter/
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
 - dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json` + `selectors.json`
-- job_config.json、api_config.json 和 selectors.json 内嵌到 EXE 中，dist 中额外放置 job_config.json 和 selectors.json 供用户编辑
+- job_config.json、api_config.json、selectors.json 和 CHANGELOG.md 内嵌到 EXE 中，dist 中额外放置 job_config.json 和 selectors.json 供用户编辑
+- CHANGELOG.md 通过 `--add-data` 打包进 EXE，`gui_main.py:show_changelog()` 优先从 `sys._MEIPASS` 读取（PyInstaller 解压目录），回退到 `BASE_DIR`
 - 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、稳定单元回归和导入烟测
 - `build.py` 会显式收集 Anaconda Python 的 Tcl/Tk 运行库，防止 EXE 启动时报 `No module named 'tkinter'`
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 行为优化 / UI 改进 / Bug 修复 / 构建改进"顺序分类时直接中断

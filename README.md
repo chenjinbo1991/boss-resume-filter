@@ -183,6 +183,7 @@ boss-resume-filter/
 ├── candidates_all.xlsx   # Excel 导出文件（多工作表 + 统计摘要）
 ├── CLAUDE.md             # AI 协作规范
 ├── README.md             # 项目主文档
+├── CHANGELOG.md          # 更新日志（嵌入 EXE，运行时从 _MEIPASS 读取）
 ├── GUI 使用说明.md        # 图形界面详细说明
 ├── DEPLOYMENT.md         # 部署说明
 ├── PACKAGING.md          # 打包指南
