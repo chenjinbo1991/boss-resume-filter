@@ -207,7 +207,7 @@ def _create_mac_zip():
 
 
 def _create_mac_dmg():
-    """创建 macOS DMG 安装包（标准拖拽安装体验：左边 .app，右边 Applications 快捷方式）"""
+    """创建 macOS DMG 安装包（标准布局：.app 在左，Applications 在右）"""
     app_dir = DIST_DIR / "BOSS_ResumeFilter.app"
     dmg_path = DIST_DIR / "BOSS_ResumeFilter.dmg"
 
@@ -217,36 +217,38 @@ def _create_mac_dmg():
 
     print(f"\n>>> 创建 DMG 安装包...")
 
-    # 创建临时暂存目录：放入 .app + Applications 快捷方式
-    staging_dir = DIST_DIR / "_dmg_staging"
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir)
-    staging_dir.mkdir()
-
-    # 复制 .app 到暂存目录（符号链接在 DMG 中可能失效，用实际复制）
-    staging_app = staging_dir / "BOSS_ResumeFilter.app"
-    shutil.copytree(str(app_dir), str(staging_app), symlinks=True)
-
-    # 创建 Applications 快捷方式（指向 /Applications）
-    apps_link = staging_dir / "Applications"
-    os.symlink("/Applications", str(apps_link))
-
-    # 创建 DMG
-    result = subprocess.run([
-        'hdiutil', 'create',
-        '-volname', 'BOSS简历筛选器',
-        '-srcfolder', str(staging_dir),
-        '-ov',
-        '-format', 'UDZO',
-        str(dmg_path)
-    ], capture_output=True, text=True)
-
-    # 清理暂存目录
-    shutil.rmtree(staging_dir, ignore_errors=True)
-
-    if result.returncode != 0:
-        print(f"[错误] DMG 创建失败：{result.stderr}")
+    try:
+        import dmgbuild
+    except ImportError:
+        print("[错误] 缺少 dmgbuild 依赖，请运行：pip install dmgbuild")
         sys.exit(1)
+
+    # 根据 .app 大小自动计算 DMG 容量（留 50MB 余量）
+    app_size_mb = sum(f.stat().st_size for f in app_dir.rglob('*') if f.is_file()) / (1024 * 1024)
+    dmg_size_mb = int(app_size_mb) + 50
+
+    settings = {
+        'format': 'UDBZ',
+        'size': f'{dmg_size_mb}m',
+        'files': [str(app_dir)],
+        'symlinks': {'Applications': '/Applications'},
+        'icon_locations': {
+            'BOSS_ResumeFilter.app': (140, 200),
+            'Applications': (500, 200),
+        },
+        'icon_size': 100,
+        'window_rect': ((100, 100), (640, 480)),
+        'include_iconview_settings': True,
+        'default_view': 'icon-view',
+        'show_icon_preview': False,
+        'text_size': 13,
+    }
+
+    dmgbuild.build_dmg(
+        filename=str(dmg_path),
+        volume_name='BOSS简历筛选器',
+        settings=settings,
+    )
 
     size_mb = dmg_path.stat().st_size / (1024 * 1024)
     print(f"  [OK] DMG: {dmg_path} ({size_mb:.1f} MB)")
