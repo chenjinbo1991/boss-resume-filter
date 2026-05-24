@@ -30,6 +30,7 @@
 - **清空候选人按钮**：筛选结果页新增「清空候选人」按钮，支持清空当前岗位或全部岗位数据，操作前自动备份；新增"保留已打招呼的候选人"复选框（默认勾选），清空时自动保留已沟通过的候选人；复选框与清空范围单选框之间增加分隔线，视觉区分清空范围选择与保留选项
 
 ### Bug 修复
+- **macOS Tk 9.0 触控板滚动失效**：Tk 9.0（Homebrew Python 3.12 自带）的 Cocoa 后端不向 Canvas 派发触控板滚动事件，导致岗位配置/大模型配置/运行控制页面双指滑动无法滚动。修复方案：通过 ObjC Runtime swizzle `NSView.scrollWheel:`，拦截触控板事件并调用当前页面 Canvas 的 `yview_scroll()`；NSScrollView 内部视图（Text/Treeview/Listbox）跳过，保留原生滚动；Windows Tk 8.6 不受影响。新增 `_NEED_COCOA_SCROLL_HOOK` 平台标记、`_setup_cocoa_scroll_hook()`、`_create_scroll_container()`、`_delta_to_units()`、`_bind_mousewheel()` 等方法
 - **EXE 更新日志缺失**：`CHANGELOG.md` 未加入 PyInstaller `--add-data`，导致 EXE 在其他电脑上点击版本更新日志提示文件不存在；修复：打包时嵌入 `CHANGELOG.md`，`show_changelog()` 优先从 `sys._MEIPASS` 读取
 - **清空候选人同步更新 Excel**：清空操作后同步重新生成 `candidates_all.xlsx`，避免 Excel 与 JSON 数据不一致
 - **手动打招呼同步更新 Excel**：右键打招呼成功后，除更新 JSON 外同步重新生成 `candidates_all.xlsx`，避免 Excel 中的打招呼状态与 JSON 不一致
