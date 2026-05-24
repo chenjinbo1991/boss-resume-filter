@@ -7,7 +7,8 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.7）
+├── gui_main.py           # 图形界面主程序（v2.8）
+├── updater.py            # 自动更新模块（GitHub Release 检查、下载替换、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
@@ -55,11 +56,15 @@ boss-resume-filter/
 
 ### 打包发布
 - `python build.py --check`：仅执行发布前检查，不打包、不提交、不推送
-- `python build.py`：自动使用 pack_venv 打包为单文件 EXE（~47MB），打包前自动验证依赖完整性
+- `python build.py`：自动使用 pack_venv 打包（Windows 生成单文件 EXE，macOS 生成 .app + ZIP + DMG）
 - `python build.py --release`：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传（一键发布）
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
-- dist 目录输出：`BOSS_ResumeFilter.exe` + `README.md` + `job_config.json` + `selectors.json`
+- **Windows**：dist 目录输出 `BOSS_ResumeFilter.exe` + `README.md` + `job_config.json` + `selectors.json`
+- **macOS**：dist 目录输出 `BOSS_ResumeFilter.app`（应用包）+ `BOSS_ResumeFilter_mac.zip`（自动更新用）+ `BOSS_ResumeFilter.dmg`（用户安装用）
+- `build.py` 自动检测平台（`IS_MAC`/`IS_WIN`），无需额外参数
+- macOS 打包使用 `--onedir --windowed` 生成 .app，Windows 使用 `--onefile --noconsole` 生成 EXE
+- macOS DMG 使用系统自带 `hdiutil` 生成，ZIP 使用 Python `zipfile` 模块
 - job_config.json、api_config.json、selectors.json 和 CHANGELOG.md 内嵌到 EXE 中，dist 中额外放置 job_config.json 和 selectors.json 供用户编辑
 - CHANGELOG.md 通过 `--add-data` 打包进 EXE，`gui_main.py:show_changelog()` 优先从 `sys._MEIPASS` 读取（PyInstaller 解压目录），回退到 `BASE_DIR`
 - 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、稳定单元回归和导入烟测
@@ -239,3 +244,13 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - 支持根据 API Key 动态获取模型列表
 - 测试连接：高可用设计（全新 Session + 并行双策略 + 宽松超时）
 - 新电脑部署：首次启动检测 API Key 缺失并引导重新配置
+
+## 自动更新（v2.8）
+- 启动时延迟 3 秒自动检查 GitHub Release 最新版本
+- 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」
+- **Windows**：下载新 EXE → 生成 `update.bat` 脚本 → 启动脚本 → 退出当前程序 → 脚本替换 EXE 并重启
+- **macOS**：
+  - 从 .app 运行：下载 ZIP → 解压 → 生成 shell 脚本替换 .app → 重启应用
+  - 从源码运行：执行 `git pull`（降级方案）
+- 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
+- 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`

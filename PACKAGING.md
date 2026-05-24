@@ -1,6 +1,19 @@
 # BOSS 简历筛选器 - 打包部署指南
 
-## 推荐方案：PyInstaller 打包（单文件 EXE）
+## 跨平台支持
+
+| 平台 | 输出格式 | 用途 |
+|------|---------|------|
+| Windows | `BOSS_ResumeFilter.exe` | 单文件可执行程序 |
+| macOS | `BOSS_ResumeFilter.app` | 应用包 |
+| macOS | `BOSS_ResumeFilter.dmg` | 安装包（用户拖拽安装） |
+| macOS | `BOSS_ResumeFilter_mac.zip` | 自动更新用 |
+
+`build.py` 自动检测当前平台，无需额外参数。
+
+---
+
+## 方案一：Windows 打包（单文件 EXE）
 
 ### 1. 环境准备
 
@@ -271,4 +284,73 @@ python gui_main.py
 
 ---
 
-**最后更新**: 2026-05-22
+## 方案二：macOS 打包（.app + DMG）
+
+### 1. 环境准备
+
+- macOS 10.15+
+- Python 3.10+（推荐 Homebrew 安装）
+- PyInstaller（`pip install pyinstaller`）
+
+### 2. 打包步骤
+
+```bash
+# 创建虚拟环境（推荐）
+python3 -m venv pack_venv
+source pack_venv/bin/activate
+pip install -r requirements.txt pyinstaller
+
+# 执行打包（自动检测 macOS 平台）
+python3 build.py
+
+# 或一键发布
+python3 build.py --release
+```
+
+### 3. 输出文件
+
+```
+dist/
+├── BOSS_ResumeFilter.app         ← 应用包（双击运行）
+├── BOSS_ResumeFilter.dmg         ← 安装包（拖拽到 Applications）
+├── BOSS_ResumeFilter_mac.zip     ← 自动更新用
+├── job_config.json
+├── selectors.json
+└── README.md
+```
+
+### 4. 分发方式
+
+**方式 A：DMG 安装包（推荐用户安装）**
+1. 用户下载 `BOSS_ResumeFilter.dmg`
+2. 双击打开 DMG
+3. 拖拽 .app 到 Applications 文件夹
+4. 首次运行需右键 → 打开（绕过 Gatekeeper）
+
+**方式 B：自动更新（已安装用户）**
+- 程序启动时自动检查 GitHub Release
+- 发现新版本后下载 ZIP 并自动替换 .app
+- 替换完成后自动重启应用
+
+### 5. macOS 特殊说明
+
+- **Tcl/Tk 收集**：macOS 上 Homebrew Python 的 Tcl/Tk 由 PyInstaller 自动收集，无需手动指定
+- **分隔符差异**：`--add-data` 参数在 macOS 使用 `:` 分隔，Windows 使用 `;`（`build.py` 已自动处理）
+- **PyInstaller 模式**：macOS 使用 `--onedir --windowed`（生成 .app bundle），Windows 使用 `--onefile --noconsole`
+
+### 6. Gatekeeper 与签名
+
+未签名的 .app 首次运行时会被 macOS Gatekeeper 拦截：
+
+**用户解决方法：**
+1. 右键点击 .app → 选择「打开」
+2. 在弹出的对话框中再次点击「打开」
+
+**开发者签名（可选）：**
+- 需要 Apple Developer 账号（$99/年）
+- 使用 `codesign` 签名 + `notarize` 公证
+- 签名后用户无需右键打开
+
+---
+
+**最后更新**: 2026-05-24

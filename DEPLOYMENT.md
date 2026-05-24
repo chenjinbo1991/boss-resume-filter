@@ -2,7 +2,9 @@
 
 ## 首次部署（新电脑）
 
-### 1. 复制文件
+### Windows 部署
+
+#### 1. 复制文件
 将 `dist/` 目录中的所有文件复制到目标电脑：
 ```
 BOSS_ResumeFilter.exe
@@ -11,10 +13,31 @@ job_config.json
 selectors.json
 ```
 
-### 2. 首次运行
+#### 2. 首次运行
 双击 `BOSS_ResumeFilter.exe` 启动程序
 
-### 3. 配置 API Key
+### macOS 部署
+
+#### 1. 下载安装
+从 GitHub Release 下载 `BOSS_ResumeFilter.dmg`
+
+#### 2. 安装应用
+1. 双击打开 DMG 文件
+2. 将 `BOSS_ResumeFilter.app` 拖拽到 Applications 文件夹
+3. 推出 DMG
+
+#### 3. 首次运行
+1. 打开 Applications 文件夹
+2. **右键**点击 `BOSS_ResumeFilter.app` → 选择「打开」
+3. 在弹出的安全提示对话框中点击「打开」（绕过 Gatekeeper）
+4. 后续启动可直接双击打开
+
+#### 4. 自动更新
+- macOS 版本支持自动更新
+- 程序启动时会检查 GitHub Release
+- 发现新版本后自动下载并替换 .app，完成后重启
+
+### 配置 API Key（Windows 和 macOS 通用）
 由于 API Key 加密存储在原电脑的系统钥匙串中，新电脑需要重新配置：
 
 1. 进入「**岗位配置**」→「**API 配置**」
@@ -24,7 +47,7 @@ selectors.json
 5. 输入 Base URL
 6. 点击「保存并添加到列表」按钮
 
-### 4. 验证配置
+### 验证配置
 - 点击「测试连接」验证 API Key 是否有效
 - 切换模型后，API Key 会自动从系统钥匙串读取
 

@@ -2,7 +2,7 @@
 
 基于 DrissionPage 的 BOSS 直聘候选人自动筛选工具，支持智能需求解析、智能匹配筛选、自动滚动获取候选人、自动打招呼功能。
 
-> 当前发布版本：v2.7
+> 当前发布版本：v2.8
 
 ## ✨ 功能特性
 
@@ -14,6 +14,13 @@
 - **中断恢复**: 支持 Ctrl+C 中断，已打招呼的候选人状态自动保存，下次运行不重复
 - **Excel 导出**: 自动生成带颜色标识的 Excel 文件（多工作表 + 统计摘要）
 - **图形界面**: 提供友好的 GUI 界面，支持可视化配置和操作（推荐新手使用）
+
+### v2.8 新增功能
+- **macOS .app 打包**：`build.py` 支持 macOS 平台打包，生成 .app 应用包 + DMG 安装包 + ZIP 自动更新包
+- **macOS 自动更新**：从 .app 运行时检测到新版本自动下载替换并重启；源码模式走 git pull
+- **自动更新增强**：启动时自动检查 GitHub Release，有新版本弹窗提示更新内容并支持一键更新
+- **UI 优化**：版本号直接进入更新日志页面；更新日志侧边栏"关于"改为文字链接；关于页面增加 GitHub 地址和环境信息
+- **Python 3.9 兼容**：`security.py` 添加 `from __future__ import annotations` 支持旧版 Python
 
 ### v2.7 新增功能
 - **LLM 智能评估**：对通过筛选的候选人调用 LLM 做二次评估，返回 ±10 分调整值，直接影响推荐等级和打招呼决策；GUI 运行页「启用 AI 辅助评估」开关，CLI `--ai-eval` 标志
@@ -171,7 +178,8 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块
-├── gui_main.py            # 图形界面主程序（v2.7）
+├── gui_main.py            # 图形界面主程序（v2.8）
+├── updater.py             # 自动更新模块（GitHub Release 检查、下载替换）
 ├── icons.py               # 图标绘制模块（Pillow 矢量图标）
 ├── doc_parser.py          # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块
