@@ -279,5 +279,5 @@ Windows EXE 直接用 `sys.executable.parent` 即可。`gui_main.py` 和 `update
 ### DMG 安装后配置文件缺失
 DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.json`/`api_config.json` 不在 DMG 中（虽然通过 `--add-data` 嵌入了 `sys._MEIPASS`）。用户安装后 .app 旁边没有配置文件，导致首次启动岗位配置为空。解决方案：`_get_base_dir()` 首次启动时检测配置文件是否存在，不存在则从 `sys._MEIPASS` 复制到可写位置。
 
-### macOS Dock 图标点击恢复窗口
-尝试过三种方案都失败：`tk::mac::Reopen` 命令（Tk 不支持）、swizzle `applicationShouldHandleReopen:hasVisibleWindows:`（delegate 方法未被调用）、swizzle `_handleReopenAppleEvent:`（私有方法不存在）。最终方案：轮询检测（每 500ms），当 `NSApp.isActive` 为 true 且窗口 `isMiniaturized` 为 true 时，调用 `deminiaturize:` + `makeKeyAndOrderFront:` 恢复窗口。这是唯一可靠的跨 macOS 版本方案。
+### macOS Dock 图标点击恢复窗口（不实现）
+Tk macOS 实现的根本缺陷：最小化后 `NSApp.isActive`、`NSWorkspace.frontmostApplication`、`NSRunningApplication.isFrontmost` 仍然指向本应用，无法用任何 Cocoa API 区分"刚最小化"和"点击 Dock 图标"。尝试过所有方案均不可行：`tk::mac::Reopen`（不触发）、delegate 方法注入（macOS 不调用）、`_handleReopenAppleEvent:`（私有方法不存在）、`sendEvent:` swizzle（Dock 点击不产生 NSEvent）、`NSWorkspace.frontmostApplication` 轮询（最小化后 PID 不变）、`NSApp.isActive` 轮询（最小化后仍为 true）。**结论：这是 Tk macOS Cocoa 集成的固有缺陷，无法在应用层修复，不做任何 workaround。** 用户可通过 Cmd+Tab 或 Mission Control 恢复最小化窗口。

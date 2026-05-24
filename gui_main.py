@@ -77,7 +77,8 @@ FONT_FAMILY = get_font_family()
 
 # UI 配置常量（续）
 UI_CONFIG = {
-    'zoom_factor': 1.3,              # 额外放大系数
+    'zoom_factor': 1.3,              # 额外放大系数（默认，Windows/Linux）
+    'mac_zoom_factor': 0.9,          # macOS Retina 下 Tk 已有 DPI 缩放，避免界面过大
     'window_base_width': 1500,       # 窗口基础宽度
     'window_base_height': 950,       # 窗口基础高度
     'window_min_width': 1300,        # 最小窗口宽度
@@ -195,8 +196,8 @@ class BossFilterGUI:
         except Exception:
             self.dpi_scale = 1.0
 
-        # 额外放大系数 - 让界面更大
-        self.zoom_factor = UI_CONFIG['zoom_factor']
+        # 额外放大系数。macOS Retina 下 Tk 已应用 DPI 缩放，再额外放大会显得过大。
+        self.zoom_factor = UI_CONFIG['mac_zoom_factor'] if sys.platform == 'darwin' else UI_CONFIG['zoom_factor']
         effective_scale = self.dpi_scale * self.zoom_factor
 
         # 初始化图标缓存（DPI 感知的高清图标）
@@ -272,11 +273,7 @@ class BossFilterGUI:
 
         # 注册窗口关闭处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # macOS: Dock 图标点击 / 最小化后恢复窗口
-        # 延迟 3 秒确保 Tk 的 NSApplicationDelegate 已创建完毕
-        if sys.platform == 'darwin':
-            self.root.after(3000, self._setup_dock_handler)
+        self._setup_macos_reopen_handler()
 
         # 标记鼠标是否在 Text 控件上（用于 Cocoa scroll hook 跳过页面滚动）
         self._over_text_widget = False
@@ -294,6 +291,26 @@ class BossFilterGUI:
 
         # 启动时自动检查更新（延迟 3 秒，避免启动卡顿）
         updater.auto_check_on_startup(self.root, delay_ms=3000)
+
+    def _setup_macos_reopen_handler(self):
+        """点击 macOS Dock 图标时恢复主窗口。"""
+        if sys.platform != 'darwin':
+            return
+
+        try:
+            self.root.createcommand('tk::mac::ReopenApplication', self._restore_main_window)
+        except tk.TclError:
+            # 非 Aqua Tk 或旧版 Tk 可能不支持该 macOS 专用命令。
+            pass
+
+    def _restore_main_window(self):
+        """恢复、置前并聚焦主窗口。"""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except tk.TclError:
+            pass
 
     def setup_styles(self):
         """设置自定义样式"""
@@ -705,7 +722,7 @@ class BossFilterGUI:
         text_container = ttk.Frame(parse_frame, style='TFrame')
         text_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        self.requirement_text = tk.Text(text_container, height=UI_CONFIG['text_height_large'], font=('Microsoft YaHei UI', int(12 * self.dpi_scale * self.zoom_factor)),
+        self.requirement_text = tk.Text(text_container, height=UI_CONFIG['text_height_large'], font=self.font_combo,
                                         bg=self.colors['bg_input'], borderwidth=1, highlightthickness=0)
         self.requirement_text.pack(side="left", fill="both", expand=True)
 
@@ -1315,96 +1332,9 @@ class BossFilterGUI:
             BossFilterGUI._cocoa_refs['orig_impl'] = orig_impl
 
             BossFilterGUI._cocoa_hook_installed = True
-            print("[Cocoa] scrollWheel: hook installed (Tk 9.0 touchpad fix)")
 
-        except Exception as e:
-            print(f"[Cocoa] scrollWheel: hook failed: {e}")
-
-    def _setup_dock_handler(self):
-        """macOS Dock 图标点击恢复窗口 - 轮询方案。
-
-        由于 delegate swizzle 和私有方法都不可靠，改用轮询检测：
-        - 每 500ms 检查一次应用状态
-        - 如果 NSApp.isActive 为 true 且窗口被最小化，自动恢复窗口
-        - 这种情况通常发生在用户点击 Dock 图标时
-
-        延迟到启动后 1 秒执行，确保窗口已创建。
-        """
-        try:
-            import ctypes
-            import ctypes.util
-
-            objc_path = ctypes.util.find_library('objc')
-            if not objc_path:
-                print("[Dock] objc library not found")
-                return
-
-            objc = ctypes.cdll.LoadLibrary(objc_path)
-
-            # ObjC Runtime 函数签名
-            objc.sel_registerName.restype = ctypes.c_void_p
-            objc.sel_registerName.argtypes = [ctypes.c_char_p]
-            objc.objc_getClass.restype = ctypes.c_void_p
-            objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            objc.objc_msgSend.restype = ctypes.c_void_p
-            objc.objc_msgSend.argtypes = [
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-
-            # 获取 NSApplication.sharedApplication
-            cls_nsapp = objc.objc_getClass(b'NSApplication')
-            if not cls_nsapp:
-                print("[Dock] NSApplication class not found")
-                return
-
-            sel_shared = objc.sel_registerName(b'sharedApplication')
-            nsapp = objc.objc_msgSend(cls_nsapp, sel_shared, None)
-            if not nsapp:
-                print("[Dock] sharedApplication failed")
-                return
-
-            sel_isActive = objc.sel_registerName(b'isActive')
-
-            # 获取主窗口
-            sel_mainWindow = objc.sel_registerName(b'mainWindow')
-            ns_window = objc.objc_msgSend(nsapp, sel_mainWindow, None)
-            if not ns_window:
-                print("[Dock] mainWindow not found")
-                return
-
-            sel_isMiniaturized = objc.sel_registerName(b'isMiniaturized')
-            sel_deminiaturize = objc.sel_registerName(b'deminiaturize:')
-            sel_makeKeyAndOrderFront = objc.sel_registerName(b'makeKeyAndOrderFront:')
-
-            print("[Dock] Polling handler installed")
-
-            def poll_dock_click():
-                """每 500ms 检查一次窗口状态"""
-                try:
-                    # 检查应用是否活跃
-                    is_active = objc.objc_msgSend(nsapp, sel_isActive, None)
-
-                    # 检查窗口是否被最小化
-                    is_mini = objc.objc_msgSend(ns_window, sel_isMiniaturized, None)
-
-                    # 如果应用活跃但窗口被最小化，说明用户点击了 Dock 图标
-                    if is_active and is_mini:
-                        print("[Dock] Detected dock click, restoring window")
-                        # 恢复窗口
-                        objc.objc_msgSend(ns_window, sel_deminiaturize, nsapp)
-                        # 将窗口提到前台并获得焦点
-                        objc.objc_msgSend(ns_window, sel_makeKeyAndOrderFront, nsapp)
-
-                except Exception as e:
-                    print(f"[Dock] Polling error: {e}")
-
-                # 继续轮询
-                self.root.after(500, poll_dock_click)
-
-            # 启动轮询
-            poll_dock_click()
-
-        except Exception as e:
-            print(f"[Dock] handler setup failed: {e}")
+        except Exception:
+            pass
 
     def _on_mousewheel(self, event):
         """统一处理滚轮事件 - 根据当前页面分发到对应的 Canvas
@@ -1486,15 +1416,15 @@ class BossFilterGUI:
         """创建 API 配置页面内容（在可滚动框架中）"""
         api_container = self.api_scrollable_frame
 
-        # API 配置页面标题
+        # 系统设置页面标题
         api_header_frame = ttk.Frame(api_container, style='TFrame')
         api_header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
 
-        api_title_label = ttk.Label(api_header_frame, text="AI 模型 API 配置",
+        api_title_label = ttk.Label(api_header_frame, text="系统设置",
                                    font=self.font_section, foreground=self.colors['text_primary'])
         api_title_label.pack(anchor="w")
 
-        api_subtitle_label = ttk.Label(api_header_frame, text="配置大模型 API 用于智能解析招聘需求文档",
+        api_subtitle_label = ttk.Label(api_header_frame, text="管理 AI 模型、API Key 和连接配置",
                                       font=self.font_subtitle, foreground=self.colors['text_secondary'])
         api_subtitle_label.pack(anchor="w", pady=(int(10 * self.dpi_scale * self.zoom_factor), 0))
 
@@ -6216,30 +6146,56 @@ class BossFilterGUI:
 
         # ---- 左侧版本列表（深色侧边栏风格）----
         sidebar_bg = '#2D3748'
-        left_frame = tk.Frame(dialog, bg=sidebar_bg, width=int(160 * fs))
+        left_frame = tk.Frame(dialog, bg=sidebar_bg, width=int(190 * fs))
         left_frame.pack(side="left", fill="y")
         left_frame.pack_propagate(False)
 
         # 标题
-        tk.Label(left_frame, text="版本历史", bg=sidebar_bg, fg='#E2E8F0',
-                 font=(FONT_FAMILY, int(14 * fs), 'bold')).pack(
-            anchor="center", padx=int(16 * fs), pady=(int(20 * fs), int(12 * fs)))
+        title_frame = tk.Frame(left_frame, bg=sidebar_bg)
+        title_frame.pack(fill="x", padx=int(16 * fs), pady=(int(18 * fs), int(8 * fs)))
+        tk.Label(title_frame, text="版本历史", bg=sidebar_bg, fg='#E2E8F0',
+                 font=(FONT_FAMILY, int(14 * fs), 'bold')).pack(anchor="center")
+        tk.Label(title_frame, text=f"共 {len(versions)} 个版本", bg=sidebar_bg, fg='#A0AEC0',
+                 font=(FONT_FAMILY, int(9 * fs))).pack(anchor="center", pady=(int(2 * fs), 0))
+        if len(versions) > 12:
+            tk.Label(title_frame, text="可滚动查看", bg=sidebar_bg, fg='#718096',
+                     font=(FONT_FAMILY, int(9 * fs))).pack(anchor="center")
 
         # 版本列表
+        list_container = tk.Frame(left_frame, bg=sidebar_bg)
+        list_container.pack(fill="both", expand=True, padx=(int(12 * fs), int(8 * fs)), pady=(int(4 * fs), int(6 * fs)))
+
         listbox_font = (FONT_FAMILY, int(12 * fs))
-        listbox = tk.Listbox(left_frame, width=16, font=listbox_font,
+        listbox = tk.Listbox(list_container, width=18, font=listbox_font,
                              bg=sidebar_bg, fg='#CBD5E0',
                              selectbackground=self.colors['primary'],
                              selectforeground='#FFFFFF',
                              borderwidth=0, highlightthickness=0,
                              activestyle='none',
                              selectborderwidth=0,
-                             justify='center',
+                             justify='left',
                              relief='flat')
-        listbox.pack(fill="both", expand=True, padx=int(12 * fs), pady=int(4 * fs))
+        list_scrollbar = tk.Scrollbar(list_container, orient="vertical",
+                                      command=listbox.yview,
+                                      width=max(12, int(12 * fs)),
+                                      bg='#718096',
+                                      activebackground='#CBD5E0',
+                                      troughcolor='#1F2937',
+                                      borderwidth=0,
+                                      highlightthickness=0,
+                                      relief='flat')
+        listbox.configure(yscrollcommand=list_scrollbar.set)
+        listbox.pack(side="left", fill="both", expand=True)
+        list_scrollbar.pack(side="right", fill="y")
 
-        for tag, title_line, _ in versions:
-            listbox.insert("end", tag)
+        for idx, (tag, title_line, _) in enumerate(versions):
+            display_text = f"  ● {tag}"
+            if idx == 0:
+                display_text = f"  ● {tag}  最新"
+            listbox.insert("end", display_text)
+            row_bg = '#243041' if idx % 2 == 0 else sidebar_bg
+            row_fg = '#F8FAFC' if idx == 0 else '#CBD5E0'
+            listbox.itemconfig(idx, background=row_bg, foreground=row_fg)
 
         # 左侧边栏底部：关于链接
         about_label = tk.Label(left_frame, text="关于",
@@ -6284,8 +6240,35 @@ class BossFilterGUI:
         text_widget.pack(side="left", fill="both", expand=True)
 
         scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=text_widget.yview)
-        scrollbar.pack(side="right", fill="y")
-        text_widget.configure(yscrollcommand=scrollbar.set)
+        detail_scrollbar_job = None
+
+        def update_detail_scrollbar(first, last):
+            scrollbar.set(first, last)
+            try:
+                needs_scroll = float(first) > 0.0 or float(last) < 1.0
+            except ValueError:
+                needs_scroll = True
+            if needs_scroll:
+                if not scrollbar.winfo_ismapped():
+                    scrollbar.pack(side="right", fill="y")
+            else:
+                if scrollbar.winfo_ismapped():
+                    scrollbar.pack_forget()
+
+        def refresh_detail_scrollbar():
+            nonlocal detail_scrollbar_job
+            detail_scrollbar_job = None
+            text_widget.update_idletasks()
+            first, last = text_widget.yview()
+            update_detail_scrollbar(first, last)
+
+        def schedule_detail_scrollbar_refresh(delay_ms=50):
+            nonlocal detail_scrollbar_job
+            if detail_scrollbar_job:
+                dialog.after_cancel(detail_scrollbar_job)
+            detail_scrollbar_job = dialog.after(delay_ms, refresh_detail_scrollbar)
+
+        text_widget.configure(yscrollcommand=update_detail_scrollbar)
 
         # 配置 tag 样式
         title_font = (FONT_FAMILY, int(13 * fs), 'bold')
@@ -6356,19 +6339,35 @@ class BossFilterGUI:
                         text_widget.insert("end", "  • " + item_text + "\n\n", "item")
             text_widget.configure(state="disabled")
             text_widget.yview_moveto(0)
+            schedule_detail_scrollbar_refresh()
 
         def on_select(event):
             sel = listbox.curselection()
             if sel:
                 show_version(sel[0])
 
+        def on_version_list_scroll(event):
+            if getattr(event, 'num', None) == 4:
+                direction = -1
+            elif getattr(event, 'num', None) == 5:
+                direction = 1
+            else:
+                direction = -1 if event.delta > 0 else 1
+            listbox.yview_scroll(direction, "units")
+            return "break"
+
         listbox.bind("<<ListboxSelect>>", on_select)
+        listbox.bind("<MouseWheel>", on_version_list_scroll)
+        if sys.platform != 'win32':
+            listbox.bind("<Button-4>", on_version_list_scroll)
+            listbox.bind("<Button-5>", on_version_list_scroll)
 
         # 默认选中第一个版本（最新）
         listbox.selection_set(0)
         show_version(0)
 
         dialog.deiconify()
+        schedule_detail_scrollbar_refresh(100)
 
 
 def main():
