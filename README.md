@@ -128,21 +128,35 @@ pip install -r requirements.txt
 
 ### 2. 配置岗位规则
 
-编辑 `job_config.json` 文件，配置各岗位的筛选规则：
+编辑 `job_config.json` 文件，配置各岗位的筛选规则。支持通过 GUI 界面可视化配置，也可直接编辑 JSON 文件：
 
-```json
+```jsonc
 {
-  "高级 Java 工程师": {
-    "min_exp": 5,
-    "edu": "本科",
-    "max_age": 35,
-    "keywords": ["Java", "Spring Boot", "MySQL", "Redis"]
-  },
-  "Python 开发工程师": {
-    "min_exp": 3,
-    "edu": "本科",
-    "max_age": 35,
-    "keywords": ["Python", "Django", "MySQL"]
+  // 岗位名称（作为 key，命令行 --job 参数使用）
+  "中高级AI工程师": {
+    "min_exp": 4,                    // 最低工作年限（年）
+    "edu": "本科",                    // 最低学历（博士/硕士/本科/大专）
+    "max_age": 35,                   // 最大年龄（岁）
+    "work_location": "南京",          // 工作地点（支持多城市，用 / 分隔）
+    "salary_min": 12,                // 岗位薪资下限（K，候选人期望最低薪资低于此值会被过滤）
+    "salary_max": 15,                // 岗位薪资上限（K）
+    "keywords": [                    // 技能关键词（用于评分打分）
+      {"name": "Spring Cloud", "weight": 2},  // weight 1=普通加分，2=重点加分
+      {"name": "SpringBoot", "weight": 1},
+      {"name": "Spring AI", "weight": 2},
+      {"name": "MySQL", "weight": 2},
+      {"name": "Redis", "weight": 1},
+      {"name": "Java", "weight": 1},
+      {"name": "Python", "weight": 1},
+      {"name": "LLM", "weight": 2},
+      {"name": "智能体", "weight": 2},
+      {"name": "Langchain", "weight": 2}
+    ],
+    "required_conditions": [         // 必要条件（不满足则直接淘汰）
+      "统招本科"                      // 支持简单匹配、OR、AND 三种模式
+    ],
+    "greet_template": null,          // 自定义打招呼话术（null 使用默认话术）
+    "original_requirement": "..."    // 原始招聘需求文本（GUI 自动填充）
   }
 }
 ```
@@ -250,6 +264,30 @@ boss-resume-filter/
 | 待定 | 55-64 | 不自动打招呼 |
 
 > 开启 AI 辅助评估后，LLM 会对候选人做二次评分（±10 分调整），调整后的分数重算推荐等级，直接影响打招呼决策。
+
+### AI 辅助评估（大模型二次评估）
+对通过筛选的候选人（≥55 分）调用 LLM 进行二次评估，辅助招聘决策。
+
+**启用方式：**
+- GUI：运行页勾选「启用 AI 辅助评估」开关
+- CLI：添加 `--ai-eval` 参数，如 `python bossmaster.py --greet --ai-eval`
+
+**评估流程：**
+1. 筛选阶段：对每个候选人进行规则评分（四维评分模型）
+2. AI 评估阶段：对通过筛选的候选人（≥55 分）调用 LLM 二次评估
+3. 分数调整：LLM 返回 `{"adjustment": ±10, "reason": "..."}`，调整值叠加到规则评分上
+4. 等级重算：调整后的分数重新计算推荐等级（≥75 强烈推荐, ≥65 推荐, ≥55 待定）
+5. 打招呼决策：基于调整后的分数决定是否自动打招呼
+
+**评估结果展示：**
+- GUI 结果表：新增「AI评估」列，显示调整值（如 +7、-3）
+- 候选人详情：显示 AI 评估理由、调整值、原始规则分、使用的模型
+- Excel 导出：包含 AI 评估相关字段
+
+**配置说明：**
+- 使用 `api_config.json` 中的 AI 模型配置（复用筛选功能的配置，无需额外配置）
+- 每次最多评估 50 人，超出部分跳过
+- 支持 stop_event 中断，429 限流自动指数退避
 
 ### 打招呼逻辑
 - 按钮位置：候选人卡片的 `operate-side` 区域
