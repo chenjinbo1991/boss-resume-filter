@@ -5948,8 +5948,80 @@ class BossFilterGUI:
         messagebox.showinfo("使用说明", help_text)
 
     def show_about(self):
-        """显示关于"""
-        messagebox.showinfo("关于", f"BOSS 简历筛选器 v{__version__}\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+        """显示关于弹窗"""
+        import webbrowser
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("关于 BOSS 简历筛选器")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        # 居中显示
+        dialog.update_idletasks()
+        w, h = 480, 420
+        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+        # 标题
+        tk.Label(dialog, text="BOSS 简历筛选器",
+                 font=('Microsoft YaHei UI', 18, 'bold')).pack(pady=(25, 5))
+
+        # 版本号
+        tk.Label(dialog, text=f"v{__version__}",
+                 font=('Microsoft YaHei UI', 11),
+                 foreground=self.colors.get('text_secondary', '#666')).pack(pady=(0, 15))
+
+        # 功能描述
+        tk.Label(dialog, text="智能候选人筛选 · 自动打招呼 · Excel 导出",
+                 font=('Microsoft YaHei UI', 10)).pack(pady=(0, 5))
+
+        tk.Label(dialog, text="基于 DrissionPage 的 BOSS 直聘自动化工具",
+                 font=('Microsoft YaHei UI', 10),
+                 foreground=self.colors.get('text_secondary', '#666')).pack(pady=(0, 15))
+
+        # 分隔线
+        ttk.Separator(dialog, orient="horizontal").pack(fill="x", padx=40, pady=10)
+
+        # GitHub 项目链接
+        github_label = tk.Label(dialog, text="GitHub 项目地址",
+                                font=('Microsoft YaHei UI', 10),
+                                foreground="#1E88E5", cursor="hand2")
+        github_label.pack(pady=(5, 2))
+        github_url = "https://github.com/yaoyouzhong/boss-resume-filter"
+        github_label.bind("<Button-1>",
+                          lambda e: webbrowser.open(github_url))
+
+        # Issue 反馈
+        issue_label = tk.Label(dialog, text="问题反馈与建议",
+                               font=('Microsoft YaHei UI', 10),
+                               foreground="#1E88E5", cursor="hand2")
+        issue_label.pack(pady=(2, 10))
+        issue_url = "https://github.com/yaoyouzhong/boss-resume-filter/issues"
+        issue_label.bind("<Button-1>",
+                         lambda e: webbrowser.open(issue_url))
+
+        # 环境信息
+        tk.Label(dialog,
+                 text=f"Python {sys.version.split()[0]} · Tk {tk.TkVersion} · {sys.platform.title()}",
+                 font=('Microsoft YaHei UI', 9),
+                 foreground=self.colors.get('text_muted', '#999')).pack(pady=(5, 15))
+
+        # 检查更新按钮
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=(5, 10))
+
+        tk.Button(btn_frame, text="检查更新", width=12,
+                  command=lambda: (dialog.destroy(),
+                                   updater.check_and_update_gui(self.root, silent=False))
+                  ).pack(side="left", padx=10)
+
+        tk.Button(btn_frame, text="关闭", width=12,
+                  command=dialog.destroy).pack(side="left", padx=10)
+
+        # ESC 关闭
+        dialog.bind('<Escape>', lambda e: dialog.destroy())
+        dialog.grab_set()
 
     def show_version_menu(self, widget, event):
         """显示版本菜单（左键点击版本号时弹出）"""

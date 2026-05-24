@@ -433,9 +433,7 @@ def show_update_dialog(root, result):
         button_frame,
         text="立即更新",
         command=on_update,
-        width=15,
-        bg="#4CAF50",
-        fg="white"
+        width=15
     )
     update_btn.pack(side="left", padx=10)
 
