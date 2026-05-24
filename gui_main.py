@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.8.2"
+__version__ = "2.8.3"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -33,8 +33,22 @@ def _get_base_dir():
         # macOS .app: sys.executable 在 .app/Contents/MacOS/ 内，
         # 用户配置文件（job_config.json 等）在 .app 旁边
         if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
-            return exe_dir.parent.parent.parent
-        return exe_dir
+            base = exe_dir.parent.parent.parent
+        else:
+            base = exe_dir
+
+        # 首次运行时配置文件可能不存在（如 macOS DMG 安装后），
+        # 从嵌入的 _MEIPASS 复制默认配置到可写位置
+        meipass = Path(sys._MEIPASS)
+        for fname in ["job_config.json", "selectors.json", "api_config.json"]:
+            target = base / fname
+            if not target.exists():
+                src = meipass / fname
+                if src.exists():
+                    import shutil
+                    shutil.copy2(str(src), str(target))
+
+        return base
     return Path(__file__).parent.resolve()
 
 BASE_DIR = _get_base_dir()
