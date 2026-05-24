@@ -12,6 +12,7 @@ import threading
 import requests
 import shlex
 import tempfile
+import plistlib
 from pathlib import Path
 from tkinter import messagebox
 import tkinter as tk
@@ -254,23 +255,38 @@ def update_macos_app(zip_path, current_app_path):
         zip_path: 下载的 ZIP 文件路径
         current_app_path: 当前 .app bundle 路径
     """
-    import zipfile
-
     try:
-        # 解压 ZIP 到临时目录
+        # 用 ditto 解压，保留 .app bundle 内的 symlink、权限和扩展属性。
+        # zipfile.extractall() 会破坏 Python.framework，导致更新后的 app 无法打开。
         temp_dir = Path(tempfile.mkdtemp())
-        with zipfile.ZipFile(zip_path, 'r') as zf:
-            zf.extractall(temp_dir)
+        subprocess.run(
+            ["ditto", "-x", "-k", str(zip_path), str(temp_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
         # 找到解压后的 .app
-        new_app_path = None
-        for item in temp_dir.iterdir():
-            if item.suffix == '.app':
-                new_app_path = item
-                break
+        app_candidates = list(temp_dir.glob("*.app")) + list(temp_dir.glob("*/*.app"))
+        new_app_path = app_candidates[0] if app_candidates else None
 
         if not new_app_path:
             return False, "ZIP 包中未找到 .app"
+
+        info_plist = new_app_path / "Contents" / "Info.plist"
+        if not info_plist.exists():
+            return False, "ZIP 包中的 .app 缺少 Info.plist"
+
+        with open(info_plist, "rb") as f:
+            bundle_info = plistlib.load(f)
+        executable_name = bundle_info.get("CFBundleExecutable")
+        if not executable_name:
+            return False, "ZIP 包中的 .app 缺少 CFBundleExecutable"
+
+        executable_path = new_app_path / "Contents" / "MacOS" / executable_name
+        if not executable_path.exists():
+            return False, f"ZIP 包中的主程序不存在: {executable_name}"
+        executable_path.chmod(executable_path.stat().st_mode | 0o755)
 
         # 生成替换脚本
         # 脚本写入 /tmp/（稳定位置），不放在 temp_dir 内，
@@ -314,6 +330,9 @@ echo "[$(date)] Removing old app"
 rm -rf "$OLD_APP"
 echo "[$(date)] Copying new app with ditto"
 ditto "$NEW_APP" "$OLD_APP"
+echo "[$(date)] Restoring executable permission"
+EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$OLD_APP/Contents/Info.plist")
+chmod +x "$OLD_APP/Contents/MacOS/$EXECUTABLE"
 echo "[$(date)] Clearing quarantine attributes"
 xattr -cr "$OLD_APP" 2>/dev/null || true
 echo "[$(date)] Opening app"

@@ -183,8 +183,6 @@ def clean_dist():
 
 def _create_mac_zip():
     """创建 macOS ZIP 包（用于自动更新）"""
-    import zipfile
-
     app_dir = DIST_DIR / "BOSS_ResumeFilter.app"
     zip_path = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
 
@@ -194,12 +192,25 @@ def _create_mac_zip():
 
     print(f"\n>>> 创建 ZIP 包...")
 
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(app_dir):
-            for file in files:
-                file_path = Path(root) / file
-                arcname = file_path.relative_to(DIST_DIR)
-                zf.write(file_path, arcname)
+    if zip_path.exists():
+        zip_path.unlink()
+
+    # macOS .app bundles contain framework symlinks, executable bits, and
+    # extended attributes. Python zipfile loses enough of that metadata to
+    # make PyInstaller apps fail after auto-update, so use ditto here.
+    subprocess.run(
+        [
+            "ditto",
+            "-c",
+            "-k",
+            "--sequesterRsrc",
+            "--keepParent",
+            str(app_dir),
+            str(zip_path),
+        ],
+        cwd=DIST_DIR,
+        check=True,
+    )
 
     size_mb = zip_path.stat().st_size / (1024 * 1024)
     print(f"  [OK] ZIP: {zip_path} ({size_mb:.1f} MB)")
