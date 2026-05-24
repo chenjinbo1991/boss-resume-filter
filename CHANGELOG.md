@@ -19,6 +19,7 @@
 - **macOS 按钮样式修复**：移除 `tk.Button` 的 `bg`/`fg` 自定义颜色（macOS Tk 不支持，导致文字不可见），使用系统默认样式
 
 ### Bug 修复
+- **macOS Tk 9.0 触控板滚动失效**：Tk 9.0（Homebrew Python 3.12 自带）的 Cocoa 后端不向 Canvas 派发触控板滚动事件，导致岗位配置/大模型配置/运行控制页面双指滑动无法滚动。修复方案：通过 ObjC Runtime swizzle `NSView.scrollWheel:`，拦截触控板事件并调用当前页面 Canvas 的 `yview_scroll()`；NSScrollView 内部视图（Text/Treeview/Listbox）跳过，保留原生滚动；Windows Tk 8.6 不受影响
 - **更新弹窗居中失败**：`Toplevel` 对象没有 `eval` 方法，无法调用 `tk::PlaceWindow`；修复为手动计算几何位置
 - **macOS 按钮文字不显示**：macOS Tk 的 `tk.Button` 不支持 `bg`/`fg` 自定义颜色，设置后文字变为不可见；修复为移除自定义颜色
 - **Python 3.9 类型注解兼容**：`security.py` 使用 `str | None` 语法需要 Python 3.10+，在 Python 3.9 上报错；修复为添加 `from __future__ import annotations`
