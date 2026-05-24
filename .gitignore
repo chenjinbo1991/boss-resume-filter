@@ -64,3 +64,4 @@ skills-lock.json
 # 微信相关
 wechat/
 .venv/
+.venv-ci/
