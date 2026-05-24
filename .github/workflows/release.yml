@@ -34,7 +34,7 @@ jobs:
 
           # macOS: 检查 ZIP 是否已存在
           if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$'; then
-            needs=$(echo "$needs" | jq '. + [{"os":"macos-13","platform":"macos"}]')
+            needs=$(echo "$needs" | jq '. + [{"os":"macos-latest","platform":"macos"}]')
           fi
 
           echo "needs=$needs" >> "$GITHUB_OUTPUT"
