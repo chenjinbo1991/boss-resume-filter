@@ -46,22 +46,46 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
       - name: Set UTF-8 encoding
         shell: bash
         run: echo "PYTHONIOENCODING=utf-8" >> $GITHUB_ENV
 
+      - name: Cache virtual environment
+        uses: actions/cache@v4
+        id: venv-cache
+        with:
+          path: .venv-ci
+          key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies (only on cache miss)
+        if: steps.venv-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -m venv .venv-ci
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            .venv-ci/Scripts/pip install -r requirements.txt pyinstaller
+          else
+            .venv-ci/bin/pip install -r requirements.txt pyinstaller
+          fi
+
       - name: Verify tkinter
         shell: bash
-        run: python -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)"
-
-      - name: Install dependencies
         run: |
-          pip install -r requirements.txt pyinstaller
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            .venv-ci/Scripts/python -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)"
+          else
+            .venv-ci/bin/python -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)"
+          fi
 
       - name: Build
-        run: python build.py --ci --release
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            .venv-ci/Scripts/python build.py --ci --release
+          else
+            .venv-ci/bin/python build.py --ci --release
+          fi
         env:
           PYTHONIOENCODING: utf-8
 
