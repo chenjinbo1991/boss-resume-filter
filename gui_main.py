@@ -2190,8 +2190,8 @@ class BossFilterGUI:
         if self.job_rules:
             self.refresh_skills_tree()
             self.refresh_required_listbox()
-            # 如果有岗位，显示详细结果区域
-            self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+        # 始终显示详细结果区域（基本信息、技能关键词、必要条件、话术模板）
+        self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
         self.current_page_index = 1
         self.update_nav_highlight()
         # 重新绑定滚轮事件（覆盖动态创建的控件）
