@@ -147,14 +147,16 @@ def run_in_venv():
 def clean_dist():
     """清理旧的打包产物"""
     if IS_MAC:
-        # macOS: 清理 .app bundle、.zip、.dmg
+        # macOS: 清理 .app bundle、PyInstaller 中间目录、.zip、.dmg
         app_path = DIST_DIR / "BOSS_ResumeFilter.app"
+        collect_path = DIST_DIR / "BOSS_ResumeFilter"
         zip_path = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
         dmg_path = DIST_DIR / "BOSS_ResumeFilter.dmg"
 
-        if app_path.exists():
-            shutil.rmtree(app_path)
-            print(f"  删除旧 .app: {app_path}")
+        for path in [app_path, collect_path]:
+            if path.exists():
+                shutil.rmtree(path)
+                print(f"  删除旧目录: {path}")
 
         for path in [zip_path, dmg_path]:
             if path.exists():
