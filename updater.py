@@ -272,24 +272,32 @@ def update_macos_app(zip_path, current_app_path):
             return False, "ZIP 包中未找到 .app"
 
         # 生成替换脚本
+        # 脚本写入 /tmp/（稳定位置），不放在 temp_dir 内，
+        # 避免 sys.exit(0) 退出时 temp_dir 被 OS 清理导致脚本丢失
         script = f'''#!/bin/bash
 sleep 2
 rm -rf "{current_app_path}"
 cp -R "{new_app_path}" "{current_app_path}"
 open "{current_app_path}"
 rm -rf "{temp_dir}"
+rm -f "$0"
 '''
 
-        # 写入临时脚本文件
-        script_path = temp_dir / "update.sh"
+        # 写入 /tmp/（不在 temp_dir 内，不会随进程退出被清理）
+        script_path = Path(tempfile.gettempdir()) / "boss_update.sh"
         with open(script_path, 'w') as f:
             f.write(script)
-
-        # 设置执行权限
         script_path.chmod(0o755)
 
-        # 启动脚本（后台运行）
-        subprocess.Popen(['bash', str(script_path)], close_fds=True)
+        # 启动脚本：start_new_session=True 脱离父进程组，
+        # 确保 sys.exit(0) 退出时脚本不会被 macOS 连带杀掉
+        subprocess.Popen(
+            ['bash', str(script_path)],
+            close_fds=True,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
         return True, "更新成功，程序即将重启"
 
