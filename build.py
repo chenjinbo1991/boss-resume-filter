@@ -485,17 +485,18 @@ def _extract_changelog_release(version):
 
     required_sections = ["新增功能", "体验优化", "问题修复"]
     found_sections = re.findall(r"^###\s+(.+?)\s*$", body, re.MULTILINE)
-    missing = [section for section in required_sections if section not in found_sections]
 
-    if missing:
-        print(f"[错误] CHANGELOG.md 中 v{version} 段落缺少发布分类：")
-        for section in missing:
-            print(f"  - {section}")
-        print("\n请按：新增功能 / 体验优化 / 问题修复 分类整理后再发布。")
+    # 至少有一个分类
+    present = [section for section in required_sections if section in found_sections]
+    if not present:
+        print(f"[错误] CHANGELOG.md 中 v{version} 段落缺少发布分类")
+        print(f"至少需要以下分类之一：{', '.join(required_sections)}")
         sys.exit(1)
 
-    required_positions = [found_sections.index(section) for section in required_sections]
-    if required_positions != sorted(required_positions):
+    # 检查存在的分类是否按规范顺序排列
+    present_positions = [(section, found_sections.index(section)) for section in required_sections if section in found_sections]
+    positions = [pos for _, pos in present_positions]
+    if positions != sorted(positions):
         print(f"[错误] CHANGELOG.md 中 v{version} 段落发布分类顺序不正确")
         print("当前顺序：")
         for section in found_sections:
