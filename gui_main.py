@@ -274,9 +274,13 @@ class BossFilterGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # macOS: 最小化后点击 Dock 图标恢复窗口
-        # Tk 在 macOS 上不会自动处理 Dock 图标点击恢复，需要轮询检测
+        # Tk 原生支持 tk::mac::Reopen 命令，当用户点击 Dock 图标时调用
         if sys.platform == 'darwin':
-            self._setup_dock_restore_handler()
+            def _on_dock_reopen():
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+            self.root.createcommand('tk::mac::Reopen', _on_dock_reopen)
 
         # 标记鼠标是否在 Text 控件上（用于 Cocoa scroll hook 跳过页面滚动）
         self._over_text_widget = False
@@ -1319,80 +1323,6 @@ class BossFilterGUI:
 
         except Exception as e:
             print(f"[Cocoa] scrollWheel: hook failed: {e}")
-
-    def _setup_dock_restore_handler(self):
-        """macOS Dock 图标点击恢复窗口（轮询方案）。
-
-        macOS Tk 应用最小化后点击 Dock 图标不会自动恢复窗口。
-        通过轮询 NSApplication.isActive 检测用户是否点击了 Dock 图标
-        （app 变活跃但窗口还在 iconic 状态），然后强制恢复窗口到前台。
-        如果 Cocoa API 不可用，静默降级。
-        """
-        try:
-            import ctypes
-            import ctypes.util
-
-            objc_path = ctypes.util.find_library('objc')
-            if not objc_path:
-                return
-            objc = ctypes.cdll.LoadLibrary(objc_path)
-
-            objc.objc_getClass.restype = ctypes.c_void_p
-            objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            objc.sel_registerName.restype = ctypes.c_void_p
-            objc.sel_registerName.argtypes = [ctypes.c_char_p]
-            objc.objc_msgSend.restype = ctypes.c_void_p
-            objc.objc_msgSend.argtypes = [
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-
-            cls_nsapp = objc.objc_getClass(b'NSApplication')
-            sel_shared = objc.sel_registerName(b'sharedApplication')
-            sel_active = objc.sel_registerName(b'isActive')
-
-            if not cls_nsapp:
-                return
-
-            # 缓存 NSApplication 实例，避免每次轮询都查找
-            nsapp = objc.objc_msgSend(cls_nsapp, sel_shared, None)
-            if not nsapp:
-                return
-
-            # 状态追踪：
-            # _was_inactive[0] = True 表示 app 之前是 inactive 状态
-            # 只有当 app 从 inactive → active 且窗口还在 iconic 时，
-            # 才认为是用户点击了 Dock 图标
-            _was_inactive = [False]
-
-            def _poll():
-                """每 500ms 检查一次：app 是否从 inactive 变回 active 但窗口还在 iconic"""
-                try:
-                    is_active = bool(objc.objc_msgSend(nsapp, sel_active, None))
-
-                    if not is_active:
-                        # app 不在前台，标记为 inactive
-                        _was_inactive[0] = True
-                    else:
-                        # app 是活跃的
-                        if _was_inactive[0]:
-                            # app 刚从 inactive 变为 active
-                            is_iconic = self.root.state() == 'iconic'
-                            if is_iconic:
-                                # 用户点击了 Dock 图标（app 变活跃但窗口还在 iconic）
-                                self.root.deiconify()
-                                self.root.lift()
-                                self.root.focus_force()
-                            _was_inactive[0] = False
-                except Exception:
-                    pass
-
-                # 继续轮询
-                self.root.after(500, _poll)
-
-            # 启动轮询
-            self.root.after(1000, _poll)
-
-        except Exception as e:
-            print(f"[macOS] Dock restore handler setup failed: {e}")
 
     def _on_mousewheel(self, event):
         """统一处理滚轮事件 - 根据当前页面分发到对应的 Canvas
