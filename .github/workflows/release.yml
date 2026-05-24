@@ -29,12 +29,12 @@ jobs:
 
           # Windows: 检查 EXE 是否已存在
           if ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.exe$'; then
-            needs=$(echo "$needs" | jq '. + [{"os":"windows-latest","platform":"windows"}]')
+            needs=$(echo "$needs" | jq -c '. + [{"os":"windows-latest","platform":"windows"}]')
           fi
 
           # macOS: 检查 ZIP 是否已存在
           if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$'; then
-            needs=$(echo "$needs" | jq '. + [{"os":"macos-latest","platform":"macos"}]')
+            needs=$(echo "$needs" | jq -c '. + [{"os":"macos-latest","platform":"macos"}]')
           fi
 
           echo "needs=$needs" >> "$GITHUB_OUTPUT"
