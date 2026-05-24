@@ -256,3 +256,22 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`
+
+## 踩坑警示
+
+### macOS .app 路径解析
+`sys.executable` 在 .app 中指向 `.app/Contents/MacOS/BOSS_ResumeFilter`，不是 .app 的父目录。`job_config.json` 等配置文件在 .app 旁边，需要向上追溯 3 层：
+```python
+if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
+    return exe_dir.parent.parent.parent  # .app 的父目录
+```
+Windows EXE 直接用 `sys.executable.parent` 即可。`gui_main.py` 和 `updater.py` 都有这个逻辑，改一个别忘了另一个。
+
+### PyInstaller 版本号读取
+不能从 `sys._MEIPASS` 读取 `gui_main.py` 源文件，因为源码被编译进 PYZ 归档，文件不存在。应该直接 `import gui_main` 读取模块属性，兼容所有打包模式（源码 / Windows EXE / macOS .app）。
+
+### DMG 图标布局控制
+直接用 `hdiutil create` 无法控制图标位置。尝试过 AppleScript 设置 Finder 布局（挂载 RW DMG → 设置位置 → 转换为 RO），但 Finder AppleScript 在 macOS 13+ 不稳定，经常报错。最终方案：使用 `dmgbuild` Python 库，直接生成带正确 `.DS_Store` 的 DMG，无需挂载和 AppleScript。
+
+### CHANGELOG 分类校验
+`build.py` 的 `_check_changelog()` 原本要求三个分类（新增功能 / 体验优化 / 问题修复）都有内容，但补丁版本通常只有"问题修复"。改为：至少有一个分类，且存在的分类按规范顺序排列（新增功能 → 体验优化 → 问题修复）。
