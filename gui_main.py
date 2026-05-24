@@ -273,6 +273,9 @@ class BossFilterGUI:
         # 注册窗口关闭处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        # 标记鼠标是否在 Text 控件上（用于 Cocoa scroll hook 跳过页面滚动）
+        self._over_text_widget = False
+
         # 统一绑定滚轮事件 - 根据当前页面分发到对应的 Canvas
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
         # macOS/Linux 触控板可能生成 Button-4/5 事件
@@ -705,6 +708,10 @@ class BossFilterGUI:
         req_scroll.pack(side="right", fill="y")
         self.requirement_text.config(yscrollcommand=req_scroll.set)
 
+        # Text 控件 Enter/Leave 绑定，防止页面滚动干扰 Text 自身滚动
+        self.requirement_text.bind('<Enter>', lambda e: setattr(self, '_over_text_widget', True))
+        self.requirement_text.bind('<Leave>', lambda e: setattr(self, '_over_text_widget', False))
+
         self.bind_text_context_menu(self.requirement_text)
 
         # 解析按钮
@@ -978,6 +985,9 @@ class BossFilterGUI:
         greet_scroll.pack(side="right", fill="y")
         self.greet_template_text.config(yscrollcommand=greet_scroll.set)
 
+        self.greet_template_text.bind('<Enter>', lambda e: setattr(self, '_over_text_widget', True))
+        self.greet_template_text.bind('<Leave>', lambda e: setattr(self, '_over_text_widget', False))
+
         self.bind_text_context_menu(self.greet_template_text)
 
         # 话术提示
@@ -1246,6 +1256,10 @@ class BossFilterGUI:
                 让 Cocoa 原生滚动处理。对其他视图直接滚动当前页面的 Canvas。
                 """
                 try:
+                    # 鼠标在 Text 控件上时，让 Text 自身处理滚动
+                    if getattr(self, '_over_text_widget', False):
+                        return
+
                     # 检查 view 是否在 NSScrollView 内部
                     # （Text/Treeview/Listbox 的 Cocoa 实现是 NSScrollView）
                     v = view
@@ -1804,6 +1818,9 @@ class BossFilterGUI:
         log_scroll = ttk.Scrollbar(log_container, orient="vertical", command=self.log_text.yview)
         log_scroll.pack(side="right", fill="y")
         self.log_text.config(yscrollcommand=log_scroll.set)
+
+        self.log_text.bind('<Enter>', lambda e: setattr(self, '_over_text_widget', True))
+        self.log_text.bind('<Leave>', lambda e: setattr(self, '_over_text_widget', False))
 
         # 日志工具栏 — 独立于 log_container，避免撑出空白
         log_toolbar = ttk.Frame(log_wrapper, style='TFrame')
