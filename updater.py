@@ -274,13 +274,22 @@ def update_macos_app(zip_path, current_app_path):
         # 生成替换脚本
         # 脚本写入 /tmp/（稳定位置），不放在 temp_dir 内，
         # 避免 sys.exit(0) 退出时 temp_dir 被 OS 清理导致脚本丢失
-        # xattr -cr 清除隔离属性，防止 Gatekeeper 拦截替换后的 .app
+        # ditto 保留所有资源分支和扩展属性（cp -R 可能丢失）
+        # xattr -cr 清除隔离属性，防止 Gatekeeper 拦截
+        # 日志写入 /tmp/boss_update.log 便于诊断
         script = f'''#!/bin/bash
+exec > /tmp/boss_update.log 2>&1
+echo "[$(date)] Starting update"
 sleep 2
+echo "[$(date)] Removing old app"
 rm -rf "{current_app_path}"
-cp -R "{new_app_path}" "{current_app_path}"
+echo "[$(date)] Copying new app with ditto"
+ditto "{new_app_path}" "{current_app_path}"
+echo "[$(date)] Clearing quarantine attributes"
 xattr -cr "{current_app_path}" 2>/dev/null
+echo "[$(date)] Opening app"
 open "{current_app_path}"
+echo "[$(date)] Cleanup"
 rm -rf "{temp_dir}"
 rm -f "$0"
 '''
