@@ -141,7 +141,7 @@ pip install -r requirements.txt
     "salary_min": 12,                // 岗位薪资下限（K，候选人期望最低薪资低于此值会被过滤）
     "salary_max": 15,                // 岗位薪资上限（K）
     "keywords": [                    // 技能关键词（用于评分打分）
-      {"name": "Spring Cloud", "weight": 2},  // weight 1=普通加分，2=重点加分
+      {"name": "Spring Cloud", "weight": 2},  // weight 1=普通，2=双倍权重，3=奖励（3倍权重）
       {"name": "SpringBoot", "weight": 1},
       {"name": "Spring AI", "weight": 2},
       {"name": "MySQL", "weight": 2},
