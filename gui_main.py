@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 from security import save_api_key, get_api_key, delete_api_key
+import updater
 
 # ========== 路径常量 - 解决相对路径问题 ==========
 # PyInstaller --onefile 模式下 __file__ 指向临时解压目录，需特殊处理
@@ -265,6 +266,9 @@ class BossFilterGUI:
         if _NEED_COCOA_SCROLL_HOOK:
             self.root.after(500, self._setup_cocoa_scroll_hook)
 
+        # 启动时自动检查更新（延迟 3 秒，避免启动卡顿）
+        updater.auto_check_on_startup(self.root, delay_ms=3000)
+
     def setup_styles(self):
         """设置自定义样式"""
         style = ttk.Style()
@@ -489,7 +493,7 @@ class BossFilterGUI:
                                   foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
                                   cursor="hand2")
         version_label.pack(anchor="w")
-        version_label.bind("<Button-1>", lambda e: self.show_changelog())
+        version_label.bind("<Button-1>", lambda e: self.show_version_menu(version_label, e))
 
     def create_main_content(self):
         """创建主内容区域"""
@@ -5946,6 +5950,15 @@ class BossFilterGUI:
     def show_about(self):
         """显示关于"""
         messagebox.showinfo("关于", f"BOSS 简历筛选器 v{__version__}\n\n基于 DrissionPage 的自动筛选工具\n智能候选人筛选 • 自动打招呼 • Excel 导出")
+
+    def show_version_menu(self, widget, event):
+        """显示版本菜单（左键点击版本号时弹出）"""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="查看更新日志", command=self.show_changelog)
+        menu.add_command(label="检查更新", command=lambda: updater.check_and_update_gui(self.root, silent=False))
+        menu.add_separator()
+        menu.add_command(label="关于", command=self.show_about)
+        menu.post(event.x_root, event.y_root)
 
     def show_changelog(self):
         """显示更新日志（版本列表 + 详情分栏）"""
