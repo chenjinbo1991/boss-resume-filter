@@ -8,6 +8,7 @@ __version__ = "2.7"
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
 import json
+import sys
 import os
 import re
 import shutil
@@ -102,6 +103,11 @@ UI_CONFIG = {
     'font_size_model_label': 14,     # 模型标签字体大小
 }
 
+# macOS Tk 9.0+ 触控板滚动修复标记：
+# Tk 9.0 的 Cocoa 后端不向 Canvas 派发触控板滚动事件（scrollWheel: 在 NSView 层被消费），
+# 需要通过 ObjC Runtime swizzle 拦截并转发。Windows (Tk 8.6) 不受影响。
+_NEED_COCOA_SCROLL_HOOK = sys.platform == 'darwin' and tk.TkVersion >= 9.0
+
 def _draw_search_icon(S, fill, sw_ratio=0.10):
     """在 S×S 画布上绘制放大镜图标（🔍 风格），返回 RGBA Image"""
     from PIL import Image, ImageDraw
@@ -161,7 +167,7 @@ class BossFilterGUI:
         try:
             from ctypes import windll
             windll.shcore.SetProcessDpiAwareness(2)  # 2 = Per Monitor DPI Aware V2
-        except (OSError, AttributeError):
+        except (ImportError, OSError, AttributeError):
             pass
 
         # 使用 tkinter 内置方法获取 DPI 缩放比例（兼容 PyInstaller 打包）
@@ -207,6 +213,7 @@ class BossFilterGUI:
         self.log_queue = queue.Queue()
         self.progress_queue = queue.Queue()  # 进度条队列
         self.confirm_queue = queue.Queue()  # 岗位切换确认队列
+        self.ui_queue = queue.Queue()  # UI 更新队列（线程安全）
         self.stop_event = threading.Event()  # 停止信号
 
         # 浏览器状态
@@ -216,6 +223,8 @@ class BossFilterGUI:
         self._browser_status_text = ""
         self._browser_status_help_text = ""
         self._selectors_auto_checked = False  # 连接后选择器是否已自动检查
+        self._pending_manual_check = False  # 待处理的手动检测请求
+        self._pending_chrome_restart = False  # 待处理的 Chrome 重启请求
 
         # 右键菜单引用列表（统一销毁）
         self._context_menus = []
@@ -236,6 +245,9 @@ class BossFilterGUI:
         # 启动日志更新
         self.update_log()
 
+        # 启动 UI 更新队列处理（线程安全）
+        self._process_ui_queue()
+
         # 初始加载结果
         self.refresh_results()
 
@@ -244,6 +256,14 @@ class BossFilterGUI:
 
         # 统一绑定滚轮事件 - 根据当前页面分发到对应的 Canvas
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+        # macOS/Linux 触控板可能生成 Button-4/5 事件
+        if sys.platform != 'win32':
+            self.root.bind_all("<Button-4>", self._on_mousewheel)
+            self.root.bind_all("<Button-5>", self._on_mousewheel)
+
+        # macOS Tk 9.0+: Cocoa 层拦截触控板滚动事件并转发给 Tk
+        if _NEED_COCOA_SCROLL_HOOK:
+            self.root.after(500, self._setup_cocoa_scroll_hook)
 
     def setup_styles(self):
         """设置自定义样式"""
@@ -606,32 +626,15 @@ class BossFilterGUI:
                                font=self.font_section, foreground=self.colors['text_primary'])
         title_label.pack(anchor="w")
 
-        # 配置容器 - 使用 Canvas 支持滚动
-        canvas_frame = ttk.Frame(self.config_page, style='Card.TFrame')
-        canvas_frame.pack(fill="both", expand=True)
+        # 配置容器 - 支持垂直滚动（macOS Tk 9.0+ 用 Text，其他用 Canvas）
+        scroll_frame = ttk.Frame(self.config_page, style='Card.TFrame')
+        scroll_frame.pack(fill="both", expand=True)
 
-        self.config_canvas = tk.Canvas(canvas_frame, bg=self.colors['bg_main'], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.config_canvas.yview)
-        scrollable_frame = ttk.Frame(self.config_canvas, style='Card.TFrame')
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.config_canvas.configure(scrollregion=self.config_canvas.bbox("all"))
-        )
-
-        # 约束 scrollable_frame 宽度 = Canvas 可视宽度，防止内容溢出
-        def _on_canvas_configure(event):
-            self.config_canvas.itemconfig(self.config_canvas_window, width=event.width)
-
-        self.config_canvas_window = self.config_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        self.config_canvas.configure(yscrollcommand=scrollbar.set)
-        self.config_canvas.bind("<Configure>", _on_canvas_configure)
-
-        self.config_canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        self.config_canvas, self.config_scrollable_frame = self._create_scroll_container(
+            scroll_frame, self.colors['bg_main'])
 
         # 使用 scrollable_frame 作为实际容器
-        config_container = scrollable_frame
+        config_container = self.config_scrollable_frame
 
         # 岗位选择区域
         select_frame = ttk.Frame(config_container, style='TFrame')
@@ -1002,32 +1005,17 @@ class BossFilterGUI:
         # 底部按钮固定在页面底部，不随 Canvas 滚动
         self.btn_frame.pack(fill="x", side="bottom", pady=(int(10 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
 
+        # 在所有控件创建完毕后绑定滚轮事件
+        self._bind_mousewheel(self.config_canvas, self.config_scrollable_frame)
+
     def create_api_config_page(self):
         """创建 API 配置页面"""
         # 创建带滚动条的页面
         self.api_config_page = ttk.Frame(self.pages_frame, style='TFrame')
 
-        # 创建 Canvas 和滚动条
-        self.api_canvas = tk.Canvas(self.api_config_page, bg=self.colors['bg_main'], highlightthickness=0)
-        self.api_scrollbar = ttk.Scrollbar(self.api_config_page, orient="vertical", command=self.api_canvas.yview)
-        self.api_scrollable_frame = ttk.Frame(self.api_canvas, style='TFrame')
-
-        # 绑定滚动区域
-        self.api_scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.api_canvas.configure(scrollregion=self.api_canvas.bbox("all"))
-        )
-
-        # Canvas 创建窗口
-        self.api_canvas_frame = self.api_canvas.create_window((0, 0), window=self.api_scrollable_frame, anchor="nw")
-        self.api_canvas.configure(yscrollcommand=self.api_scrollbar.set)
-
-        # 绑定 Canvas 大小变化，调整内部框架宽度
-        self.api_canvas.bind("<Configure>", self._on_api_canvas_configure)
-
-        # 打包滚动条和 Canvas
-        self.api_scrollbar.pack(side="right", fill="y")
-        self.api_canvas.pack(side="left", fill="both", expand=True)
+        # 创建可滚动容器（macOS Tk 9.0+ 用 Text，其他用 Canvas）
+        self.api_canvas, self.api_scrollable_frame = self._create_scroll_container(
+            self.api_config_page, self.colors['bg_main'])
 
         # 在可滚动框架中创建内容
         self._create_api_config_content()
@@ -1036,17 +1024,324 @@ class BossFilterGUI:
         """调整可滚动框架宽度以匹配 Canvas"""
         self.api_canvas.itemconfig(self.api_canvas_frame, width=event.width)
 
-    def _on_mousewheel(self, event):
-        """统一处理滚轮事件 - 根据当前页面分发到对应的 Canvas"""
-        # 获取鼠标位置下的控件
-        widget = event.widget
-        # 如果鼠标在 Text 或 Entry 上，让控件自己处理滚动
-        if isinstance(widget, (tk.Text, tk.Entry)):
+    @staticmethod
+    def _delta_to_units(delta):
+        """将鼠标滚轮 delta 转换为滚动单位数。
+
+        Windows 鼠标滚轮每格 delta=±120；macOS 触控板 delta 通常为 ±1。
+        直接除以 120 取整在 macOS 上恒为 0，故按平台分别处理。
+        """
+        if sys.platform == 'darwin':
+            return -1 if delta > 0 else 1
+        return int(-1 * (delta / 120))
+
+    @staticmethod
+    def _create_scroll_container(parent, bg_color):
+        """创建可滚动容器，返回 (canvas, container_frame)。
+
+        所有平台统一使用 Canvas + create_window。
+        macOS Tk 9.0+ 触控板滚动通过 _setup_cocoa_scroll_hook() 在 ObjC 层拦截。
+        """
+        canvas = tk.Canvas(parent, bg=bg_color, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        container = ttk.Frame(canvas)
+
+        container.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas_window = canvas.create_window((0, 0), window=container, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Canvas 宽度变化 → 同步嵌入 Frame 宽度
+        def _on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        return canvas, container
+
+    @staticmethod
+    def _bind_mousewheel(canvas, parent_frame):
+        """在 Canvas 及其所有子控件上绑定滚轮事件（instance binding 优先级最高）。
+
+        macOS 上 ttk 控件的 class binding 会先消费 <MouseWheel> 事件，
+        bind_all 优先级最低无法拦截。必须在每个控件上用 bind() 绑定 instance handler，
+        返回 'break' 阻止后续 class binding。
+
+        macOS 触控板可能生成 <MouseWheel>（delta=±1）或 <Button-4>/<Button-5> 事件，
+        需要同时绑定三种事件类型。
+        """
+        def _on_wheel(event):
+            """处理滚轮/触控板滚动事件"""
+            # 优先使用 delta（MouseWheel 事件）
+            if hasattr(event, 'delta') and event.delta != 0:
+                units = BossFilterGUI._delta_to_units(event.delta)
+            # 回退到 num（Button-4/5 事件，macOS X11 兼容模式）
+            elif hasattr(event, 'num'):
+                if event.num == 4:
+                    units = -1
+                elif event.num == 5:
+                    units = 1
+                else:
+                    return
+            else:
+                return
+            if units != 0:
+                canvas.yview_scroll(units, "units")
+            return 'break'
+
+        # 跳过自带滚轮的控件类型
+        _skip_types = (ttk.Spinbox, ttk.Combobox, ttk.Scrollbar, tk.Text, tk.Entry, tk.Listbox)
+
+        def _bind_recursive(widget):
+            if isinstance(widget, _skip_types):
+                return
+            # Treeview 也跳过
+            if hasattr(widget, 'identify_region'):
+                return
+            widget.bind("<MouseWheel>", _on_wheel)
+            # macOS/Linux 触控板可能生成 Button-4/5 事件
+            if sys.platform != 'win32':
+                widget.bind("<Button-4>", _on_wheel)
+                widget.bind("<Button-5>", _on_wheel)
+            for child in widget.winfo_children():
+                _bind_recursive(child)
+
+        # Canvas 自身
+        canvas.bind("<MouseWheel>", _on_wheel)
+        if sys.platform != 'win32':
+            canvas.bind("<Button-4>", _on_wheel)
+            canvas.bind("<Button-5>", _on_wheel)
+        # 递归绑定所有子控件
+        _bind_recursive(parent_frame)
+
+    # ── macOS Tk 9.0+ Cocoa 触控板滚动 hook ──────────────────────────────
+    # Tk 9.0 的 Cocoa 后端在 NSView.scrollWheel: 中消费触控板事件，
+    # 不向 Canvas 等非原生滚动控件生成 Tk MouseWheel 事件。
+    # 通过 ObjC Runtime swizzle 拦截 scrollWheel:，直接滚动当前页面的 Canvas。
+
+    _cocoa_hook_installed = False
+    _cocoa_refs = {}            # 防止 ObjC 对象/回调被 GC
+
+    def _setup_cocoa_scroll_hook(self):
+        """设置 Cocoa scrollWheel: 拦截（仅 macOS Tk 9.0+）。
+
+        通过 ObjC Runtime swizzle NSView.scrollWheel:，
+        对非 NSScrollView 子视图直接调用当前页面 Canvas 的 yview_scroll。
+        如果设置失败（ctypes/libobjc 不可用），静默降级（触控板不可滚动）。
+        """
+        if BossFilterGUI._cocoa_hook_installed:
             return
-        if self.current_page_index == 1 and hasattr(self, 'config_canvas'):
-            self.config_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        elif self.current_page_index == 4 and hasattr(self, 'api_canvas'):
-            self.api_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        try:
+            import ctypes
+            import ctypes.util
+
+            objc_path = ctypes.util.find_library('objc')
+            if not objc_path:
+                return
+            objc = ctypes.cdll.LoadLibrary(objc_path)
+
+            # ── ObjC Runtime 函数签名 ──
+            objc.sel_registerName.restype = ctypes.c_void_p
+            objc.sel_registerName.argtypes = [ctypes.c_char_p]
+            objc.objc_getClass.restype = ctypes.c_void_p
+            objc.objc_getClass.argtypes = [ctypes.c_char_p]
+            objc.class_getInstanceMethod.restype = ctypes.c_void_p
+            objc.class_getInstanceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            objc.method_getImplementation.restype = ctypes.c_void_p
+            objc.method_getImplementation.argtypes = [ctypes.c_void_p]
+            objc.method_setImplementation.restype = ctypes.c_void_p
+            objc.method_setImplementation.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+            # objc_msgSend 用于方法调用
+            objc.objc_msgSend.restype = ctypes.c_void_p
+            objc.objc_msgSend.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+
+            sel_scroll = objc.sel_registerName(b'scrollWheel:')
+            sel_shared = objc.sel_registerName(b'sharedApplication')
+            sel_keywin = objc.sel_registerName(b'keyWindow')
+            sel_cv = objc.sel_registerName(b'contentView')
+            sel_super = objc.sel_registerName(b'superview')
+            sel_is_kind = objc.sel_registerName(b'isKindOfClass:')
+            sel_delta_y = objc.sel_registerName(b'scrollingDeltaY')
+
+            cls_nsapp = objc.objc_getClass(b'NSApplication')
+            cls_nsview = objc.objc_getClass(b'NSView')
+            cls_nssv = objc.objc_getClass(b'NSScrollView')
+
+            if not all([cls_nsapp, cls_nsview, cls_nssv]):
+                return
+
+            # ── 获取 NSApplication.sharedApplication.keyWindow.contentView ──
+            app = objc.objc_msgSend(cls_nsapp, sel_shared, None)
+            if not app:
+                self.root.after(1000, self._setup_cocoa_scroll_hook)
+                return
+            kw = objc.objc_msgSend(app, sel_keywin, None)
+            if not kw:
+                self.root.after(1000, self._setup_cocoa_scroll_hook)
+                return
+            content_view = objc.objc_msgSend(kw, sel_cv, None)
+            if not content_view:
+                self.root.after(1000, self._setup_cocoa_scroll_hook)
+                return
+
+            # ── scrollingDeltaY 调用函数（处理 x86_64 fpret vs ARM64） ──
+            try:
+                objc.objc_msgSend_fpret.restype = ctypes.c_double
+                objc.objc_msgSend_fpret.argtypes = [
+                    ctypes.c_void_p, ctypes.c_void_p]
+                _msg_send_double = objc.objc_msgSend_fpret
+            except AttributeError:
+                # ARM64 没有 fpret，创建独立的 CFUNCTYPE 避免修改 objc_msgSend 签名
+                _msg_send_double = ctypes.CFUNCTYPE(
+                    ctypes.c_double, ctypes.c_void_p, ctypes.c_void_p
+                )(objc.objc_msgSend)
+
+            # ── isKindOfClass: 调用函数（3 个 c_void_p 参数） ──
+            _msg_send_is_kind = ctypes.CFUNCTYPE(
+                ctypes.c_bool,
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+            )(objc.objc_msgSend)
+
+            # ── 保存引用，防止被 GC ──
+            BossFilterGUI._cocoa_refs['app'] = app
+            BossFilterGUI._cocoa_refs['content_view'] = content_view
+
+            # ── scrollWheel: 替代实现 ──
+            # C 签名: void scrollWheel:(id self, SEL _cmd, id event)
+            SCROLL_CB = ctypes.CFUNCTYPE(
+                None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+
+            def _cocoa_scroll_impl(view, _cmd, event):
+                """swizzle 后的 scrollWheel: 实现。
+
+                对 NSScrollView 内部视图（Text/Treeview/Listbox）跳过，
+                让 Cocoa 原生滚动处理。对其他视图直接滚动当前页面的 Canvas。
+                """
+                try:
+                    # 检查 view 是否在 NSScrollView 内部
+                    # （Text/Treeview/Listbox 的 Cocoa 实现是 NSScrollView）
+                    v = view
+                    for _ in range(10):  # 最多向上 10 层
+                        sv = objc.objc_msgSend(v, sel_super, None)
+                        if not sv:
+                            break
+                        if _msg_send_is_kind(sv, sel_is_kind, cls_nssv):
+                            return  # 在 NSScrollView 内部 → 让原生滚动处理
+                        v = sv
+
+                    # 获取 deltaY（浮点数）
+                    delta_y = _msg_send_double(event, sel_delta_y)
+                    if delta_y == 0:
+                        return
+
+                    # Cocoa deltaY > 0 = 向上 → units = -1（内容上移）
+                    # Cocoa deltaY < 0 = 向下 → units = 1（内容下移）
+                    units = -1 if delta_y > 0 else 1
+
+                    # 直接滚动当前页面的 Canvas
+                    page_canvas = {
+                        1: getattr(self, 'config_canvas', None),
+                        2: getattr(self, 'run_canvas', None),
+                        5: getattr(self, 'api_canvas', None),
+                    }.get(getattr(self, 'current_page_index', -1))
+
+                    if page_canvas:
+                        page_canvas.yview_scroll(units, "units")
+
+                except Exception:
+                    pass
+
+            # ── Swizzle NSView.scrollWheel: ──
+            scroll_callback = SCROLL_CB(_cocoa_scroll_impl)
+            cb_ptr = ctypes.cast(scroll_callback, ctypes.c_void_p).value
+
+            method = objc.class_getInstanceMethod(cls_nsview, sel_scroll)
+            if not method:
+                return
+
+            # 保存原始实现（用于 fallback）并替换
+            orig_impl = objc.method_getImplementation(method)
+            objc.method_setImplementation(method, cb_ptr)
+
+            # 防止回调和 ObjC 引用被 GC
+            BossFilterGUI._cocoa_refs['callback'] = scroll_callback
+            BossFilterGUI._cocoa_refs['orig_impl'] = orig_impl
+
+            BossFilterGUI._cocoa_hook_installed = True
+            print("[Cocoa] scrollWheel: hook installed (Tk 9.0 touchpad fix)")
+
+        except Exception as e:
+            print(f"[Cocoa] scrollWheel: hook failed: {e}")
+
+    def _on_mousewheel(self, event):
+        """统一处理滚轮事件 - 根据当前页面分发到对应的 Canvas
+
+        使用 bind_all（最高优先级），从事件源控件向上遍历找到所属 Canvas，
+        避免 macOS 上 ttk class binding 消费事件的问题。
+        """
+        widget = event.widget
+
+        # 让自带滚轮处理的控件自行处理
+        if isinstance(widget, (tk.Text, tk.Entry, tk.Listbox, ttk.Scrollbar, ttk.Combobox, ttk.Spinbox)):
+            return
+        # Treeview 也需要跳过（自带垂直滚动）
+        if hasattr(widget, 'identify_region'):
+            return
+
+        # 计算滚动量
+        if hasattr(event, 'delta') and event.delta != 0:
+            units = self._delta_to_units(event.delta)
+        elif hasattr(event, 'num'):
+            if event.num == 4:
+                units = -1
+            elif event.num == 5:
+                units = 1
+            else:
+                return
+        else:
+            return
+
+        if units == 0:
+            return
+
+        # 检查事件源是否直接就是目标 Canvas
+        target_canvas = None
+        if hasattr(self, 'config_canvas') and widget is self.config_canvas:
+            target_canvas = self.config_canvas
+        elif hasattr(self, 'api_canvas') and widget is self.api_canvas:
+            target_canvas = self.api_canvas
+        elif hasattr(self, 'run_canvas') and widget is self.run_canvas:
+            target_canvas = self.run_canvas
+        else:
+            # 从事件源控件向上遍历，找到所属的可滚动 Canvas
+            try:
+                w = widget
+                while w is not None:
+                    parent = w.master
+                    if parent is self.config_canvas:
+                        target_canvas = self.config_canvas
+                        break
+                    elif parent is self.api_canvas:
+                        target_canvas = self.api_canvas
+                        break
+                    elif parent is self.run_canvas:
+                        target_canvas = self.run_canvas
+                        break
+                    w = parent
+            except Exception:
+                return
+
+        if target_canvas is None:
+            return
+
+        target_canvas.yview_scroll(units, "units")
+        return 'break'
 
     def _on_rounds_mousewheel(self, event):
         """滚动轮次 Spinbox 的鼠标滚轮处理"""
@@ -1077,13 +1372,14 @@ class BossFilterGUI:
         api_subtitle_label.pack(anchor="w", pady=(int(10 * self.dpi_scale * self.zoom_factor), 0))
 
         # 新电脑提示：检测到已保存配置但 API Key 丢失
+        self.reconfig_card = None
         if hasattr(self, 'api_config') and self.api_config.get("needs_reconfigure"):
-            reconfig_card = ttk.LabelFrame(api_container, text="  ⚠️  提示  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-            reconfig_card.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
-            ttk.Label(reconfig_card, text="检测到已保存的模型配置，但 API Key 未配置（可能是新电脑）",
+            self.reconfig_card = ttk.LabelFrame(api_container, text="  ⚠️  提示  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
+            self.reconfig_card.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+            ttk.Label(self.reconfig_card, text="检测到已保存的模型配置，但 API Key 未配置（可能是新电脑）",
                      font=self.font_label, foreground=self.colors['warning'],
                      background=self.colors['bg_card']).pack(anchor="w")
-            ttk.Label(reconfig_card, text="请在下方重新输入 API Key 并点击「保存并添加到列表」",
+            ttk.Label(self.reconfig_card, text="请在下方重新输入 API Key 并点击「保存并添加到列表」",
                      font=self.font_label, foreground=self.colors['text_secondary'],
                      background=self.colors['bg_card']).pack(anchor="w", pady=(5, 0))
 
@@ -1295,32 +1591,21 @@ class BossFilterGUI:
         # 绑定双击事件 - 双击切换模型
         self.model_list_tree.bind("<Double-1>", lambda e: self.use_selected_model())
 
+        # 在所有控件创建完毕后绑定滚轮事件
+        self._bind_mousewheel(self.api_canvas, self.api_scrollable_frame)
+
     def create_run_page(self):
         """创建运行控制页面 - 增强版：浏览器状态检测 + 进度条 + 滚动支持"""
         self.run_page = ttk.Frame(self.pages_frame, style='TFrame')
 
-        # Canvas 包装以支持垂直滚动
-        canvas_frame = ttk.Frame(self.run_page, style='TFrame')
-        canvas_frame.pack(fill="both", expand=True)
+        # 可滚动容器（macOS Tk 9.0+ 用 Text，其他用 Canvas）
+        scroll_frame = ttk.Frame(self.run_page, style='TFrame')
+        scroll_frame.pack(fill="both", expand=True)
 
-        self.run_canvas = tk.Canvas(canvas_frame, bg=self.colors['bg_main'], highlightthickness=0)
-        run_scroll = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.run_canvas.yview)
-        scrollable_frame = ttk.Frame(self.run_canvas, style='TFrame')
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.run_canvas.configure(scrollregion=self.run_canvas.bbox("all"))
-        )
+        self.run_canvas, scrollable_frame = self._create_scroll_container(
+            scroll_frame, self.colors['bg_main'])
 
         self.run_scrollable_frame = scrollable_frame  # 保存引用，供 mousewheel 绑定使用
-        self._run_canvas_window_id = self.run_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        self.run_canvas.configure(yscrollcommand=run_scroll.set)
-
-        self.run_canvas.pack(side="left", fill="both", expand=True)
-        run_scroll.pack(side="right", fill="y")
-
-        # Canvas 内部窗口宽度跟随 canvas 宽度
-        self._bind_run_canvas_width(canvas_frame)
 
         # 所有内容放入 scrollable_frame
         content = scrollable_frame
@@ -1509,7 +1794,8 @@ class BossFilterGUI:
 
         # 启动进度条更新循环
         self.update_progress()
-        # 鼠标滚轮 — 在所有内容创建完毕后绑定，递归覆盖整个可滚动区域
+
+        # 在所有控件创建完毕后绑定滚轮事件
         self._bind_mousewheel(self.run_canvas, self.run_scrollable_frame)
 
     def create_result_page(self):
@@ -1904,6 +2190,8 @@ class BossFilterGUI:
             self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
         self.current_page_index = 1
         self.update_nav_highlight()
+        # 重新绑定滚轮事件（覆盖动态创建的控件）
+        self._bind_mousewheel(self.config_canvas, self.config_scrollable_frame)
 
     def show_page_run(self):
         """显示运行页面"""
@@ -1921,6 +2209,8 @@ class BossFilterGUI:
             self.job_combo['values'] = jobs
         except Exception:
             pass
+        # 重新绑定滚轮事件（覆盖动态创建的控件）
+        self._bind_mousewheel(self.run_canvas, self.run_scrollable_frame)
 
     def show_page_result(self):
         """显示结果页面"""
@@ -1965,6 +2255,8 @@ class BossFilterGUI:
             self.api_canvas.yview_moveto(0.0)
         # 显示时加载配置到 UI
         self.load_api_config_to_ui()
+        # 重新绑定滚轮事件（覆盖动态创建的控件）
+        self._bind_mousewheel(self.api_canvas, self.api_scrollable_frame)
 
     def hide_all_pages(self):
         """隐藏所有页面"""
@@ -2883,6 +3175,12 @@ class BossFilterGUI:
             self.update_current_model_display()
 
             self.api_status_label.config(text="✓ 配置已保存并添加到列表", foreground=self.colors['success'])
+
+            # 保存成功后清除"API Key 未配置"警示卡片
+            if getattr(self, 'reconfig_card', None) and self.reconfig_card.winfo_exists():
+                self.reconfig_card.destroy()
+                self.reconfig_card = None
+
             messagebox.showinfo("成功", f"API 配置已保存\n模型 {provider}/{model_name} 已添加到已保存模型列表\n\nAPI Key 已按服务商加密存储（同一服务商的模型共享）")
         except Exception as e:
             self.api_status_label.config(text=f"✗ 保存失败：{e}", foreground=self.colors['danger'])
@@ -3973,8 +4271,24 @@ class BossFilterGUI:
         self.log_queue.put(message)
 
     def run_on_ui(self, callback):
-        """在 Tk 主线程执行 UI 更新，避免后台线程直接操作控件。"""
-        self.root.after(0, callback)
+        """在 Tk 主线程执行 UI 更新（线程安全）。
+
+        后台线程不能直接调用 root.after()，改用队列 + 主线程轮询。
+        """
+        self.ui_queue.put(callback)
+
+    def _process_ui_queue(self):
+        """处理 UI 更新队列（由主线程定时器调用）"""
+        try:
+            while True:
+                callback = self.ui_queue.get_nowait()
+                try:
+                    callback()
+                except Exception as e:
+                    print(f"[UI 队列] 回调执行失败: {e}")
+        except queue.Empty:
+            pass
+        self.root.after(50, self._process_ui_queue)
 
     def set_browser_ui(self, indicator_text=None, indicator_color=None, help_text=None, start_state=None):
         """线程安全更新浏览器状态控件，并缓存状态文本供后台线程判断。"""
@@ -4033,8 +4347,8 @@ class BossFilterGUI:
 
             if warn_count + fail_count > 0:
                 self.append_log("⚠️ 选择器异常可能导致扫描功能不正常，可编辑 selectors.json 修复")
-                # 主线程弹窗提醒
-                self.root.after(0, lambda: messagebox.showwarning(
+                # 主线程弹窗提醒（线程安全）
+                self.run_on_ui(lambda: messagebox.showwarning(
                     "选择器异常",
                     f"选择器检查发现 {fail_count} 个失败、{warn_count} 个警告，"
                     f"可能导致扫描功能不正常。\n\n"
@@ -4044,6 +4358,34 @@ class BossFilterGUI:
                 self.append_log("✅ 所有选择器工作正常")
         except Exception as e:
             self.append_log(f"选择器自动检查失败：{e}")
+
+    def _reactivate_and_navigate(self, page, target_url):
+        """激活已有的 Chrome 进程并导航到目标页面。
+
+        当 Chrome 关闭窗口但未退出时（macOS 常见），调试端口仍然可用，
+        通过 AppleScript 激活 Chrome 窗口后直接导航，避免杀进程重启。
+
+        Returns:
+            导航成功返回新的/更新后的 page 对象，失败返回 None。
+        """
+        # macOS: 用 AppleScript 激活 Chrome 窗口
+        if sys.platform == 'darwin':
+            try:
+                subprocess.run([
+                    'osascript', '-e',
+                    'tell application "Google Chrome" to activate'
+                ], capture_output=True, timeout=3)
+                time.sleep(1)
+            except Exception:
+                pass
+
+        # 尝试 page.get() 直接导航（比 new_tab 更可靠）
+        try:
+            page.get(target_url)
+            time.sleep(2)
+            return page
+        except Exception:
+            return None
 
     def check_browser_connection(self, silent=False):
         """检测浏览器连接状态
@@ -4068,7 +4410,22 @@ class BossFilterGUI:
                 if self.browser_page is not None:
                     try:
                         prev_help = self._browser_status_help_text
-                        current_url = self.browser_page.url
+                        # page.url 可能阻塞（Chrome 已关闭时 WebSocket 断开），加超时保护
+                        page_url_result = [None]
+                        page_url_exception = [None]
+                        def _get_existing_url():
+                            try:
+                                page_url_result[0] = self.browser_page.url
+                            except Exception as e:
+                                page_url_exception[0] = e
+                        url_t = threading.Thread(target=_get_existing_url, daemon=True)
+                        url_t.start()
+                        url_t.join(timeout=1)
+                        if url_t.is_alive():
+                            raise TimeoutError("browser_page.url 访问超时")
+                        if page_url_exception[0] is not None:
+                            raise page_url_exception[0]
+                        current_url = page_url_result[0] or ''
                         if 'zhipin.com/web/chat/recommend' in current_url.lower():
                             self.browser_connected = True
                             self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
@@ -4120,11 +4477,17 @@ class BossFilterGUI:
                         self.append_log("正在启动 Chrome 浏览器...")
 
                         # 找到 Chrome 可执行文件
-                        candidates = [
-                            os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
-                            r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-                            r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-                        ]
+                        if sys.platform == 'darwin':
+                            candidates = [
+                                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                                os.path.expanduser('~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+                            ]
+                        else:
+                            candidates = [
+                                os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
+                                r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                                r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+                            ]
                         chrome_path = next((p for p in candidates if os.path.exists(p)), None)
                         if not chrome_path:
                             self.set_browser_ui(help_text="未找到 Chrome 浏览器，请安装后重试")
@@ -4196,50 +4559,50 @@ class BossFilterGUI:
                             from DrissionPage import ChromiumPage, ChromiumOptions
                             co = ChromiumOptions()
                             co.set_address(f'127.0.0.1:{debug_port}')
-                            page = ChromiumPage(co)
-                            current_url = page.url
+
+                            # 整个连接+导航放入线程超时保护，防止 Chrome 被杀后 DrissionPage 阻塞
+                            startup_result = [None]
+                            startup_exception = [None]
+
+                            def _connect_and_navigate():
+                                try:
+                                    p = ChromiumPage(co)
+                                    u = p.url
+                                    if 'zhipin.com/web/chat/recommend' not in u.lower():
+                                        p.get('https://www.zhipin.com/web/chat/recommend')
+                                        time.sleep(2)
+                                        u = p.url
+                                    startup_result[0] = (p, u)
+                                except Exception as e:
+                                    startup_exception[0] = e
+
+                            st = threading.Thread(target=_connect_and_navigate, daemon=True)
+                            st.start()
+                            st.join(timeout=6)
+                            if st.is_alive():
+                                raise TimeoutError("Chrome 连接超时")
+                            if startup_exception[0] is not None:
+                                raise startup_exception[0]
+
+                            page, current_url = startup_result[0]
                             if 'zhipin.com/web/chat/recommend' in current_url.lower():
                                 self.browser_connected = True
                                 self.browser_page = page
                                 self.browser_address = page.address
                                 self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                                 self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
-                            elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
-                                self.browser_connected = True
-                                self.browser_page = page
-                                self.browser_address = page.address
-                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
-                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
-                                page.get('https://www.zhipin.com/web/chat/recommend')
-                                time.sleep(2)
-                                current_url = page.url
-                                if 'zhipin.com/web/chat/recommend' in current_url.lower():
-                                    self.browser_connected = True
-                                    self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
-                                    self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
-                                else:
-                                    self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
-                                    self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                             else:
                                 self.browser_connected = True
                                 self.browser_page = page
                                 self.browser_address = page.address
-                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
-                                self.append_log("⚠️ 浏览器已连接，正在导航到 BOSS 直聘推荐牛人页面...")
-                                page.get('https://www.zhipin.com/web/chat/recommend')
-                                time.sleep(2)
-                                current_url = page.url
-                                if 'zhipin.com/web/chat/recommend' in current_url.lower():
-                                    self.browser_connected = True
-                                    self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
-                                    self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
-                                else:
-                                    self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
-                                    self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
+                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
+                                self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                         except Exception as e:
-                            self.set_browser_ui("🔴 未连接", self.colors['danger'], "Chrome 连接失败，请重试")
-                            self.append_log(f"❌ Chrome 连接失败：{e}")
+                            self.browser_connected = False
+                            self.browser_page = None
                             self._selectors_auto_checked = False
+                            self.set_browser_ui("🔴 未连接", self.colors['danger'], "未检测到 Chrome 浏览器", "disabled")
+                            self.append_log(f"❌ 未检测到 Chrome 浏览器：{e}")
                         return
                     else:
                         self.set_browser_ui(help_text="未检测到 Chrome，请确保浏览器已启动")
@@ -4247,11 +4610,75 @@ class BossFilterGUI:
                             self.append_log("❌ 未检测到 Chrome 调试端口")
                     return
 
-                from DrissionPage import ChromiumPage
+                from DrissionPage import ChromiumPage, ChromiumOptions
 
                 try:
-                    page = ChromiumPage(addr)
-                    current_url = page.url
+                    # 将整个 ChromiumPage 构造 + page.url 放入线程超时保护
+                    # ChromiumPage() 构造函数和 page.url 都可能在 Chrome 已死时阻塞
+                    co = ChromiumOptions()
+                    co.set_address(addr)
+
+                    page_result = [None]
+                    url_result = [None]
+                    connect_exception = [None]
+
+                    def _connect_and_get_url():
+                        try:
+                            p = ChromiumPage(co)
+                            page_result[0] = p
+                            url_result[0] = p.url
+                        except Exception as e:
+                            connect_exception[0] = e
+
+                    conn_thread = threading.Thread(target=_connect_and_get_url, daemon=True)
+                    conn_thread.start()
+                    conn_thread.join(timeout=3)
+                    if conn_thread.is_alive():
+                        raise TimeoutError("ChromiumPage 连接超时")
+                    if connect_exception[0] is not None:
+                        raise connect_exception[0]
+
+                    page = page_result[0]
+                    current_url = url_result[0]
+                    if not current_url:
+                        current_url = ''
+
+                    # Chrome 进程还在但窗口已关闭时，page.url 可能是 about:blank
+                    # 直接在现有进程里导航到 BOSS 直聘，不杀进程不重启
+                    target_url = 'https://www.zhipin.com/web/chat/recommend'
+                    if current_url in ('about:blank', ''):
+                        if not silent:
+                            self.append_log("⚠️ Chrome 进程存在但无有效页面，正在激活并导航...")
+                            nav_page = self._reactivate_and_navigate(page, target_url)
+                            if nav_page is not None:
+                                self.browser_connected = True
+                                self.browser_page = nav_page
+                                self.browser_address = page.address
+                                try:
+                                    nav_url = nav_page.url or ''
+                                except Exception:
+                                    nav_url = ''
+                                if 'zhipin.com/web/chat/recommend' in nav_url.lower():
+                                    self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
+                                    self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
+                                else:
+                                    self.set_browser_ui("🟡 需导航", self.colors['warning'], "已激活 Chrome，正在加载页面...", "disabled")
+                                    self.append_log("⚠️ 已激活 Chrome，请等待页面加载完成")
+                            else:
+                                self.browser_connected = False
+                                self.browser_page = None
+                                self.set_browser_ui("🟡 需导航", self.colors['warning'], "请手动打开 Chrome 窗口", "disabled")
+                                self.append_log("⚠️ 无法激活 Chrome 页面，请手动打开 Chrome 窗口后点击重试")
+                        else:
+                            # 自动轮询：不尝试导航，避免 page.get() 挂起
+                            self.browser_connected = False
+                            self.browser_page = None
+                            prev_state = self._browser_status_text
+                            self.set_browser_ui("🟡 需导航", self.colors['warning'], "Chrome 进程存在但无有效页面", "disabled")
+                            if prev_state != "🟡 需导航":
+                                self.append_log("⚠️ Chrome 进程存在但无有效页面，请点击按钮激活")
+                        # 处理完毕，不再往下走 URL 检查
+                        return
 
                     if 'zhipin.com/web/chat/recommend' in current_url.lower():
                         prev_connected = self.browser_connected
@@ -4281,10 +4708,57 @@ class BossFilterGUI:
                 except Exception as e:
                     prev_state = self._browser_status_text
                     self.browser_connected = False
-                    self._selectors_auto_checked = False  # 连接失败，下次重连重新检查选择器
-                    self.set_browser_ui("🔴 未连接", self.colors['danger'], "未检测到 Chrome 浏览器，请确保浏览器已启动", "disabled")
+                    self.browser_page = None  # 清理失效的 page 对象
+                    self._selectors_auto_checked = False
+                    self.set_browser_ui("🔴 未连接", self.colors['danger'], "未检测到 Chrome 浏览器", "disabled")
                     if not silent or prev_state != "🔴 未连接":
-                        self.append_log("❌ 未检测到 Chrome 浏览器，请确保浏览器已启动")
+                        self.append_log(f"❌ 未检测到 Chrome 浏览器：{e}")
+
+                    # 手动点击时，尝试杀掉彻底挂掉的调试 Chrome 进程并重启
+                    if not silent:
+                        self.append_log("⚠️ 正在尝试清理残留的调试 Chrome 进程...")
+                        killed = False
+                        try:
+                            port_num = int(port)
+                            if sys.platform == 'darwin' or sys.platform.startswith('linux'):
+                                # 找到包含 remote-debugging-port=PORT 的 Chrome 进程 PID
+                                result = subprocess.run(
+                                    ['pgrep', '-f', f'remote-debugging-port={port_num}'],
+                                    capture_output=True, text=True, timeout=3
+                                )
+                                pids = result.stdout.strip().split('\n')
+                                for pid in pids:
+                                    if pid.isdigit():
+                                        try:
+                                            os.kill(int(pid), 15)  # SIGTERM
+                                            killed = True
+                                        except ProcessLookupError:
+                                            pass
+                            elif sys.platform == 'win32':
+                                # Windows: 用 wmic 找到包含调试端口的 Chrome 进程
+                                result = subprocess.run(
+                                    ['wmic', 'process', 'where',
+                                     f"CommandLine like '%remote-debugging-port={port_num}%'",
+                                     'get', 'ProcessId'],
+                                    capture_output=True, text=True, timeout=5
+                                )
+                                for line in result.stdout.strip().split('\n'):
+                                    pid = line.strip()
+                                    if pid.isdigit():
+                                        subprocess.run(['taskkill', '/PID', pid],
+                                                     timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                        killed = True
+                        except Exception as kill_err:
+                            self.append_log(f"清理残留进程失败：{kill_err}")
+
+                        if killed:
+                            time.sleep(1)
+                            self.append_log("✅ 已清理残留的调试 Chrome 进程，2秒后自动重新启动...")
+                            self._pending_chrome_restart = True
+                        else:
+                            self.append_log("⚠️ Chrome 调试端口被占用但无法清理，请手动关闭所有 Chrome 窗口后重试")
+                            self.set_browser_ui("🔴 未连接", self.colors['danger'],
+                                              "请关闭所有 Chrome 窗口后点击重试", "disabled")
 
             except ImportError:
                 self.set_browser_ui("🔴 错误", self.colors['danger'], "未安装 DrissionPage，请运行：pip install DrissionPage")
@@ -4292,12 +4766,13 @@ class BossFilterGUI:
             finally:
                 # 连接成功后自动检查选择器（仅首次）
                 if self.browser_connected and self.browser_page and not self._selectors_auto_checked:
-                    self._auto_check_selectors()
+                    try:
+                        self._auto_check_selectors()
+                    except Exception:
+                        pass  # 选择器检查失败不影响主流程
                 self._browser_check_running = False
-                # 如果有被阻塞的手动检测请求，立即重新触发
-                if getattr(self, '_pending_manual_check', False):
-                    self._pending_manual_check = False
-                    self.root.after(100, lambda: self.check_browser_connection(silent=False))
+                # 注意：不在此处调用 root.after()（后台线程不安全）
+                # _pending_manual_check 标志保留为 True，由主线程的 auto-poll 拾取
 
         thread = threading.Thread(target=check)
         thread.daemon = True
@@ -4309,7 +4784,16 @@ class BossFilterGUI:
             return  # 已在运行
 
         def poll():
-            self.check_browser_connection(silent=True)
+            # 如果有被阻塞的手动检测请求，在主线程中安全触发
+            if getattr(self, '_pending_manual_check', False):
+                self._pending_manual_check = False
+                self.check_browser_connection(silent=False)
+            # 如果有待处理的 Chrome 重启请求
+            elif getattr(self, '_pending_chrome_restart', False):
+                self._pending_chrome_restart = False
+                self.check_browser_connection(silent=False)
+            else:
+                self.check_browser_connection(silent=True)
             self._browser_auto_check_id = self.root.after(2000, poll)
 
         self._browser_auto_check_id = self.root.after(500, poll)  # 首次 0.5s 后检测，之后每 2s
@@ -4366,28 +4850,6 @@ class BossFilterGUI:
         def on_resize(event):
             self.run_canvas.itemconfig(window_id, width=event.width)
         canvas_frame.bind("<Configure>", on_resize)
-
-    @staticmethod
-    def _bind_mousewheel(canvas, parent_frame):
-        """绑定鼠标滚轮 — Canvas 及所有非交互控件的子控件上均可滚动"""
-
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        # Canvas 自身
-        canvas.bind("<MouseWheel>", _on_mousewheel)
-
-        # 递归绑定到所有子控件，跳过自身处理滚轮的控件
-        _skip_types = (ttk.Spinbox, ttk.Combobox, ttk.Scrollbar)
-
-        def _bind_recursive(widget):
-            if isinstance(widget, _skip_types):
-                return
-            widget.bind("<MouseWheel>", _on_mousewheel)
-            for child in widget.winfo_children():
-                _bind_recursive(child)
-
-        _bind_recursive(parent_frame)
 
     @staticmethod
     def _parse_salary_exp(summary):
