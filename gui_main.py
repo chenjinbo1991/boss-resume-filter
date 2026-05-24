@@ -3998,7 +3998,7 @@ class BossFilterGUI:
     def _insert_requirement_template(self):
         """插入招聘需求模板到输入框（模板文本从 job_config.json 读取）"""
         try:
-            with open("job_config.json", "r", encoding="utf-8") as f:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 config = json.load(f)
             template = config.get("requirement_template", "")
         except Exception:

@@ -6,8 +6,10 @@ import time
 import json
 import re
 import random
+import sys
 import threading
 from datetime import datetime
+from pathlib import Path
 from DrissionPage import ChromiumPage
 import os
 from filtering import (
@@ -26,6 +28,23 @@ from storage import (
     load_candidates_all,
     save_candidates_all,
 )
+
+
+# ========== 路径常量 ==========
+def _get_base_dir():
+    if getattr(sys, 'frozen', False):
+        exe_dir = Path(sys.executable).parent.resolve()
+        if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
+            return exe_dir.parent.parent.parent
+        return exe_dir
+    return Path(__file__).parent.resolve()
+
+
+BASE_DIR = _get_base_dir()
+SELECTORS_PATH = BASE_DIR / "selectors.json"
+CONFIG_PATH = BASE_DIR / "job_config.json"
+CANDIDATES_PATH = BASE_DIR / "candidates_all.json"
+CANDIDATES_XLSX_PATH = BASE_DIR / "candidates_all.xlsx"
 
 
 class StopRequested(Exception):
@@ -62,7 +81,7 @@ def load_selectors():
     if _SELECTORS_CACHE is not None:
         return _SELECTORS_CACHE
     try:
-        with open("selectors.json", "r", encoding="utf-8") as f:
+        with open(SELECTORS_PATH, "r", encoding="utf-8") as f:
             _SELECTORS_CACHE = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"⚠️  加载 selectors.json 失败：{e}，使用内置默认值")
@@ -82,12 +101,11 @@ def load_job_config():
         - job_requirements: 各岗位的配置（不包含 default）
         - default_rule: 默认过滤规则
     """
-    config_file = "job_config.json"
     default_rule = None
 
-    if os.path.exists(config_file):
+    if os.path.exists(CONFIG_PATH):
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
                 config = json.load(f)
 
                 # 支持新旧两种格式
@@ -1541,8 +1559,8 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）
-    if args.clear and os.path.exists("candidates_all.json"):
-        os.remove("candidates_all.json")
+    if args.clear and os.path.exists(CANDIDATES_PATH):
+        os.remove(CANDIDATES_PATH)
         print("已清空 candidates_all.json")
 
     # 补打招呼模式：直接处理，不需要打开浏览器扫描
@@ -1630,8 +1648,8 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                     print(f"\n\n检测到中断，保存当前进度...")
                     save_candidates_all(candidates_all)
                     # 生成 Excel 文件
-                    if export_to_excel(candidates_all, "candidates_all.xlsx"):
-                        print(f"[SAVE] Excel 文件：candidates_all.xlsx")
+                    if export_to_excel(candidates_all, CANDIDATES_XLSX_PATH):
+                        print(f"[SAVE] Excel 文件：{CANDIDATES_XLSX_PATH.name}")
                     print(f"已保存 {success_count} 个成功打招呼的候选人状态")
                     raise
 
@@ -1732,27 +1750,27 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
         # 最后生成 Excel 文件
         existing_all = load_candidates_all()
-        excel_file = "candidates_all.xlsx"
+        excel_file = CANDIDATES_XLSX_PATH
         if export_to_excel(existing_all, excel_file):
-            print(f"[SAVE] Excel 文件：{excel_file}")
+            print(f"[SAVE] Excel 文件：{excel_file.name}")
         else:
             print("[WARN] Excel 导出失败")
 
     except StopRequested:
         print(f"\n\n⏹ 用户停止，保存当前进度...")
         existing_all = load_candidates_all()
-        excel_file = "candidates_all.xlsx"
+        excel_file = CANDIDATES_XLSX_PATH
         if export_to_excel(existing_all, excel_file):
-            print(f"[SAVE] Excel 文件：{excel_file}")
+            print(f"[SAVE] Excel 文件：{excel_file.name}")
         print(f"已保存 {len(existing_all)} 个候选人的状态")
 
     except KeyboardInterrupt:
         print(f"\n\n检测到中断，保存当前进度...")
         # 生成 Excel 文件
         existing_all = load_candidates_all()
-        excel_file = "candidates_all.xlsx"
+        excel_file = CANDIDATES_XLSX_PATH
         if export_to_excel(existing_all, excel_file):
-            print(f"[SAVE] Excel 文件：{excel_file}")
+            print(f"[SAVE] Excel 文件：{excel_file.name}")
         print(f"已保存 {len(existing_all)} 个候选人的状态")
         raise
 
