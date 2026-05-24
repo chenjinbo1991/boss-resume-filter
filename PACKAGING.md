@@ -11,20 +11,22 @@
 
 `build.py` 自动检测当前平台，无需额外参数。
 
-### 自动发布（GitHub Actions）
+### 自动补齐（GitHub Actions）
 
-推送 tag 后，GitHub Actions 自动检查 Release 已有产物，只构建缺失的平台产物：
+在任一平台本地发布后，CI 自动补齐另一平台的产物：
 
 ```bash
-# 本地操作（Mac 或 Windows 均可）
-python build.py --release --version 2.9   # 打包 → 打 tag → 推送
-# GitHub Actions 自动补齐缺失平台的产物
+# Mac 本地发布
+python build.py --release --version 2.9   # 打包 macOS → 打 tag → 推送 → CI 自动构建 EXE
+
+# Windows 本地发布
+python build.py --release --version 2.9   # 打包 Windows → 打 tag → 推送 → CI 自动构建 DMG+ZIP
 ```
 
-- 本地已上传 macOS 产物（DMG+ZIP） → CI 只触发 Windows 构建
-- 本地已上传 Windows 产物（EXE） → CI 只触发 macOS 构建
-- 都没上传 → 两边并行构建
-- 都已有 → 跳过构建
+CI 检测 Release 已有产物，只构建缺失的部分：
+- 已有 EXE → CI 只构建 macOS（DMG+ZIP）
+- 已有 DMG+ZIP → CI 只构建 Windows（EXE）
+- 都没有 → CI 两边并行构建
 
 Release 页面最终包含：
 - `BOSS_ResumeFilter.exe` — Windows 用户
@@ -33,7 +35,7 @@ Release 页面最终包含：
 
 配置文件：`.github/workflows/release.yml`
 
-**CI 优化说明：**
+**CI 说明：**
 - macOS 使用 `macos-13`（Intel）runner，确保生成的 .app 兼容 Intel + Apple Silicon Mac
 - 虚拟环境（`.venv-ci`）按 `requirements.txt` hash 缓存，依赖不变时跳过安装
 - 支持 `workflow_dispatch` 手动触发

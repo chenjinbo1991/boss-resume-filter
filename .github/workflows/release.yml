@@ -23,16 +23,13 @@ jobs:
           TAG="${{ github.ref_name }}"
           needs='[]'
 
-          # 获取 Release 资产列表（Release 不存在时为空）
           assets=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
                    --jq '.assets[].name' 2>/dev/null || true)
 
-          # Windows: 检查 EXE 是否已存在
           if ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.exe$'; then
             needs=$(echo "$needs" | jq -c '. + [{"os":"windows-latest","platform":"windows"}]')
           fi
 
-          # macOS: 检查 ZIP 是否已存在
           if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$'; then
             needs=$(echo "$needs" | jq -c '. + [{"os":"macos-13","platform":"macos"}]')
           fi
