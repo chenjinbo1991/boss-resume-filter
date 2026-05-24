@@ -209,7 +209,7 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块
-├── gui_main.py            # 图形界面主程序（v2.8.3）
+├── gui_main.py            # 图形界面主程序（v2.8.4）
 ├── updater.py             # 自动更新模块（GitHub Release 检查、下载替换）
 ├── icons.py               # 图标绘制模块（Pillow 矢量图标）
 ├── doc_parser.py          # 文档解析器（简历解析）
