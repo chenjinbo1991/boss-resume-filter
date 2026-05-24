@@ -4,6 +4,23 @@ on:
   push:
     tags:
       - 'v*'
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - 'job_config.json'
+      - 'api_config.json'
+      - 'selectors.json'
+      - 'CHANGELOG.md'
+      - '.github/workflows/release.yml'
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '!CHANGELOG.md'
+      - 'gui.bat'
+      - 'install.bat'
+      - 'tests/**'
+      - '.github/**'
+      - '!.github/workflows/release.yml'
 
 permissions:
   contents: write
