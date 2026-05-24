@@ -275,3 +275,6 @@ Windows EXE 直接用 `sys.executable.parent` 即可。`gui_main.py` 和 `update
 
 ### CHANGELOG 分类校验
 `build.py` 的 `_check_changelog()` 原本要求三个分类（新增功能 / 体验优化 / 问题修复）都有内容，但补丁版本通常只有"问题修复"。改为：至少有一个分类，且存在的分类按规范顺序排列（新增功能 → 体验优化 → 问题修复）。
+
+### DMG 安装后配置文件缺失
+DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.json`/`api_config.json` 不在 DMG 中（虽然通过 `--add-data` 嵌入了 `sys._MEIPASS`）。用户安装后 .app 旁边没有配置文件，导致首次启动岗位配置为空。解决方案：`_get_base_dir()` 首次启动时检测配置文件是否存在，不存在则从 `sys._MEIPASS` 复制到可写位置。
