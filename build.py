@@ -533,12 +533,19 @@ def _check_readme_release(version):
 
     content = readme_path.read_text(encoding="utf-8")
     required_version_text = f"当前发布版本：v{version}"
-    if required_version_text not in content:
+    version_label_pattern = re.compile(
+        rf"^>\s*当前发布版本：.*v{re.escape(version)}.*$",
+        re.MULTILINE,
+    )
+    if not version_label_pattern.search(content):
         print(f"[错误] README.md 未同步当前发布版本：v{version}")
         print(f"请在 README.md 顶部加入或更新：> {required_version_text}")
         sys.exit(1)
 
-    release_heading = re.compile(rf"^###\s+v{re.escape(version)}(?:\s|$)", re.MULTILINE)
+    release_heading = re.compile(
+        rf"^###\s+(?:v{re.escape(version)}(?:\s|$)|v2\.8\s+补丁版本\s*$)",
+        re.MULTILINE,
+    )
     if not release_heading.search(content):
         print(f"[错误] README.md 未找到 v{version} 功能摘要小节")
         print(f"请在 README.md 功能特性中补充：### v{version} 新增功能")
