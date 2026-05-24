@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.8.6"
+__version__ = "2.8.7"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -1321,15 +1321,14 @@ class BossFilterGUI:
             print(f"[Cocoa] scrollWheel: hook failed: {e}")
 
     def _setup_dock_handler(self):
-        """macOS Dock 图标点击恢复窗口。
+        """macOS Dock 图标点击恢复窗口 - 轮询方案。
 
-        macOS 点击 Dock 图标时发送 "reopen application" Apple Event，
-        NSApplication 通过 _handleReopenAppleEvent: 处理。
-        直接 swizzle 这个方法，拦截 Dock 点击并恢复窗口。
-        这是比 delegate.applicationShouldHandleReopen: 更底层的入口，
-        不受 Tk delegate 实现的影响。
+        由于 delegate swizzle 和私有方法都不可靠，改用轮询检测：
+        - 每 500ms 检查一次应用状态
+        - 如果 NSApp.isActive 为 true 且窗口被最小化，自动恢复窗口
+        - 这种情况通常发生在用户点击 Dock 图标时
 
-        延迟到启动后 3 秒执行，确保 NSApplication 已初始化。
+        延迟到启动后 1 秒执行，确保窗口已创建。
         """
         try:
             import ctypes
@@ -1339,62 +1338,70 @@ class BossFilterGUI:
             if not objc_path:
                 print("[Dock] objc library not found")
                 return
+
             objc = ctypes.cdll.LoadLibrary(objc_path)
 
-            # ── ObjC Runtime 函数签名 ──
+            # ObjC Runtime 函数签名
             objc.sel_registerName.restype = ctypes.c_void_p
             objc.sel_registerName.argtypes = [ctypes.c_char_p]
             objc.objc_getClass.restype = ctypes.c_void_p
             objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            objc.class_getInstanceMethod.restype = ctypes.c_void_p
-            objc.class_getInstanceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-            objc.method_getImplementation.restype = ctypes.c_void_p
-            objc.method_getImplementation.argtypes = [ctypes.c_void_p]
-            objc.method_setImplementation.restype = ctypes.c_void_p
-            objc.method_setImplementation.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            objc.objc_msgSend.restype = ctypes.c_void_p
+            objc.objc_msgSend.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
 
+            # 获取 NSApplication.sharedApplication
             cls_nsapp = objc.objc_getClass(b'NSApplication')
             if not cls_nsapp:
                 print("[Dock] NSApplication class not found")
                 return
 
-            # ── Swizzle NSApplication._handleReopenAppleEvent: ──
-            # 签名: void _handleReopenAppleEvent:(id)event
-            sel_reopen_ae = objc.sel_registerName(b'_handleReopenAppleEvent:')
-
-            # 回调签名: void (id self, SEL _cmd, id event)
-            REOPEN_CB = ctypes.CFUNCTYPE(
-                None,
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
-
-            def _on_reopen_apple_event(app_self, _cmd, event):
-                """Dock 图标点击时调用。"""
-                print("[Dock] _handleReopenAppleEvent: triggered")
-                try:
-                    self.root.after(0, lambda: (
-                        self.root.deiconify(),
-                        self.root.lift(),
-                        self.root.focus_force(),
-                    ))
-                except Exception as e:
-                    print(f"[Dock] reopen callback error: {e}")
-                # 不调用原始实现，我们自己处理窗口恢复
-
-            reopen_callback = REOPEN_CB(_on_reopen_apple_event)
-            cb_ptr = ctypes.cast(reopen_callback, ctypes.c_void_p).value
-
-            method = objc.class_getInstanceMethod(cls_nsapp, sel_reopen_ae)
-            if method:
-                orig_impl = objc.method_getImplementation(method)
-                objc.method_setImplementation(method, cb_ptr)
-                BossFilterGUI._cocoa_refs['reopen_ae_orig'] = orig_impl
-                print("[Dock] swizzled NSApplication._handleReopenAppleEvent:")
-            else:
-                print("[Dock] _handleReopenAppleEvent: method not found")
+            sel_shared = objc.sel_registerName(b'sharedApplication')
+            nsapp = objc.objc_msgSend(cls_nsapp, sel_shared, None)
+            if not nsapp:
+                print("[Dock] sharedApplication failed")
                 return
 
-            BossFilterGUI._cocoa_refs['reopen_ae_callback'] = reopen_callback
-            print("[Dock] handler installed")
+            sel_isActive = objc.sel_registerName(b'isActive')
+
+            # 获取主窗口
+            sel_mainWindow = objc.sel_registerName(b'mainWindow')
+            ns_window = objc.objc_msgSend(nsapp, sel_mainWindow, None)
+            if not ns_window:
+                print("[Dock] mainWindow not found")
+                return
+
+            sel_isMiniaturized = objc.sel_registerName(b'isMiniaturized')
+            sel_deminiaturize = objc.sel_registerName(b'deminiaturize:')
+            sel_makeKeyAndOrderFront = objc.sel_registerName(b'makeKeyAndOrderFront:')
+
+            print("[Dock] Polling handler installed")
+
+            def poll_dock_click():
+                """每 500ms 检查一次窗口状态"""
+                try:
+                    # 检查应用是否活跃
+                    is_active = objc.objc_msgSend(nsapp, sel_isActive, None)
+
+                    # 检查窗口是否被最小化
+                    is_mini = objc.objc_msgSend(ns_window, sel_isMiniaturized, None)
+
+                    # 如果应用活跃但窗口被最小化，说明用户点击了 Dock 图标
+                    if is_active and is_mini:
+                        print("[Dock] Detected dock click, restoring window")
+                        # 恢复窗口
+                        objc.objc_msgSend(ns_window, sel_deminiaturize, nsapp)
+                        # 将窗口提到前台并获得焦点
+                        objc.objc_msgSend(ns_window, sel_makeKeyAndOrderFront, nsapp)
+
+                except Exception as e:
+                    print(f"[Dock] Polling error: {e}")
+
+                # 继续轮询
+                self.root.after(500, poll_dock_click)
+
+            # 启动轮询
+            poll_dock_click()
 
         except Exception as e:
             print(f"[Dock] handler setup failed: {e}")
