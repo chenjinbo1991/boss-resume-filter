@@ -157,38 +157,71 @@ def update_windows(new_exe_path, current_exe_path):
     生成 update.bat 脚本，然后启动脚本并退出当前程序
 
     流程：
-    1. 等待当前进程退出（2秒）
+    1. 等待当前进程退出
     2. 重命名当前 EXE 为 .old
     3. 复制新 EXE 到原位置
-    4. 删除临时文件
-    5. 启动新 EXE
-    6. 删除 .old 文件和脚本自身
+    4. 启动新 EXE
+    5. 清理临时文件、旧 EXE 和脚本自身
     """
     try:
         # 生成 update.bat
         bat_path = Path(current_exe_path).parent / "update.bat"
+        temp_dir = Path(new_exe_path).parent
+        current_pid = os.getpid()
 
         bat_content = f"""@echo off
+setlocal
+set "OLD_EXE={current_exe_path}"
+set "NEW_EXE={new_exe_path}"
+set "TEMP_DIR={temp_dir}"
+set "OLD_PID={current_pid}"
+set "LOG_FILE=%TEMP%\\boss_resume_filter_update.log"
+
+echo [%date% %time%] Starting update > "%LOG_FILE%"
 echo 正在更新 BOSS 简历筛选器...
-timeout /t 2 /nobreak >nul
+
+echo 等待旧程序退出...
+echo [%date% %time%] Waiting for old process %OLD_PID% >> "%LOG_FILE%"
+for /l %%i in (1,1,60) do (
+    tasklist /FI "PID eq %OLD_PID%" 2>NUL | find "%OLD_PID%" >NUL
+    if errorlevel 1 goto process_exited
+    timeout /t 1 /nobreak >nul
+)
+
+echo [%date% %time%] Old process did not exit in time >> "%LOG_FILE%"
+exit /b 1
+
+:process_exited
+echo [%date% %time%] Old process exited >> "%LOG_FILE%"
 
 echo 备份旧版本...
-if exist "{current_exe_path}.old" del "{current_exe_path}.old"
-rename "{current_exe_path}" "{Path(current_exe_path).name}.old"
+if exist "%OLD_EXE%.old" del /f /q "%OLD_EXE%.old"
+move /y "%OLD_EXE%" "%OLD_EXE%.old" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo [%date% %time%] Failed to backup old executable >> "%LOG_FILE%"
+    exit /b 1
+)
 
 echo 安装新版本...
-copy /y "{new_exe_path}" "{current_exe_path}"
+copy /y "%NEW_EXE%" "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo [%date% %time%] Failed to copy new executable, rolling back >> "%LOG_FILE%"
+    if exist "%OLD_EXE%.old" move /y "%OLD_EXE%.old" "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
+    exit /b 1
+)
 
 echo 清理临时文件...
-del "{new_exe_path}"
+del /f /q "%NEW_EXE%" >> "%LOG_FILE%" 2>&1
 
 echo 启动新版本...
-start "" "{current_exe_path}"
+start "" "%OLD_EXE%"
 
 echo 删除旧版本...
-del "{current_exe_path}.old"
+del /f /q "%OLD_EXE%.old" >> "%LOG_FILE%" 2>&1
+if exist "%TEMP_DIR%" rmdir /s /q "%TEMP_DIR%" >> "%LOG_FILE%" 2>&1
 
 echo 更新完成！
+echo [%date% %time%] Update completed >> "%LOG_FILE%"
 del "%~f0"
 """
 
@@ -197,8 +230,8 @@ del "%~f0"
 
         # 启动 update.bat（最小化窗口）
         subprocess.Popen(
-            [bat_path],
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            ["cmd", "/c", str(bat_path)],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             close_fds=True
         )
 
@@ -479,8 +512,7 @@ def show_update_dialog(root, result):
                     return
 
                 # 下载 EXE
-                temp_dir = Path(get_base_dir()) / "temp_update"
-                temp_dir.mkdir(exist_ok=True)
+                temp_dir = Path(tempfile.mkdtemp(prefix="boss_update_download_"))
                 temp_exe = temp_dir / "BOSS_ResumeFilter_new.exe"
 
                 def progress_callback(downloaded, total):
@@ -509,12 +541,9 @@ def show_update_dialog(root, result):
 
                 if success:
                     root.after(0, lambda: (
-                        messagebox.showinfo(
-                            "更新成功",
-                            "新版本已下载，程序即将重启",
-                            parent=dialog
-                        ),
-                        sys.exit(0)
+                        progress_label.config(text="更新成功，程序即将重启"),
+                        dialog.destroy(),
+                        exit_for_update(root)
                     ))
                 else:
                     root.after(0, lambda: messagebox.showerror(
