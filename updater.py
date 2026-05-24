@@ -28,19 +28,10 @@ def get_base_dir():
 def get_current_version():
     """获取当前版本号"""
     try:
-        # 从 gui_main.py 读取 __version__
-        if getattr(sys, 'frozen', False):
-            # 打包后从 sys._MEIPASS 读取
-            base = Path(sys._MEIPASS)
-        else:
-            base = Path(__file__).parent
-
-        gui_main_path = base / "gui_main.py"
-        with open(gui_main_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith('__version__'):
-                    # 提取版本号，如 __version__ = "2.7"
-                    return line.split('=')[1].strip().strip('"\'')
+        # gui_main 是程序入口，updater 被调用时已在 sys.modules 中
+        # 直接读取模块属性，无需解析源文件，兼容所有打包模式
+        import gui_main
+        return gui_main.__version__
     except Exception as e:
         print(f"[更新] 获取当前版本失败: {e}")
     return "0.0.0"

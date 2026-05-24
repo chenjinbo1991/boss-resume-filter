@@ -207,7 +207,7 @@ def _create_mac_zip():
 
 
 def _create_mac_dmg():
-    """创建 macOS DMG 安装包（用于用户手动安装）"""
+    """创建 macOS DMG 安装包（标准拖拽安装体验：左边 .app，右边 Applications 快捷方式）"""
     app_dir = DIST_DIR / "BOSS_ResumeFilter.app"
     dmg_path = DIST_DIR / "BOSS_ResumeFilter.dmg"
 
@@ -217,15 +217,32 @@ def _create_mac_dmg():
 
     print(f"\n>>> 创建 DMG 安装包...")
 
-    # 使用 macOS 自带的 hdiutil 创建 DMG
+    # 创建临时暂存目录：放入 .app + Applications 快捷方式
+    staging_dir = DIST_DIR / "_dmg_staging"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir()
+
+    # 复制 .app 到暂存目录（符号链接在 DMG 中可能失效，用实际复制）
+    staging_app = staging_dir / "BOSS_ResumeFilter.app"
+    shutil.copytree(str(app_dir), str(staging_app), symlinks=True)
+
+    # 创建 Applications 快捷方式（指向 /Applications）
+    apps_link = staging_dir / "Applications"
+    os.symlink("/Applications", str(apps_link))
+
+    # 创建 DMG
     result = subprocess.run([
         'hdiutil', 'create',
         '-volname', 'BOSS简历筛选器',
-        '-srcfolder', str(app_dir),
-        '-ov',  # 覆盖已存在的文件
-        '-format', 'UDZO',  # 压缩格式
+        '-srcfolder', str(staging_dir),
+        '-ov',
+        '-format', 'UDZO',
         str(dmg_path)
     ], capture_output=True, text=True)
+
+    # 清理暂存目录
+    shutil.rmtree(staging_dir, ignore_errors=True)
 
     if result.returncode != 0:
         print(f"[错误] DMG 创建失败：{result.stderr}")
