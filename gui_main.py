@@ -1357,21 +1357,31 @@ class BossFilterGUI:
             if not nsapp:
                 return
 
-            _was_iconic = [False]  # 用列表包裹以支持闭包修改
+            # 状态追踪：
+            # _was_inactive[0] = True 表示 app 之前是 inactive 状态
+            # 只有当 app 从 inactive → active 且窗口还在 iconic 时，
+            # 才认为是用户点击了 Dock 图标
+            _was_inactive = [False]
 
             def _poll():
-                """每 500ms 检查一次：app 是否活跃但窗口还在 iconic 状态"""
+                """每 500ms 检查一次：app 是否从 inactive 变回 active 但窗口还在 iconic"""
                 try:
                     is_active = bool(objc.objc_msgSend(nsapp, sel_active, None))
-                    is_iconic = self.root.state() == 'iconic'
 
-                    if is_active and is_iconic and not _was_iconic[0]:
-                        # 用户点击了 Dock 图标（app 变活跃但窗口还在 iconic）
-                        self.root.deiconify()
-                        self.root.lift()
-                        self.root.focus_force()
-
-                    _was_iconic[0] = is_iconic
+                    if not is_active:
+                        # app 不在前台，标记为 inactive
+                        _was_inactive[0] = True
+                    else:
+                        # app 是活跃的
+                        if _was_inactive[0]:
+                            # app 刚从 inactive 变为 active
+                            is_iconic = self.root.state() == 'iconic'
+                            if is_iconic:
+                                # 用户点击了 Dock 图标（app 变活跃但窗口还在 iconic）
+                                self.root.deiconify()
+                                self.root.lift()
+                                self.root.focus_force()
+                            _was_inactive[0] = False
                 except Exception:
                     pass
 
