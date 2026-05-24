@@ -3299,11 +3299,23 @@ class BossFilterGUI:
             self.api_base_url_var.set(config["base_url"])
             self.api_model_var.set(config["model"])
 
+    _model_dialog = None  # 防止重复打开模型列表对话框
+
     def fetch_model_list(self):
         """获取服务商的模型列表 - 使用当前输入的 API Key 和 Base URL"""
         import requests
         import certifi
         import json
+
+        # 防止重复打开对话框
+        if self._model_dialog is not None:
+            try:
+                self._model_dialog.lift()
+                self._model_dialog.focus_force()
+            except tk.TclError:
+                self._model_dialog = None
+            else:
+                return
 
         api_key = self.api_key_var.get().strip()
         base_url = self.api_base_url_var.get().strip()
@@ -3317,9 +3329,8 @@ class BossFilterGUI:
             messagebox.showwarning("警告", "请先输入 Base URL")
             return
 
-        # 显示加载中状态
+        # 显示加载中状态（不使用 update()，避免重入）
         self.api_status_label.config(text="⏳ 正在获取模型列表...", foreground=self.colors['warning'])
-        self.root.update()
 
         def fetch_thread():
             try:
@@ -3377,7 +3388,24 @@ class BossFilterGUI:
 
                         # 创建选择对话框
                         def show_model_dialog():
+                            # 防止重复打开（可能在 after 调度期间再次触发）
+                            if self._model_dialog is not None:
+                                try:
+                                    self._model_dialog.lift()
+                                    return
+                                except tk.TclError:
+                                    self._model_dialog = None
+
+                            def _close_dialog():
+                                """统一关闭对话框，清理引用"""
+                                self._model_dialog = None
+                                try:
+                                    dialog.destroy()
+                                except tk.TclError:
+                                    pass
+
                             dialog = tk.Toplevel(self.root)
+                            self._model_dialog = dialog
                             dialog.title("选择模型")
                             dialog.transient(self.root)
                             dialog.withdraw()  # 先隐藏，布局完成后再定位显示
@@ -3387,6 +3415,9 @@ class BossFilterGUI:
                             dialog_height = 680
                             dialog.resizable(True, True)
                             dialog.minsize(500, 400)
+
+                            # 关闭按钮（红叉）也走统一清理
+                            dialog.protocol("WM_DELETE_WINDOW", _close_dialog)
 
                             # 标题
                             title_text = f"{provider} - 可用模型 ({len(models)} 个)"
@@ -3421,17 +3452,6 @@ class BossFilterGUI:
                             btn_frame = ttk.Frame(dialog)
                             btn_frame.pack(fill="x", padx=25, pady=(10, 15))
 
-                            # 阻止鼠标滚轮事件传播到父窗口
-                            def _on_dialog_mousewheel(event):
-                                if event.delta > 0:
-                                    listbox.yview_scroll(-1, "units")
-                                else:
-                                    listbox.yview_scroll(1, "units")
-                                return "break"
-
-                            dialog.bind("<MouseWheel>", _on_dialog_mousewheel)
-                            listbox.bind("<MouseWheel>", _on_dialog_mousewheel)
-
                             def on_select(event=None):
                                 selection = listbox.curselection()
                                 if selection:
@@ -3441,14 +3461,14 @@ class BossFilterGUI:
                                         text=f"✓ 已选择 {selected_model}",
                                         foreground=self.colors['success']
                                     )
-                                    dialog.destroy()
+                                    _close_dialog()
 
                             def on_double_click(event):
                                 selection = listbox.curselection()
                                 if selection:
                                     selected_model = listbox.get(selection[0])
                                     self.api_model_var.set(selected_model)
-                                    dialog.destroy()
+                                    _close_dialog()
                                     self.api_status_label.config(text="⏳ 正在测试连接...", foreground=self.colors['warning'])
                                     self.root.after(300, self.test_api_connection)
 
@@ -3456,7 +3476,7 @@ class BossFilterGUI:
                             btn_inner = ttk.Frame(btn_frame)
                             btn_inner.pack()
                             ttk.Button(btn_inner, text="确定", command=on_select, width=12).pack(side="left", padx=8)
-                            ttk.Button(btn_inner, text="取消", command=dialog.destroy, width=12).pack(side="left", padx=8)
+                            ttk.Button(btn_inner, text="取消", command=_close_dialog, width=12).pack(side="left", padx=8)
 
                             # 绑定回车键和双击
                             dialog.bind("<Return>", lambda e: on_select())
@@ -3478,7 +3498,9 @@ class BossFilterGUI:
                             dialog.geometry(f"{dialog_width}x{dialog_height}+{max(0, x)}+{max(0, y)}")
                             dialog.deiconify()
                             dialog.grab_set()
-                            dialog.wait_window()
+                            # 不使用 wait_window()：它会创建嵌套事件循环，
+                            # 在 macOS 上与 Cocoa scroll hook 和浏览器轮询冲突导致崩溃。
+                            # grab_set() 已提供模态行为，无需阻塞。
 
                         self.root.after(0, lambda: self.api_status_label.config(
                             text=f"✓ 找到 {len(models)} 个模型",
@@ -3596,7 +3618,6 @@ class BossFilterGUI:
 
         # 显示测试中状态
         self.api_status_label.config(text="⏳ 正在验证...", foreground=self.colors['warning'])
-        self.root.update()
 
         def test_thread():
             import socket
