@@ -11,6 +11,23 @@
 
 `build.py` 自动检测当前平台，无需额外参数。
 
+### 自动双平台发布（GitHub Actions）
+
+推送 tag 后，GitHub Actions 自动在 Windows + macOS runner 上并行打包，产物上传到同一个 Release：
+
+```bash
+# 本地操作（Mac 或 Windows 均可）
+python build.py --release --version 2.9   # 打包 → 打 tag → 推送
+# GitHub Actions 自动补齐另一个平台的产物
+```
+
+Release 页面最终包含：
+- `BOSS_ResumeFilter.exe` — Windows 用户
+- `BOSS_ResumeFilter.dmg` — macOS 用户（手动安装）
+- `BOSS_ResumeFilter_mac.zip` — macOS 自动更新用
+
+配置文件：`.github/workflows/release.yml`
+
 ---
 
 ## 方案一：Windows 打包（单文件 EXE）

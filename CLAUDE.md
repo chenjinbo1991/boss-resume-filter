@@ -65,6 +65,7 @@ boss-resume-filter/
 - `build.py` 自动检测平台（`IS_MAC`/`IS_WIN`），无需额外参数
 - macOS 打包使用 `--onedir --windowed` 生成 .app，Windows 使用 `--onefile --noconsole` 生成 EXE
 - macOS DMG 使用系统自带 `hdiutil` 生成，ZIP 使用 Python `zipfile` 模块
+- **GitHub Actions 双平台自动打包**：推送 tag 后自动在 Windows + macOS runner 上并行打包，产物自动上传到同一个 Release（`.github/workflows/release.yml`）；CI 模式使用 `--ci --release` 跳过虚拟环境切换和 git 操作
 - job_config.json、api_config.json、selectors.json 和 CHANGELOG.md 内嵌到 EXE 中，dist 中额外放置 job_config.json 和 selectors.json 供用户编辑
 - CHANGELOG.md 通过 `--add-data` 打包进 EXE，`gui_main.py:show_changelog()` 优先从 `sys._MEIPASS` 读取（PyInstaller 解压目录），回退到 `BASE_DIR`
 - 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、稳定单元回归和导入烟测

@@ -5,6 +5,7 @@ BOSS 简历筛选器 - 打包脚本
   python build.py                      仅打包 + 版本核对
   python build.py --release            打包 → 提交 → 打 tag → 推送 → GitHub Release
   python build.py --release --version 2.5  自动更新 __version__ + 一键发布
+  python build.py --ci --release       CI 模式：跳过 venv/git，由 GitHub Actions 调用
 """
 import argparse
 import ast
@@ -673,6 +674,8 @@ def main():
                         help="打包后自动提交→打tag→推送→GitHub Release上传")
     parser.add_argument("--version", type=str, default=None, metavar="X.Y",
                         help="自动更新 gui_main.py 中的 __version__")
+    parser.add_argument("--ci", action="store_true",
+                        help="CI 模式：跳过虚拟环境切换和 git 操作，用于 GitHub Actions")
     args = parser.parse_args()
 
     version_changed = False
@@ -686,7 +689,8 @@ def main():
         else:
             print(f"  [跳过] __version__ 已经是 \"{args.version}\"\n")
 
-    run_in_venv()
+    if not args.ci:
+        run_in_venv()
 
     if args.check:
         _preflight_checks(require_clean=True)
@@ -707,8 +711,11 @@ def main():
     if tk_args:
         print("  [OK] 将 Anaconda Tcl/Tk 运行库加入 PyInstaller")
 
+    # CI 模式使用当前 Python，否则使用虚拟环境
+    python_exe = sys.executable if args.ci else str(VENV_PYTHON)
+
     cmd = [
-        str(VENV_PYTHON), "-m", "PyInstaller",
+        python_exe, "-m", "PyInstaller",
     ]
 
     # macOS: --onedir --windowed (生成 .app bundle)
@@ -769,7 +776,7 @@ def main():
         _check_readme_release(version)
 
     # ---- Release 模式：提交 → 打 tag → 推送 → GitHub Release ----
-    if args.release:
+    if args.release and not args.ci:
         print(f"\n{'='*60}")
         print(f"  Release 模式：v{version}")
         print(f"{'='*60}")
@@ -782,6 +789,12 @@ def main():
         print(f"\n{'='*60}")
         print(f"  v{version} 发布完成！")
         print(f"  {artifact_path} ({size_mb:.1f} MB)")
+        print(f"{'='*60}\n")
+    elif args.release and args.ci:
+        print(f"\n{'='*60}")
+        print(f"  CI 打包完成：v{version}")
+        print(f"  {artifact_path} ({size_mb:.1f} MB)")
+        print(f"  GitHub Actions 将自动上传到 Release")
         print(f"{'='*60}\n")
     else:
         print(f"\n  下一步：python build.py --release  一键完成提交/打tag/推送/Release")
