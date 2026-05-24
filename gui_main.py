@@ -273,14 +273,10 @@ class BossFilterGUI:
         # 注册窗口关闭处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # macOS: 最小化后点击 Dock 图标恢复窗口
-        # Tk 原生支持 tk::mac::Reopen 命令，当用户点击 Dock 图标时调用
+        # macOS: Dock 图标点击 / 最小化后恢复窗口
+        # 延迟 3 秒确保 Tk 的 NSApplicationDelegate 已创建完毕
         if sys.platform == 'darwin':
-            def _on_dock_reopen():
-                self.root.deiconify()
-                self.root.lift()
-                self.root.focus_force()
-            self.root.createcommand('tk::mac::Reopen', _on_dock_reopen)
+            self.root.after(3000, self._setup_dock_handler)
 
         # 标记鼠标是否在 Text 控件上（用于 Cocoa scroll hook 跳过页面滚动）
         self._over_text_widget = False
@@ -1323,6 +1319,85 @@ class BossFilterGUI:
 
         except Exception as e:
             print(f"[Cocoa] scrollWheel: hook failed: {e}")
+
+    def _setup_dock_handler(self):
+        """macOS Dock 图标点击恢复窗口。
+
+        macOS 点击 Dock 图标时发送 "reopen application" Apple Event，
+        NSApplication 通过 _handleReopenAppleEvent: 处理。
+        直接 swizzle 这个方法，拦截 Dock 点击并恢复窗口。
+        这是比 delegate.applicationShouldHandleReopen: 更底层的入口，
+        不受 Tk delegate 实现的影响。
+
+        延迟到启动后 3 秒执行，确保 NSApplication 已初始化。
+        """
+        try:
+            import ctypes
+            import ctypes.util
+
+            objc_path = ctypes.util.find_library('objc')
+            if not objc_path:
+                print("[Dock] objc library not found")
+                return
+            objc = ctypes.cdll.LoadLibrary(objc_path)
+
+            # ── ObjC Runtime 函数签名 ──
+            objc.sel_registerName.restype = ctypes.c_void_p
+            objc.sel_registerName.argtypes = [ctypes.c_char_p]
+            objc.objc_getClass.restype = ctypes.c_void_p
+            objc.objc_getClass.argtypes = [ctypes.c_char_p]
+            objc.class_getInstanceMethod.restype = ctypes.c_void_p
+            objc.class_getInstanceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            objc.method_getImplementation.restype = ctypes.c_void_p
+            objc.method_getImplementation.argtypes = [ctypes.c_void_p]
+            objc.method_setImplementation.restype = ctypes.c_void_p
+            objc.method_setImplementation.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+            cls_nsapp = objc.objc_getClass(b'NSApplication')
+            if not cls_nsapp:
+                print("[Dock] NSApplication class not found")
+                return
+
+            # ── Swizzle NSApplication._handleReopenAppleEvent: ──
+            # 签名: void _handleReopenAppleEvent:(id)event
+            sel_reopen_ae = objc.sel_registerName(b'_handleReopenAppleEvent:')
+
+            # 回调签名: void (id self, SEL _cmd, id event)
+            REOPEN_CB = ctypes.CFUNCTYPE(
+                None,
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+
+            def _on_reopen_apple_event(app_self, _cmd, event):
+                """Dock 图标点击时调用。"""
+                print("[Dock] _handleReopenAppleEvent: triggered")
+                try:
+                    self.root.after(0, lambda: (
+                        self.root.deiconify(),
+                        self.root.lift(),
+                        self.root.focus_force(),
+                    ))
+                except Exception as e:
+                    print(f"[Dock] reopen callback error: {e}")
+                # 不调用原始实现，我们自己处理窗口恢复
+
+            reopen_callback = REOPEN_CB(_on_reopen_apple_event)
+            cb_ptr = ctypes.cast(reopen_callback, ctypes.c_void_p).value
+
+            method = objc.class_getInstanceMethod(cls_nsapp, sel_reopen_ae)
+            if method:
+                orig_impl = objc.method_getImplementation(method)
+                objc.method_setImplementation(method, cb_ptr)
+                BossFilterGUI._cocoa_refs['reopen_ae_orig'] = orig_impl
+                print("[Dock] swizzled NSApplication._handleReopenAppleEvent:")
+            else:
+                print("[Dock] _handleReopenAppleEvent: method not found")
+                return
+
+            BossFilterGUI._cocoa_refs['reopen_ae_callback'] = reopen_callback
+            print("[Dock] handler installed")
+
+        except Exception as e:
+            print(f"[Dock] handler setup failed: {e}")
 
     def _on_mousewheel(self, event):
         """统一处理滚轮事件 - 根据当前页面分发到对应的 Canvas
