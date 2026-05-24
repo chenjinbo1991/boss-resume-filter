@@ -7,9 +7,9 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.8）
+├── gui_main.py           # 图形界面主程序（v2.8.8）
 ├── updater.py            # 自动更新模块（GitHub Release 检查、下载替换、启动时自动检查）
-├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
+├── icons.py              # 图标绘制模块（Pillow 矢量图标，24个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
@@ -257,3 +257,19 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`
+
+## 踩坑警示
+
+### macOS .app 路径解析
+`sys.executable` 在 .app 中指向 `.app/Contents/MacOS/BOSS_ResumeFilter`，不是 .app 的父目录。`job_config.json` 等配置文件在 .app 旁边，需要向上追溯 3 层：
+```python
+if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
+    return exe_dir.parent.parent.parent  # .app 的父目录
+```
+Windows EXE 直接用 `sys.executable.parent` 即可。`gui_main.py` 和 `updater.py` 都有这个逻辑，改一个别忘了另一个。
+
+### Tk 对话框 `wait_window()` 嵌套事件循环崩溃
+`wait_window()` 在 `root.after()` 回调中创建嵌套事件循环，macOS 上与 Cocoa scroll hook（`NSView.scrollWheel:` swizzle）和浏览器轮询（2 秒间隔的 `root.after()`）冲突，导致应用异常崩溃退出。正确做法是用 `grab_set()` 实现模态（不阻塞主事件循环），用 `protocol("WM_DELETE_WINDOW")` + 统一 `_close_dialog()` 清理引用。同理 `self.root.update()` 在主线程中强制处理事件有重入风险，应移除。实现位置：`gui_main.py:fetch_model_list()` → `show_model_dialog()`。
+
+### macOS Dock 图标点击恢复窗口
+`tk::mac::Reopen`（旧命令）在 Tk macOS 上不触发。最终可用方案：通过 `root.createcommand('tk::mac::ReopenApplication', callback)` 注册回调（注意是 `ReopenApplication` 不是 `Reopen`），配合 `deiconify()` + `lift()` + `focus_force()` 恢复窗口。实现位置：`gui_main.py:_setup_macos_reopen_handler()`、`gui_main.py:_restore_main_window()`

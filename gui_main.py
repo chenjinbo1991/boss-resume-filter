@@ -402,19 +402,19 @@ class BossFilterGUI:
         logo_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
         logo_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(30 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
 
-        # 主标题 "BOSS" - 带 clipboard 图标，大字体
-        logo_icon = self.icons.logo('document', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
+        # 主标题 "BOSS" - 带彩色放大镜图标，大字体
+        logo_icon = self.icons.logo('search_color', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
         logo_label = ttk.Label(logo_frame, image=logo_icon, text=" BOSS", compound=tk.LEFT,
-                               font=('Microsoft YaHei UI Semibold', int(32 * self.dpi_scale * self.zoom_factor)),
+                               font=('Microsoft YaHei UI Semibold', int(34 * self.dpi_scale * self.zoom_factor)),
                                foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
         logo_label._icon_ref = logo_icon
         logo_label.pack(anchor="w")
 
-        # 副标题 "简历筛选器" - 调大字体
+        # 副标题 "简历筛选器" - 调大字体，居中
         subtitle_label = ttk.Label(logo_frame, text="简历筛选器",
                                    font=('Microsoft YaHei UI', int(16 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['text_sidebar_subtitle'], background=self.colors['bg_sidebar'])
-        subtitle_label.pack(anchor="w", pady=(int(6 * self.dpi_scale * self.zoom_factor), 0))
+        subtitle_label.pack(anchor="center", pady=(int(6 * self.dpi_scale * self.zoom_factor), 0))
 
         # 分隔线
         sep = ttk.Separator(sidebar, orient='horizontal')
@@ -423,10 +423,10 @@ class BossFilterGUI:
         # 导航项 - 使用 Frame 容器确保文字对齐（图标固定宽度）
         nav_items = [
             ("home", "首页", self.show_page_home),
-            ("gear", "岗位配置", self.show_page_config),
+            ("briefcase", "岗位配置", self.show_page_config),
             ("play", "运行控制", self.show_page_run),
-            ("chart", "筛选结果", self.show_page_result),
-            ("star", "数据统计", self.show_page_stats),
+            ("filter", "筛选结果", self.show_page_result),
+            ("chart", "数据统计", self.show_page_stats),
         ]
 
         self.nav_labels = []
@@ -652,13 +652,13 @@ class BossFilterGUI:
         btn1 = ttk.Button(quick_buttons, image=icon_play, text=" 开始筛选", compound=tk.LEFT, command=self.show_page_run, style='TButton')
         btn1._icon_ref = icon_play
         btn1.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        icon_chart = self.icons.button('chart', self.colors['text_primary'])
-        btn2 = ttk.Button(quick_buttons, image=icon_chart, text=" 查看结果", compound=tk.LEFT, command=self.show_page_result, style='TButton')
-        btn2._icon_ref = icon_chart
+        icon_filter = self.icons.button('filter', self.colors['text_primary'])
+        btn2 = ttk.Button(quick_buttons, image=icon_filter, text=" 查看结果", compound=tk.LEFT, command=self.show_page_result, style='TButton')
+        btn2._icon_ref = icon_filter
         btn2.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        icon_gear = self.icons.button('gear', self.colors['text_primary'])
-        btn3 = ttk.Button(quick_buttons, image=icon_gear, text=" 配置岗位", compound=tk.LEFT, command=self.show_page_config, style='TButton')
-        btn3._icon_ref = icon_gear
+        icon_briefcase = self.icons.button('briefcase', self.colors['text_primary'])
+        btn3 = ttk.Button(quick_buttons, image=icon_briefcase, text=" 配置岗位", compound=tk.LEFT, command=self.show_page_config, style='TButton')
+        btn3._icon_ref = icon_briefcase
         btn3.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
 
     def create_config_page(self):

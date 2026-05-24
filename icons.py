@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageTk
 STROKE_WIDTH = 2.0           # 基础描边宽度（缩放前）
 ICON_SIZE_BUTTON = 20        # 按钮图标基础尺寸（px）
 ICON_SIZE_NAV = 22           # 侧边栏导航图标基础尺寸（px）
-ICON_SIZE_LOGO = 30          # Logo 图标基础尺寸（px）
+ICON_SIZE_LOGO = 40          # Logo 图标基础尺寸（px）
 ICON_SIZE_STAT = 40          # 统计卡片图标基础尺寸（px）
 
 # 24x24 逻辑坐标系中的关键参考点
@@ -167,6 +167,50 @@ def _search(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     handle_start = _s(14.5, S)
     handle_end = _s(21, S)
     d.line([handle_start, handle_start, handle_end, handle_end], fill=fill, width=sw + 1)
+    return img
+
+
+def _search_color(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """彩色放大镜 — BOSS 品牌 logo，高分辨率填充版"""
+    # 2x 超采样后缩放，消除锯齿
+    S2 = size_px * 2
+    img = Image.new('RGBA', (S2, S2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    brand = '#1E88E5'       # 品牌蓝
+    brand_dark = '#0D47A1'  # 深蓝（手柄）
+    lens = '#BBDEFB'        # 浅蓝镜片
+    highlight = '#E3F2FD'   # 高光
+
+    # 镜片中心 & 半径（2x 坐标系）
+    cx, cy = _s(9, S2), _s(9, S2)
+    r_outer = _s(8.5, S2)
+    r_inner = _s(6, S2)
+
+    # 手柄：从镜片右下到右下角，圆头
+    # 手柄起点（45° 方向，在圆环外缘）
+    h_angle = math.radians(45)
+    hx1 = cx + r_outer * math.cos(h_angle)
+    hy1 = cy + r_outer * math.sin(h_angle)
+    hx2 = _s(21, S2)
+    hy2 = _s(21, S2)
+    handle_w = _s(4, S2)
+    d.line([hx1, hy1, hx2, hy2], fill=brand_dark, width=int(handle_w))
+    # 手柄末端圆头
+    r_cap = handle_w / 2
+    d.ellipse([hx2 - r_cap, hy2 - r_cap, hx2 + r_cap, hy2 + r_cap], fill=brand_dark)
+
+    # 镜片：填充浅蓝 + 品牌蓝粗边框
+    d.ellipse([cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer],
+              fill=lens, outline=brand, width=int(_s(3.5, S2)))
+
+    # 高光反射弧（左上角，白色短弧）
+    hi_r = _s(5, S2)
+    d.arc([cx - hi_r, cy - hi_r, cx + hi_r, cy + hi_r],
+          start=200, end=280, fill=highlight, width=int(_s(2.5, S2)))
+
+    # 缩回目标尺寸（抗锯齿）
+    img = img.resize((size_px, size_px), Image.LANCZOS)
     return img
 
 
@@ -408,6 +452,43 @@ def _star(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _briefcase(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """公文包 — 岗位配置/职位"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    # 包体
+    d.rounded_rectangle([_s(2, S), _s(9, S), _s(22, S), _s(21, S)],
+                        radius=_s(1.5, S), outline=fill, width=sw)
+    # 提手
+    d.arc([_s(8, S), _s(3, S), _s(16, S), _s(9, S)],
+          start=180, end=0, fill=fill, width=sw)
+    # 中间横带
+    d.line([_s(2, S), _s(14, S), _s(22, S), _s(14, S)], fill=fill, width=sw)
+    # 锁扣
+    d.rectangle([_s(10, S), _s(12.5, S), _s(14, S), _s(15.5, S)],
+                outline=fill, width=max(1, int(_s(1.2, S))))
+    return img
+
+
+def _filter(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """漏斗 — 筛选结果"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    # 漏斗上部：宽口收窄
+    d.polygon([
+        (_s(2, S), _s(3, S)),    # 左上
+        (_s(22, S), _s(3, S)),   # 右上
+        (_s(14, S), _s(12, S)),  # 右肩
+        (_s(10, S), _s(12, S)),  # 左肩
+    ], outline=fill, width=sw)
+    # 漏斗管：从收窄处向下
+    d.line([_s(10, S), _s(12, S), _s(10, S), _s(21, S)], fill=fill, width=sw)
+    d.line([_s(14, S), _s(12, S), _s(14, S), _s(21, S)], fill=fill, width=sw)
+    return img
+
+
 def _chat(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     """聊天气泡 — 打招呼/已发送消息"""
     img = Image.new('RGBA', (size_px, size_px), bg)
@@ -456,6 +537,31 @@ def _document(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _shield_check(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """盾形徽章 + 勾号 — BOSS logo，填充品牌蓝，白色勾号"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    # 品牌色（硬编码，不受 fill 参数影响）
+    brand_blue = '#1E88E5'
+    brand_dark = '#1565C0'
+    # 盾牌轮廓：填充品牌蓝
+    shield = [
+        (_s(12, S), _s(2, S)),    # 顶部中心
+        (_s(21, S), _s(5, S)),    # 右上
+        (_s(21, S), _s(12, S)),   # 右中
+        (_s(12, S), _s(22, S)),   # 底部尖
+        (_s(3, S), _s(12, S)),    # 左中
+        (_s(3, S), _s(5, S)),     # 左上
+    ]
+    d.polygon(shield, fill=brand_blue, outline=brand_dark, width=sw)
+    # 白色勾号（粗）
+    check_sw = sw + 2
+    d.line([_s(7, S), _s(12, S), _s(10.5, S), _s(16, S)], fill='white', width=check_sw)
+    d.line([_s(10.5, S), _s(16, S), _s(17, S), _s(8, S)], fill='white', width=check_sw)
+    return img
+
+
 def _download(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
@@ -481,9 +587,12 @@ ICON_REGISTRY: Dict[str, Callable] = {
     'clipboard':    _clipboard,
     'chart':        _chart,
     'gear':         _gear,
+    'briefcase':    _briefcase,
+    'filter':       _filter,
     'plus':         _plus,
     'trash':        _trash,
     'search':       _search,
+    'search_color': _search_color,
     'pencil':       _pencil,
     'save':         _save,
     'refresh':      _refresh,
@@ -501,6 +610,7 @@ ICON_REGISTRY: Dict[str, Callable] = {
     'chat':         _chat,
     'download':     _download,
     'document':     _document,
+    'shield_check': _shield_check,
 }
 
 

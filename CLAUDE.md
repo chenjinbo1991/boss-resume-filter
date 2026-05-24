@@ -9,7 +9,7 @@ boss-resume-filter/
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
 ├── gui_main.py           # 图形界面主程序（v2.8.8）
 ├── updater.py            # 自动更新模块（GitHub Release 检查、下载替换、启动时自动检查）
-├── icons.py              # 图标绘制模块（Pillow 矢量图标，21个图标函数 + IconCache）
+├── icons.py              # 图标绘制模块（Pillow 矢量图标，24个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
@@ -282,3 +282,6 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 
 ### macOS Dock 图标点击恢复窗口
 `tk::mac::Reopen`（旧命令）在 Tk macOS 上不触发，delegate 方法注入、`sendEvent:` swizzle、frontmost 轮询等方案均不可行。最终可用方案：通过 `root.createcommand('tk::mac::ReopenApplication', callback)` 注册回调（注意是 `ReopenApplication` 不是 `Reopen`），配合 `deiconify()` + `lift()` + `focus_force()` 恢复窗口。实现位置：`gui_main.py:_setup_macos_reopen_handler()`、`gui_main.py:_restore_main_window()`
+
+### Tk 对话框 `wait_window()` 嵌套事件循环崩溃
+`wait_window()` 在 `root.after()` 回调中创建嵌套事件循环，macOS 上与 Cocoa scroll hook（`NSView.scrollWheel:` swizzle）和浏览器轮询（2 秒间隔的 `root.after()`）冲突，导致应用异常崩溃退出。正确做法是用 `grab_set()` 实现模态（不阻塞主事件循环），用 `protocol("WM_DELETE_WINDOW")` + 统一 `_close_dialog()` 清理引用。同理 `self.root.update()` 在主线程中强制处理事件有重入风险，应移除。实现位置：`gui_main.py:fetch_model_list()` → `show_model_dialog()`。
