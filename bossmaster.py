@@ -1518,6 +1518,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
     if args is None:
         parser = argparse.ArgumentParser(description='BOSS 直聘候选人智能提取工具')
         parser.add_argument('--clear', action='store_true', help='清空 candidates_all.json 后全新跑')
+        parser.add_argument('--keep-greeted', action='store_true', help='清空时保留已打招呼的候选人（仅与 --clear 配合使用）')
         parser.add_argument('--job', type=str, help='指定岗位名称，只跑该岗位')
         parser.add_argument('--greet', action='store_true', help='自动打招呼：对新匹配的候选人自动发送消息')
         parser.add_argument('--re-greet', action='store_true', help='补打招呼：给已匹配但未打招呼的候选人发送消息')
@@ -1546,7 +1547,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
             greet_level_text = '仅强烈推荐'
 
     # 模式显示
-    mode_text = "补打招呼模式" if re_greet_mode else ("全新模式" if args.clear else "增量模式")
+    mode_text = "补打招呼模式" if re_greet_mode else ("全新模式（保留已沟通）" if (args.clear and args.keep_greeted) else ("全新模式" if args.clear else "增量模式"))
     if point_to_point_mode:
         mode_text = f"点对点打招呼模式 ({args.greet_names})"
     greet_text = ""
@@ -1560,8 +1561,20 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
     # 清空 candidates_all.json（如果指定 --clear）
     if args.clear and os.path.exists(CANDIDATES_PATH):
-        os.remove(CANDIDATES_PATH)
-        print("已清空 candidates_all.json")
+        if args.keep_greeted:
+            # 保留已打招呼的候选人
+            candidates_all = load_candidates_all()
+            kept = [c for c in candidates_all if c.get('greet_sent')]
+            kept_count = len(kept)
+            removed = len(candidates_all) - kept_count
+            if kept_count > 0:
+                save_candidates_all(kept)
+            else:
+                os.remove(CANDIDATES_PATH)
+            print(f"已清空 candidates_all.json（保留 {kept_count} 条已打招呼记录，删除 {removed} 条）")
+        else:
+            os.remove(CANDIDATES_PATH)
+            print("已清空 candidates_all.json")
 
     # 补打招呼模式：直接处理，不需要打开浏览器扫描
     if re_greet_mode:

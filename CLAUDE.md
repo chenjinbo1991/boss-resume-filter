@@ -41,6 +41,7 @@ boss-resume-filter/
 - 补打招呼：`python bossmaster.py --re-greet`
 - 打招呼等级：`python bossmaster.py --greet --greet-level strong`（仅强烈推荐）或 `normal`（默认，强烈推荐+推荐）
 - 清空历史：`python bossmaster.py --clear --greet`
+- 清空保留已沟通：`python bossmaster.py --clear --keep-greeted --greet`（清空时保留已打招呼的候选人）
 - 输出详细评分：`python bossmaster.py --greet --verbose`
 - AI 辅助评估：`python bossmaster.py --greet --ai-eval`（对通过筛选的候选人进行 LLM 二次评分）
 

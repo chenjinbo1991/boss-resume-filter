@@ -176,6 +176,9 @@ python bossmaster.py --re-greet
 # 清空历史后重新跑
 python bossmaster.py --clear --greet
 
+# 清空历史但保留已打招呼的候选人
+python bossmaster.py --clear --keep-greeted --greet
+
 # 指定滚动轮次（减少滚动次数）
 python bossmaster.py --greet --rounds 20
 
