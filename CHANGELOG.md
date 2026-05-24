@@ -1,5 +1,36 @@
 # 更新日志
 
+## v2.8 — macOS 打包分发 + 自动更新增强 + UI 优化
+
+### 新增功能
+- **macOS .app 打包**：`build.py` 新增 `--mac` 参数，使用 PyInstaller `--onedir --windowed` 生成标准 `.app` bundle，支持 macOS 应用分发
+- **DMG 安装包**：打包后自动生成 `BOSS_ResumeFilter.dmg`（使用 macOS 自带 `hdiutil`），用户双击打开 → 拖拽到 Applications → 完成安装
+- **ZIP 分发包**：同时生成 `BOSS_ResumeFilter_mac.zip`，供自动更新功能下载替换使用
+- **macOS 自动更新**：从 `.app` 运行时检测到新版本，自动下载 ZIP → 解压 → 生成 shell 脚本替换旧 `.app` → 重启应用；从源码运行时仍走 `git pull`（降级方案）
+
+### 行为优化
+- **版本历史侧边栏"关于"**：从 Button 改为 Label 文字链接，点击跳转关于页面，视觉更简洁
+- **版本号直接进入更新日志**：点击左下角版本号直接打开更新日志页面，不再弹出菜单
+- **关于页面优化**：新增 GitHub 项目地址（可点击打开浏览器）、问题反馈链接、环境信息；底部"检查更新"和"关闭"按钮
+
+### UI 改进
+- **更新弹窗标题去重**：从"发现新版本 v2.8"改为"v2.7 → v2.8"，与下方更新内容不重复
+- **更新弹窗居中**：手动计算相对主窗口居中位置，替代不兼容的 `tk::PlaceWindow` 调用
+- **macOS 按钮样式修复**：移除 `tk.Button` 的 `bg`/`fg` 自定义颜色（macOS Tk 不支持，导致文字不可见），使用系统默认样式
+
+### Bug 修复
+- **更新弹窗居中失败**：`Toplevel` 对象没有 `eval` 方法，无法调用 `tk::PlaceWindow`；修复为手动计算几何位置
+- **macOS 按钮文字不显示**：macOS Tk 的 `tk.Button` 不支持 `bg`/`fg` 自定义颜色，设置后文字变为不可见；修复为移除自定义颜色
+- **Python 3.9 类型注解兼容**：`security.py` 使用 `str | None` 语法需要 Python 3.10+，在 Python 3.9 上报错；修复为添加 `from __future__ import annotations`
+
+### 构建改进
+- **跨平台打包脚本**：`build.py` 自动检测平台（`IS_MAC`/`IS_WIN`），无需额外参数即可生成对应平台的分发包
+- **虚拟环境路径适配**：`VENV_PYTHON` 按平台自动选择 `bin/python`（macOS）或 `Scripts/python.exe`（Windows）
+- **PyInstaller 分隔符适配**：`--add-data` 分隔符 macOS 用 `:`，Windows 用 `;`，避免路径解析错误
+- **macOS 清理逻辑**：`clean_dist()` 支持清理 `.app` bundle、`.zip`、`.dmg` 三种产物
+- **GitHub Release 上传**：macOS 平台上传 DMG + ZIP，Windows 平台上传 EXE
+- **Tcl/Tk 收集策略**：macOS 上 Homebrew Python 的 Tcl/Tk 由 PyInstaller 自动收集，无需手动指定
+
 ## v2.7 — LLM 智能评估 + 数据统计看板 + 选择器健壮性加固
 
 ### 新增功能
