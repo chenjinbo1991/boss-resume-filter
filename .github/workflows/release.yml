@@ -10,15 +10,43 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      needs: ${{ steps.check.outputs.needs }}
+    steps:
+      - name: Check existing release assets
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          needs='[]'
+
+          # 获取 Release 资产列表（Release 不存在时为空）
+          assets=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
+                   --jq '.assets[].name' 2>/dev/null || true)
+
+          # Windows: 检查 EXE 是否已存在
+          if ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.exe$'; then
+            needs=$(echo "$needs" | jq '. + [{"os":"windows-latest","platform":"windows"}]')
+          fi
+
+          # macOS: 检查 ZIP 是否已存在
+          if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$'; then
+            needs=$(echo "$needs" | jq '. + [{"os":"macos-13","platform":"macos"}]')
+          fi
+
+          echo "needs=$needs" >> "$GITHUB_OUTPUT"
+          echo "Will build: $needs"
+
   build:
+    needs: check
+    if: needs.check.outputs.needs != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            platform: windows
-          - os: macos-13
-            platform: macos
+        include: ${{ fromJSON(needs.check.outputs.needs) }}
 
     runs-on: ${{ matrix.os }}
 
