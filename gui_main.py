@@ -6027,9 +6027,8 @@ class BossFilterGUI:
         issue_label.bind("<Button-1>",
                          lambda e: webbrowser.open(issue_url))
 
-        # 环境信息
-        tk.Label(dialog,
-                 text=f"Python {sys.version.split()[0]} · Tk {tk.TkVersion} · {sys.platform.title()}",
+        # 开源协议
+        tk.Label(dialog, text="MIT License · 开源免费",
                  font=('Microsoft YaHei UI', 9),
                  foreground=self.colors.get('text_muted', '#999')).pack(pady=(5, 15))
 
