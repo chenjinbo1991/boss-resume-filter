@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import threading
 import requests
+import shlex
+import tempfile
 from pathlib import Path
 from tkinter import messagebox
 import tkinter as tk
@@ -253,7 +255,6 @@ def update_macos_app(zip_path, current_app_path):
         current_app_path: 当前 .app bundle 路径
     """
     import zipfile
-    import tempfile
 
     try:
         # 解压 ZIP 到临时目录
@@ -277,20 +278,48 @@ def update_macos_app(zip_path, current_app_path):
         # ditto 保留所有资源分支和扩展属性（cp -R 可能丢失）
         # xattr -cr 清除隔离属性，防止 Gatekeeper 拦截
         # 日志写入 /tmp/boss_update.log 便于诊断
+        current_pid = os.getpid()
+        quoted_current_app = shlex.quote(str(current_app_path))
+        quoted_new_app = shlex.quote(str(new_app_path))
+        quoted_temp_dir = shlex.quote(str(temp_dir))
+
         script = f'''#!/bin/bash
+set -e
 exec > /tmp/boss_update.log 2>&1
+OLD_APP={quoted_current_app}
+NEW_APP={quoted_new_app}
+TEMP_DIR={quoted_temp_dir}
+OLD_PID={current_pid}
+
 echo "[$(date)] Starting update"
-sleep 2
+echo "[$(date)] Waiting for old process $OLD_PID to exit"
+for i in {{1..60}}; do
+    if ! kill -0 "$OLD_PID" 2>/dev/null; then
+        break
+    fi
+    sleep 0.5
+done
+
+if kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "[$(date)] Old process did not exit in time"
+    exit 1
+fi
+
+if [ ! -d "$NEW_APP" ]; then
+    echo "[$(date)] New app not found: $NEW_APP"
+    exit 1
+fi
+
 echo "[$(date)] Removing old app"
-rm -rf "{current_app_path}"
+rm -rf "$OLD_APP"
 echo "[$(date)] Copying new app with ditto"
-ditto "{new_app_path}" "{current_app_path}"
+ditto "$NEW_APP" "$OLD_APP"
 echo "[$(date)] Clearing quarantine attributes"
-xattr -cr "{current_app_path}" 2>/dev/null
+xattr -cr "$OLD_APP" 2>/dev/null || true
 echo "[$(date)] Opening app"
-open "{current_app_path}"
+open "$OLD_APP"
 echo "[$(date)] Cleanup"
-rm -rf "{temp_dir}"
+rm -rf "$TEMP_DIR"
 rm -f "$0"
 '''
 
@@ -314,6 +343,15 @@ rm -f "$0"
 
     except Exception as e:
         return False, str(e)
+
+
+def exit_for_update(root):
+    """退出当前 GUI 进程，让外部更新脚本替换并重启应用。"""
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
+    os._exit(0)
 
 
 def check_and_update_gui(root, silent=False):
@@ -480,8 +518,7 @@ def show_update_dialog(root, result):
                         return
 
                     # 下载 ZIP
-                    temp_dir = Path(get_base_dir()) / "temp_update"
-                    temp_dir.mkdir(exist_ok=True)
+                    temp_dir = Path(tempfile.mkdtemp(prefix="boss_update_download_"))
                     temp_zip = temp_dir / "BOSS_ResumeFilter_mac.zip"
 
                     def progress_callback(downloaded, total):
@@ -525,12 +562,9 @@ def show_update_dialog(root, result):
 
                     if success:
                         root.after(0, lambda: (
-                            messagebox.showinfo(
-                                "更新成功",
-                                message,
-                                parent=dialog
-                            ),
-                            sys.exit(0)
+                            progress_label.config(text=message),
+                            dialog.destroy(),
+                            exit_for_update(root)
                         ))
                     else:
                         root.after(0, lambda: messagebox.showerror(
