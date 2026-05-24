@@ -273,14 +273,10 @@ class BossFilterGUI:
         # 注册窗口关闭处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # macOS: 最小化后恢复窗口时强制提到前台（Tk 层 fallback）
+        # macOS: 最小化后点击 Dock 图标恢复窗口
+        # Tk 在 macOS 上不会自动处理 Dock 图标点击恢复，需要轮询检测
         if sys.platform == 'darwin':
-            def _on_map(event):
-                if event.widget is self.root and self.root.state() != 'iconic':
-                    self.root.lift()
-                    self.root.attributes('-topmost', True)
-                    self.root.after(100, lambda: self.root.attributes('-topmost', False))
-            self.root.bind('<Map>', _on_map)
+            self._setup_dock_restore_handler()
 
         # 标记鼠标是否在 Text 控件上（用于 Cocoa scroll hook 跳过页面滚动）
         self._over_text_widget = False
@@ -295,7 +291,6 @@ class BossFilterGUI:
         # macOS Tk 9.0+: Cocoa 层拦截触控板滚动事件并转发给 Tk
         if _NEED_COCOA_SCROLL_HOOK:
             self.root.after(500, self._setup_cocoa_scroll_hook)
-            self.root.after(600, self._setup_cocoa_dock_handler)
 
         # 启动时自动检查更新（延迟 3 秒，避免启动卡顿）
         updater.auto_check_on_startup(self.root, delay_ms=3000)
@@ -1325,13 +1320,13 @@ class BossFilterGUI:
         except Exception as e:
             print(f"[Cocoa] scrollWheel: hook failed: {e}")
 
-    def _setup_cocoa_dock_handler(self):
-        """设置 Cocoa 层 Dock 图标点击处理（仅 macOS）。
+    def _setup_dock_restore_handler(self):
+        """macOS Dock 图标点击恢复窗口（轮询方案）。
 
         macOS Tk 应用最小化后点击 Dock 图标不会自动恢复窗口。
-        通过 swizzle NSApplicationDelegate.applicationShouldHandleReopen:hasVisibleWindows:
-        拦截 Dock 点击事件，强制 deiconify + lift 主窗口。
-        如果设置失败，静默降级。
+        通过轮询 NSApplication.isActive 检测用户是否点击了 Dock 图标
+        （app 变活跃但窗口还在 iconic 状态），然后强制恢复窗口到前台。
+        如果 Cocoa API 不可用，静默降级。
         """
         try:
             import ctypes
@@ -1342,83 +1337,52 @@ class BossFilterGUI:
                 return
             objc = ctypes.cdll.LoadLibrary(objc_path)
 
-            objc.sel_registerName.restype = ctypes.c_void_p
-            objc.sel_registerName.argtypes = [ctypes.c_char_p]
             objc.objc_getClass.restype = ctypes.c_void_p
             objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            objc.class_getInstanceMethod.restype = ctypes.c_void_p
-            objc.class_getInstanceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-            objc.method_getImplementation.restype = ctypes.c_void_p
-            objc.method_getImplementation.argtypes = [ctypes.c_void_p]
-            objc.method_setImplementation.restype = ctypes.c_void_p
-            objc.method_setImplementation.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            objc.sel_registerName.restype = ctypes.c_void_p
+            objc.sel_registerName.argtypes = [ctypes.c_char_p]
             objc.objc_msgSend.restype = ctypes.c_void_p
             objc.objc_msgSend.argtypes = [
                 ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
 
-            sel_reopen = objc.sel_registerName(b'applicationShouldHandleReopen:hasVisibleWindows:')
-            sel_shared = objc.objc_getClass(b'NSApplication')
-            if not sel_shared:
-                return
-            sel_shared = objc.sel_registerName(b'sharedApplication')
-            sel_delegate = objc.sel_registerName(b'delegate')
-
             cls_nsapp = objc.objc_getClass(b'NSApplication')
+            sel_shared = objc.sel_registerName(b'sharedApplication')
+            sel_active = objc.sel_registerName(b'isActive')
+
             if not cls_nsapp:
                 return
 
-            app = objc.objc_msgSend(cls_nsapp, sel_shared, None)
-            if not app:
-                return
-            delegate = objc.objc_msgSend(app, sel_delegate, None)
-            if not delegate:
+            # 缓存 NSApplication 实例，避免每次轮询都查找
+            nsapp = objc.objc_msgSend(cls_nsapp, sel_shared, None)
+            if not nsapp:
                 return
 
-            # 获取 delegate 的实际类（不是 NSApplicationDelegate 协议）
-            objc.object_getClass.restype = ctypes.c_void_p
-            objc.object_getClass.argtypes = [ctypes.c_void_p]
-            delegate_class = objc.object_getClass(delegate)
-            if not delegate_class:
-                return
+            _was_iconic = [False]  # 用列表包裹以支持闭包修改
 
-            # applicationShouldHandleReopen: 签名: BOOL (id self, SEL _cmd, id app, BOOL flag)
-            REOPEN_CB = ctypes.CFUNCTYPE(
-                ctypes.c_bool,
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
-
-            def _dock_reopen_impl(delegate_self, _cmd, nsapp, flag):
-                """Dock 图标点击时调用，强制恢复窗口到前台。"""
+            def _poll():
+                """每 500ms 检查一次：app 是否活跃但窗口还在 iconic 状态"""
                 try:
-                    self.root.after(0, lambda: (
-                        self.root.deiconify(),
-                        self.root.lift(),
-                        self.root.focus_force(),
-                    ))
+                    is_active = bool(objc.objc_msgSend(nsapp, sel_active, None))
+                    is_iconic = self.root.state() == 'iconic'
+
+                    if is_active and is_iconic and not _was_iconic[0]:
+                        # 用户点击了 Dock 图标（app 变活跃但窗口还在 iconic）
+                        self.root.deiconify()
+                        self.root.lift()
+                        self.root.focus_force()
+
+                    _was_iconic[0] = is_iconic
                 except Exception:
                     pass
-                return True  # YES = 我们已处理
 
-            dock_callback = REOPEN_CB(_dock_reopen_impl)
-            cb_ptr = ctypes.cast(dock_callback, ctypes.c_void_p).value
+                # 继续轮询
+                self.root.after(500, _poll)
 
-            method = objc.class_getInstanceMethod(delegate_class, sel_reopen)
-            if method:
-                orig_impl = objc.method_getImplementation(method)
-                objc.method_setImplementation(method, cb_ptr)
-                BossFilterGUI._cocoa_refs['dock_orig_impl'] = orig_impl
-            else:
-                # delegate 没有实现这个方法，直接添加
-                objc.class_addMethod.restype = ctypes.c_bool
-                objc.class_addMethod.argtypes = [
-                    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p]
-                objc.class_addMethod(
-                    delegate_class, sel_reopen, cb_ptr, b'c@:@c')
-
-            BossFilterGUI._cocoa_refs['dock_callback'] = dock_callback
-            print("[Cocoa] Dock reopen handler installed")
+            # 启动轮询
+            self.root.after(1000, _poll)
 
         except Exception as e:
-            print(f"[Cocoa] Dock handler setup failed: {e}")
+            print(f"[macOS] Dock restore handler setup failed: {e}")
 
     def _on_mousewheel(self, event):
         """统一处理滚轮事件 - 根据当前页面分发到对应的 Canvas
