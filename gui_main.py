@@ -6021,16 +6021,12 @@ class BossFilterGUI:
 
         tk.Button(btn_frame, text="检查更新", width=12,
                   font=('Microsoft YaHei UI', 10),
-                  bg='#0078D4', fg='white',
-                  activebackground='#106EBE', activeforeground='white',
-                  relief='raised', borderwidth=1,
                   command=lambda: (dialog.destroy(),
                                    updater.check_and_update_gui(self.root, silent=False))
                   ).pack(side="left", padx=10)
 
         tk.Button(btn_frame, text="关闭", width=12,
                   font=('Microsoft YaHei UI', 10),
-                  relief='raised', borderwidth=1,
                   command=dialog.destroy).pack(side="left", padx=10)
 
         # ESC 关闭
@@ -6120,18 +6116,13 @@ class BossFilterGUI:
         for tag, title_line, _ in versions:
             listbox.insert("end", tag)
 
-        # 左侧边栏底部按钮区
-        btn_area = tk.Frame(left_frame, bg=sidebar_bg)
-        btn_area.pack(fill="x", padx=int(12 * fs), pady=(int(8 * fs), int(12 * fs)))
-
-        btn_style = {
-            'bg': '#4A5568', 'fg': '#E2E8F0', 'activebackground': '#718096',
-            'activeforeground': '#FFFFFF', 'borderwidth': 0, 'cursor': 'hand2',
-            'font': (FONT_FAMILY, int(10 * fs)), 'padx': 4, 'pady': 2
-        }
-
-        tk.Button(btn_area, text="关于", command=lambda: (dialog.destroy(), self.show_about()),
-                  **btn_style).pack(fill="x")
+        # 左侧边栏底部：关于链接
+        about_label = tk.Label(left_frame, text="关于",
+                               bg=sidebar_bg, fg='#A0AEC0',
+                               font=(FONT_FAMILY, int(10 * fs)),
+                               cursor="hand2")
+        about_label.pack(padx=int(12 * fs), pady=(int(8 * fs), int(12 * fs)))
+        about_label.bind("<Button-1>", lambda e: (dialog.destroy(), self.show_about()))
 
         # ---- 右侧详情 ----
         right_outer = tk.Frame(dialog, bg=self.colors['bg_main'])
