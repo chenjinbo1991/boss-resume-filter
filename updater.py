@@ -274,10 +274,12 @@ def update_macos_app(zip_path, current_app_path):
         # 生成替换脚本
         # 脚本写入 /tmp/（稳定位置），不放在 temp_dir 内，
         # 避免 sys.exit(0) 退出时 temp_dir 被 OS 清理导致脚本丢失
+        # xattr -cr 清除隔离属性，防止 Gatekeeper 拦截替换后的 .app
         script = f'''#!/bin/bash
 sleep 2
 rm -rf "{current_app_path}"
 cp -R "{new_app_path}" "{current_app_path}"
+xattr -cr "{current_app_path}" 2>/dev/null
 open "{current_app_path}"
 rm -rf "{temp_dir}"
 rm -f "$0"
