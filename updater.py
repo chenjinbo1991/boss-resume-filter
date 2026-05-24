@@ -18,8 +18,12 @@ import tkinter as tk
 def get_base_dir():
     """获取程序基础目录（处理 PyInstaller 打包后的路径）"""
     if getattr(sys, 'frozen', False):
-        # PyInstaller 打包后
-        return Path(sys.executable).parent.resolve()
+        exe_dir = Path(sys.executable).parent.resolve()
+        # macOS .app: sys.executable 在 .app/Contents/MacOS/ 内，
+        # 用户配置文件和更新文件在 .app 旁边
+        if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
+            return exe_dir.parent.parent.parent
+        return exe_dir
     else:
         # 开发环境
         return Path(__file__).parent.resolve()
