@@ -493,7 +493,7 @@ class BossFilterGUI:
                                   foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
                                   cursor="hand2")
         version_label.pack(anchor="w")
-        version_label.bind("<Button-1>", lambda e: self.show_version_menu(version_label, e))
+        version_label.bind("<Button-1>", lambda e: self.show_changelog())
 
     def create_main_content(self):
         """创建主内容区域"""
@@ -5984,20 +5984,28 @@ class BossFilterGUI:
         ttk.Separator(dialog, orient="horizontal").pack(fill="x", padx=40, pady=10)
 
         # GitHub 项目链接
-        github_label = tk.Label(dialog, text="GitHub 项目地址",
+        github_url = "https://github.com/yaoyouzhong/boss-resume-filter"
+        github_frame = tk.Frame(dialog)
+        github_frame.pack(pady=(5, 2))
+        tk.Label(github_frame, text="GitHub: ",
+                 font=('Microsoft YaHei UI', 10)).pack(side="left")
+        github_label = tk.Label(github_frame, text=github_url,
                                 font=('Microsoft YaHei UI', 10),
                                 foreground="#1E88E5", cursor="hand2")
-        github_label.pack(pady=(5, 2))
-        github_url = "https://github.com/yaoyouzhong/boss-resume-filter"
+        github_label.pack(side="left")
         github_label.bind("<Button-1>",
                           lambda e: webbrowser.open(github_url))
 
         # Issue 反馈
-        issue_label = tk.Label(dialog, text="问题反馈与建议",
+        issue_url = "https://github.com/yaoyouzhong/boss-resume-filter/issues"
+        issue_frame = tk.Frame(dialog)
+        issue_frame.pack(pady=(2, 10))
+        tk.Label(issue_frame, text="反馈: ",
+                 font=('Microsoft YaHei UI', 10)).pack(side="left")
+        issue_label = tk.Label(issue_frame, text="问题反馈与建议",
                                font=('Microsoft YaHei UI', 10),
                                foreground="#1E88E5", cursor="hand2")
-        issue_label.pack(pady=(2, 10))
-        issue_url = "https://github.com/yaoyouzhong/boss-resume-filter/issues"
+        issue_label.pack(side="left")
         issue_label.bind("<Button-1>",
                          lambda e: webbrowser.open(issue_url))
 
@@ -6022,15 +6030,6 @@ class BossFilterGUI:
         # ESC 关闭
         dialog.bind('<Escape>', lambda e: dialog.destroy())
         dialog.grab_set()
-
-    def show_version_menu(self, widget, event):
-        """显示版本菜单（左键点击版本号时弹出）"""
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="查看更新日志", command=self.show_changelog)
-        menu.add_command(label="检查更新", command=lambda: updater.check_and_update_gui(self.root, silent=False))
-        menu.add_separator()
-        menu.add_command(label="关于", command=self.show_about)
-        menu.post(event.x_root, event.y_root)
 
     def show_changelog(self):
         """显示更新日志（版本列表 + 详情分栏）"""
@@ -6114,6 +6113,23 @@ class BossFilterGUI:
 
         for tag, title_line, _ in versions:
             listbox.insert("end", tag)
+
+        # 左侧边栏底部按钮区
+        btn_area = tk.Frame(left_frame, bg=sidebar_bg)
+        btn_area.pack(fill="x", padx=int(12 * fs), pady=(int(8 * fs), int(12 * fs)))
+
+        btn_style = {
+            'bg': '#4A5568', 'fg': '#E2E8F0', 'activebackground': '#718096',
+            'activeforeground': '#FFFFFF', 'borderwidth': 0, 'cursor': 'hand2',
+            'font': (FONT_FAMILY, int(10 * fs)), 'padx': 4, 'pady': 2
+        }
+
+        tk.Button(btn_area, text="检查更新", command=lambda: (dialog.destroy(),
+                   updater.check_and_update_gui(self.root, silent=False)),
+                  **btn_style).pack(fill="x", pady=(0, int(4 * fs)))
+
+        tk.Button(btn_area, text="关于", command=lambda: (dialog.destroy(), self.show_about()),
+                  **btn_style).pack(fill="x")
 
         # ---- 右侧详情 ----
         right_outer = tk.Frame(dialog, bg=self.colors['bg_main'])

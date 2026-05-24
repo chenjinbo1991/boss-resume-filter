@@ -291,21 +291,13 @@ def show_update_dialog(root, result):
     y = root.winfo_y() + (root.winfo_height() - 500) // 2
     dialog.geometry(f"+{x}+{y}")
 
-    # 标题
+    # 标题行：v2.7 → v2.8
     title_label = tk.Label(
         dialog,
-        text=f"发现新版本 v{result['latest']}",
+        text=f"v{result['current']} → v{result['latest']}",
         font=("Arial", 16, "bold")
     )
-    title_label.pack(pady=20)
-
-    # 当前版本
-    current_label = tk.Label(
-        dialog,
-        text=f"当前版本: v{result['current']}",
-        font=("Arial", 10)
-    )
-    current_label.pack(pady=5)
+    title_label.pack(pady=(15, 5))
 
     # 更新内容（从 release body 读取）
     release_info = result['release_info']
