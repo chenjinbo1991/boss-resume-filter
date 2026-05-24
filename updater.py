@@ -286,7 +286,10 @@ def show_update_dialog(root, result):
 
     # 居中显示
     dialog.geometry("600x500")
-    dialog.eval('tk::PlaceWindow . center')
+    dialog.update_idletasks()  # 确保几何信息已计算
+    x = root.winfo_x() + (root.winfo_width() - 600) // 2
+    y = root.winfo_y() + (root.winfo_height() - 500) // 2
+    dialog.geometry(f"+{x}+{y}")
 
     # 标题
     title_label = tk.Label(
