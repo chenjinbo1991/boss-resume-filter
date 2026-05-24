@@ -8,6 +8,8 @@ API Key 安全存储模块
 
 API Key 按服务商统一存储，同一服务商的所有模型共享一个 API Key。
 """
+from __future__ import annotations
+
 import keyring
 
 SERVICE_NAME = "boss-resume-filter"

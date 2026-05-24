@@ -21,7 +21,17 @@ BASE_DIR = Path(__file__).parent.resolve()
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
 VENV_DIR = BASE_DIR / "pack_venv"
-VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
+
+# 平台检测
+IS_MAC = sys.platform == 'darwin'
+IS_WIN = sys.platform == 'win32'
+SEP = ':' if IS_MAC else ';'  # PyInstaller --add-data 分隔符
+
+# 虚拟环境 Python 路径（按平台）
+if IS_MAC:
+    VENV_PYTHON = VENV_DIR / "bin" / "python"
+else:
+    VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 SENSITIVE_TRACKED_PATHS = [
     ".env",
     "candidates_all.json",
@@ -48,6 +58,10 @@ SOURCE_CHECK_FILES = [
 
 def _find_conda_tcl_tk():
     """Return Anaconda Tcl/Tk paths when the pack venv is based on conda Python."""
+    # macOS 上 Homebrew Python 的 Tcl/Tk 由 PyInstaller 自动收集，无需手动指定
+    if IS_MAC:
+        return None
+
     base_prefix = Path(sys.base_prefix).resolve()
     tkinter_dir = base_prefix / "Lib" / "tkinter"
     tkinter_pyd = base_prefix / "DLLs" / "_tkinter.pyd"
@@ -105,12 +119,12 @@ def _pyinstaller_tk_args():
 
     return [
         "--collect-submodules", "tkinter",
-        "--add-data", f'{tcl_tk["tkinter_dir"]};tkinter',
-        "--add-binary", f'{tcl_tk["tkinter_pyd"]};.',
-        "--add-data", f'{tcl_tk["tcl_dir"]};tcl\\tcl8.6',
-        "--add-data", f'{tcl_tk["tk_dir"]};tcl\\tk8.6',
-        "--add-binary", f'{tcl_tk["tcl_dll"]};.',
-        "--add-binary", f'{tcl_tk["tk_dll"]};.',
+        "--add-data", f'{tcl_tk["tkinter_dir"]}{SEP}tkinter',
+        "--add-binary", f'{tcl_tk["tkinter_pyd"]}{SEP}.',
+        "--add-data", f'{tcl_tk["tcl_dir"]}{SEP}tcl/tcl8.6' if IS_MAC else f'{tcl_tk["tcl_dir"]}{SEP}tcl\\tcl8.6',
+        "--add-data", f'{tcl_tk["tk_dir"]}{SEP}tcl/tk8.6' if IS_MAC else f'{tcl_tk["tk_dir"]}{SEP}tcl\\tk8.6',
+        "--add-binary", f'{tcl_tk["tcl_dll"]}{SEP}.',
+        "--add-binary", f'{tcl_tk["tk_dll"]}{SEP}.',
     ], env
 
 
@@ -119,7 +133,10 @@ def run_in_venv():
     if Path(sys.executable).resolve() != VENV_PYTHON.resolve():
         if not VENV_PYTHON.exists():
             print(f"[错误] 虚拟环境不存在：{VENV_DIR}")
-            print("请先创建：python -m venv pack_venv && pack_venv\\Scripts\\activate && pip install -r requirements.txt pyinstaller")
+            if IS_MAC:
+                print("请先创建：python3 -m venv pack_venv && source pack_venv/bin/activate && pip install -r requirements.txt pyinstaller")
+            else:
+                print("请先创建：python -m venv pack_venv && pack_venv\\Scripts\\activate && pip install -r requirements.txt pyinstaller")
             sys.exit(1)
         print(f"[使用虚拟环境] {VENV_PYTHON}")
         result = subprocess.run([str(VENV_PYTHON), __file__] + sys.argv[1:])
@@ -127,22 +144,93 @@ def run_in_venv():
 
 
 def clean_dist():
-    """只删除旧的 EXE 文件，保留用户数据和配置文件"""
-    exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
-    if exe_path.exists():
-        for attempt in range(3):
-            try:
-                exe_path.unlink()
-                print(f"  删除旧 EXE: {exe_path}")
-                return
-            except PermissionError as e:
-                if attempt < 2:
-                    print(f"  等待文件释放... ({attempt + 1}/3)")
-                    time.sleep(2)
-                else:
-                    print(f"[警告] 无法删除旧 EXE (可能被占用): {e}")
-                    print("  请手动关闭占用进程后重试")
-                    sys.exit(1)
+    """清理旧的打包产物"""
+    if IS_MAC:
+        # macOS: 清理 .app bundle、.zip、.dmg
+        app_path = DIST_DIR / "BOSS_ResumeFilter.app"
+        zip_path = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
+        dmg_path = DIST_DIR / "BOSS_ResumeFilter.dmg"
+
+        if app_path.exists():
+            shutil.rmtree(app_path)
+            print(f"  删除旧 .app: {app_path}")
+
+        for path in [zip_path, dmg_path]:
+            if path.exists():
+                path.unlink()
+                print(f"  删除旧文件: {path}")
+    else:
+        # Windows: 清理 .exe
+        exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
+        if exe_path.exists():
+            for attempt in range(3):
+                try:
+                    exe_path.unlink()
+                    print(f"  删除旧 EXE: {exe_path}")
+                    return
+                except PermissionError as e:
+                    if attempt < 2:
+                        print(f"  等待文件释放... ({attempt + 1}/3)")
+                        time.sleep(2)
+                    else:
+                        print(f"[警告] 无法删除旧 EXE (可能被占用): {e}")
+                        print("  请手动关闭占用进程后重试")
+                        sys.exit(1)
+
+
+def _create_mac_zip():
+    """创建 macOS ZIP 包（用于自动更新）"""
+    import zipfile
+
+    app_dir = DIST_DIR / "BOSS_ResumeFilter.app"
+    zip_path = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
+
+    if not app_dir.exists():
+        print(f"[错误] .app 不存在：{app_dir}")
+        sys.exit(1)
+
+    print(f"\n>>> 创建 ZIP 包...")
+
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(app_dir):
+            for file in files:
+                file_path = Path(root) / file
+                arcname = file_path.relative_to(DIST_DIR)
+                zf.write(file_path, arcname)
+
+    size_mb = zip_path.stat().st_size / (1024 * 1024)
+    print(f"  [OK] ZIP: {zip_path} ({size_mb:.1f} MB)")
+    return zip_path
+
+
+def _create_mac_dmg():
+    """创建 macOS DMG 安装包（用于用户手动安装）"""
+    app_dir = DIST_DIR / "BOSS_ResumeFilter.app"
+    dmg_path = DIST_DIR / "BOSS_ResumeFilter.dmg"
+
+    if not app_dir.exists():
+        print(f"[错误] .app 不存在：{app_dir}")
+        sys.exit(1)
+
+    print(f"\n>>> 创建 DMG 安装包...")
+
+    # 使用 macOS 自带的 hdiutil 创建 DMG
+    result = subprocess.run([
+        'hdiutil', 'create',
+        '-volname', 'BOSS简历筛选器',
+        '-srcfolder', str(app_dir),
+        '-ov',  # 覆盖已存在的文件
+        '-format', 'UDZO',  # 压缩格式
+        str(dmg_path)
+    ], capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"[错误] DMG 创建失败：{result.stderr}")
+        sys.exit(1)
+
+    size_mb = dmg_path.stat().st_size / (1024 * 1024)
+    print(f"  [OK] DMG: {dmg_path} ({size_mb:.1f} MB)")
+    return dmg_path
 
 
 # PyPI 包名 → import 名 映射（部分包名与 import 名不同）
@@ -313,20 +401,42 @@ def _write_version(version: str):
 
 
 def _check_version_consistency():
-    """读取 __version__ 并与 dist/EXE 核对，返回 (version, exe_path, size_mb)"""
+    """读取 __version__ 并与打包产物核对，返回 (version, artifact_path, size_mb)"""
     version = _read_version()
 
-    exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
-    if not exe_path.exists():
-        print(f"[错误] EXE 不存在：{exe_path}")
-        sys.exit(1)
+    if IS_MAC:
+        # macOS: 检查 .app、.zip、.dmg
+        app_path = DIST_DIR / "BOSS_ResumeFilter.app"
+        zip_path = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
+        dmg_path = DIST_DIR / "BOSS_ResumeFilter.dmg"
 
-    size_mb = exe_path.stat().st_size / (1024 * 1024)
-    print(f"\n{'='*60}")
-    print(f"  打包完成: v{version}")
-    print(f"  EXE:  {exe_path} ({size_mb:.1f} MB)")
-    print(f"{'='*60}")
-    return version, exe_path, size_mb
+        for path, label in [(app_path, ".app"), (zip_path, "ZIP"), (dmg_path, "DMG")]:
+            if not path.exists():
+                print(f"[错误] {label} 不存在：{path}")
+                sys.exit(1)
+
+        size_mb = zip_path.stat().st_size / (1024 * 1024)
+        dmg_size_mb = dmg_path.stat().st_size / (1024 * 1024)
+        print(f"\n{'='*60}")
+        print(f"  打包完成: v{version}")
+        print(f"  APP:  {app_path}")
+        print(f"  ZIP:  {zip_path} ({size_mb:.1f} MB)")
+        print(f"  DMG:  {dmg_path} ({dmg_size_mb:.1f} MB)")
+        print(f"{'='*60}")
+        return version, zip_path, size_mb
+    else:
+        # Windows: 检查 .exe
+        exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
+        if not exe_path.exists():
+            print(f"[错误] EXE 不存在：{exe_path}")
+            sys.exit(1)
+
+        size_mb = exe_path.stat().st_size / (1024 * 1024)
+        print(f"\n{'='*60}")
+        print(f"  打包完成: v{version}")
+        print(f"  EXE:  {exe_path} ({size_mb:.1f} MB)")
+        print(f"{'='*60}")
+        return version, exe_path, size_mb
 
 
 def _extract_changelog_release(version):
@@ -499,9 +609,17 @@ def _git_push(version):
 def _gh_release(version, release_title, release_notes):
     """创建/更新 GitHub Release 并上传资源文件"""
     tag = f"v{version}"
-    exe = DIST_DIR / "BOSS_ResumeFilter.exe"
     cfg = DIST_DIR / "job_config.json"
     readme = DIST_DIR / "README.md"
+
+    # 按平台选择上传的文件
+    if IS_MAC:
+        dmg = DIST_DIR / "BOSS_ResumeFilter.dmg"
+        mac_zip = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
+        artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (readme, "README")]
+    else:
+        exe = DIST_DIR / "BOSS_ResumeFilter.exe"
+        artifacts = [(exe, "EXE"), (cfg, "Config"), (readme, "README")]
 
     # 检查 gh CLI
     r = subprocess.run(["gh", "--version"], capture_output=True, cwd=BASE_DIR)
@@ -534,7 +652,7 @@ def _gh_release(version, release_title, release_notes):
         print("  [OK] GitHub Release 标题和说明已同步")
 
     # 上传资源
-    for f, label in [(exe, "EXE"), (cfg, "Config"), (readme, "README")]:
+    for f, label in artifacts:
         if f.exists():
             subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
                            cwd=BASE_DIR, check=True)
@@ -591,13 +709,21 @@ def main():
 
     cmd = [
         str(VENV_PYTHON), "-m", "PyInstaller",
-        "--onefile",
-        "--noconsole",
+    ]
+
+    # macOS: --onedir --windowed (生成 .app bundle)
+    # Windows: --onefile --noconsole (生成单文件 .exe)
+    if IS_MAC:
+        cmd += ["--onedir", "--windowed", "--osx-bundle-identifier", "com.boss.resume-filter"]
+    else:
+        cmd += ["--onefile", "--noconsole"]
+
+    cmd += [
         '--name', 'BOSS_ResumeFilter',
-        '--add-data', f'{BASE_DIR / "job_config.json"};.',
-        '--add-data', f'{BASE_DIR / "api_config.json"};.',
-        '--add-data', f'{BASE_DIR / "selectors.json"};.',
-        '--add-data', f'{BASE_DIR / "CHANGELOG.md"};.',
+        '--add-data', f'{BASE_DIR / "job_config.json"}{SEP}.',
+        '--add-data', f'{BASE_DIR / "api_config.json"}{SEP}.',
+        '--add-data', f'{BASE_DIR / "selectors.json"}{SEP}.',
+        '--add-data', f'{BASE_DIR / "CHANGELOG.md"}{SEP}.',
         '--hidden-import=tkinter',
         '--hidden-import=tkinter.ttk',
         '--hidden-import=tkinter.font',
@@ -631,7 +757,12 @@ def main():
         else:
             print(f"    ! {file} (源文件缺失)")
 
-    version, exe_path, size_mb = _check_version_consistency()
+    # macOS: 创建 ZIP 和 DMG 分发包
+    if IS_MAC:
+        _create_mac_zip()
+        _create_mac_dmg()
+
+    version, artifact_path, size_mb = _check_version_consistency()
     release_title = release_notes = None
     if args.release:
         release_title, release_notes = _extract_changelog_release(version)
@@ -650,7 +781,7 @@ def main():
 
         print(f"\n{'='*60}")
         print(f"  v{version} 发布完成！")
-        print(f"  {exe_path} ({size_mb:.1f} MB)")
+        print(f"  {artifact_path} ({size_mb:.1f} MB)")
         print(f"{'='*60}\n")
     else:
         print(f"\n  下一步：python build.py --release  一键完成提交/打tag/推送/Release")

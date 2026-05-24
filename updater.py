@@ -99,10 +99,17 @@ def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
 
         result['has_update'] = latest_tuple > current_tuple
 
-        # 查找 Windows EXE 下载链接
+        # 查找下载链接
         if sys.platform == 'win32':
+            # Windows: 查找 .exe
             for asset in release.get('assets', []):
                 if asset.get('name', '').endswith('.exe'):
+                    result['download_url'] = asset.get('browser_download_url')
+                    break
+        elif sys.platform == 'darwin':
+            # macOS: 查找 _mac.zip
+            for asset in release.get('assets', []):
+                if asset.get('name', '').endswith('_mac.zip'):
                     result['download_url'] = asset.get('browser_download_url')
                     break
 
@@ -236,6 +243,61 @@ def update_macos():
 
     except subprocess.TimeoutExpired:
         return False, "git pull 超时"
+    except Exception as e:
+        return False, str(e)
+
+
+def update_macos_app(zip_path, current_app_path):
+    """
+    macOS .app 更新逻辑
+
+    解压 ZIP 包，替换旧的 .app bundle，然后重启应用
+
+    Args:
+        zip_path: 下载的 ZIP 文件路径
+        current_app_path: 当前 .app bundle 路径
+    """
+    import zipfile
+    import tempfile
+
+    try:
+        # 解压 ZIP 到临时目录
+        temp_dir = Path(tempfile.mkdtemp())
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(temp_dir)
+
+        # 找到解压后的 .app
+        new_app_path = None
+        for item in temp_dir.iterdir():
+            if item.suffix == '.app':
+                new_app_path = item
+                break
+
+        if not new_app_path:
+            return False, "ZIP 包中未找到 .app"
+
+        # 生成替换脚本
+        script = f'''#!/bin/bash
+sleep 2
+rm -rf "{current_app_path}"
+cp -R "{new_app_path}" "{current_app_path}"
+open "{current_app_path}"
+rm -rf "{temp_dir}"
+'''
+
+        # 写入临时脚本文件
+        script_path = temp_dir / "update.sh"
+        with open(script_path, 'w') as f:
+            f.write(script)
+
+        # 设置执行权限
+        script_path.chmod(0o755)
+
+        # 启动脚本（后台运行）
+        subprocess.Popen(['bash', str(script_path)], close_fds=True)
+
+        return True, "更新成功，程序即将重启"
+
     except Exception as e:
         return False, str(e)
 
@@ -391,24 +453,96 @@ def show_update_dialog(root, result):
                     ))
 
             else:
-                # macOS: git pull
-                success, message = update_macos()
-
-                if success:
-                    root.after(0, lambda: (
-                        messagebox.showinfo(
-                            "更新成功",
-                            message + "\n\n请手动重启应用以使用新版本",
+                # macOS: 判断是否从 .app bundle 运行
+                if getattr(sys, 'frozen', False):
+                    # 从 .app 运行：下载 ZIP 并替换
+                    download_url = result['download_url']
+                    if not download_url:
+                        root.after(0, lambda: messagebox.showerror(
+                            "更新失败",
+                            "未找到 macOS ZIP 下载链接",
                             parent=dialog
-                        ),
-                        dialog.destroy()
-                    ))
+                        ))
+                        return
+
+                    # 下载 ZIP
+                    temp_dir = Path(get_base_dir()) / "temp_update"
+                    temp_dir.mkdir(exist_ok=True)
+                    temp_zip = temp_dir / "BOSS_ResumeFilter_mac.zip"
+
+                    def progress_callback(downloaded, total):
+                        if total > 0:
+                            percent = int(downloaded / total * 100)
+                            root.after(0, lambda: progress_bar.config(value=percent))
+                            root.after(0, lambda: progress_label.config(
+                                text=f"下载中... {percent}%"
+                            ))
+
+                    success, error = download_file(str(download_url), temp_zip, progress_callback)
+
+                    if not success:
+                        root.after(0, lambda: messagebox.showerror(
+                            "下载失败",
+                            f"下载新版本失败: {error}",
+                            parent=dialog
+                        ))
+                        return
+
+                    # 执行更新
+                    root.after(0, lambda: progress_label.config(text="正在安装..."))
+
+                    # 获取当前 .app 路径
+                    # sys.executable 在 .app 中指向 Python 二进制，需要向上找到 .app 目录
+                    exe_path = Path(sys.executable).resolve()
+                    # 向上查找直到找到 .app 目录
+                    current_app = exe_path
+                    while current_app.suffix != '.app' and current_app != current_app.parent:
+                        current_app = current_app.parent
+
+                    if current_app.suffix != '.app':
+                        root.after(0, lambda: messagebox.showerror(
+                            "更新失败",
+                            "无法定位当前 .app 路径",
+                            parent=dialog
+                        ))
+                        return
+
+                    success, message = update_macos_app(str(temp_zip), str(current_app))
+
+                    if success:
+                        root.after(0, lambda: (
+                            messagebox.showinfo(
+                                "更新成功",
+                                message,
+                                parent=dialog
+                            ),
+                            sys.exit(0)
+                        ))
+                    else:
+                        root.after(0, lambda: messagebox.showerror(
+                            "更新失败",
+                            f"安装失败: {message}",
+                            parent=dialog
+                        ))
                 else:
-                    root.after(0, lambda: messagebox.showerror(
-                        "更新失败",
-                        message,
-                        parent=dialog
-                    ))
+                    # 从源码运行：git pull（降级方案）
+                    success, message = update_macos()
+
+                    if success:
+                        root.after(0, lambda: (
+                            messagebox.showinfo(
+                                "更新成功",
+                                message + "\n\n请手动重启应用以使用新版本",
+                                parent=dialog
+                            ),
+                            dialog.destroy()
+                        ))
+                    else:
+                        root.after(0, lambda: messagebox.showerror(
+                            "更新失败",
+                            message,
+                            parent=dialog
+                        ))
 
         # 在后台线程执行更新
         threading.Thread(target=do_update, daemon=True).start()
