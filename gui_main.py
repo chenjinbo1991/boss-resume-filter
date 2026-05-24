@@ -6015,16 +6015,22 @@ class BossFilterGUI:
                  font=('Microsoft YaHei UI', 9),
                  foreground=self.colors.get('text_muted', '#999')).pack(pady=(5, 15))
 
-        # 检查更新按钮
+        # 按钮区
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(pady=(5, 10))
 
         tk.Button(btn_frame, text="检查更新", width=12,
+                  font=('Microsoft YaHei UI', 10),
+                  bg='#0078D4', fg='white',
+                  activebackground='#106EBE', activeforeground='white',
+                  relief='raised', borderwidth=1,
                   command=lambda: (dialog.destroy(),
                                    updater.check_and_update_gui(self.root, silent=False))
                   ).pack(side="left", padx=10)
 
         tk.Button(btn_frame, text="关闭", width=12,
+                  font=('Microsoft YaHei UI', 10),
+                  relief='raised', borderwidth=1,
                   command=dialog.destroy).pack(side="left", padx=10)
 
         # ESC 关闭
@@ -6123,10 +6129,6 @@ class BossFilterGUI:
             'activeforeground': '#FFFFFF', 'borderwidth': 0, 'cursor': 'hand2',
             'font': (FONT_FAMILY, int(10 * fs)), 'padx': 4, 'pady': 2
         }
-
-        tk.Button(btn_area, text="检查更新", command=lambda: (dialog.destroy(),
-                   updater.check_and_update_gui(self.root, silent=False)),
-                  **btn_style).pack(fill="x", pady=(0, int(4 * fs)))
 
         tk.Button(btn_area, text="关于", command=lambda: (dialog.destroy(), self.show_about()),
                   **btn_style).pack(fill="x")
