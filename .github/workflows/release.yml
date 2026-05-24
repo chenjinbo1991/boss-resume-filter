@@ -46,15 +46,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Set UTF-8 encoding
         shell: bash
         run: echo "PYTHONIOENCODING=utf-8" >> $GITHUB_ENV
 
-      - name: Install tkinter (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew install python-tk@3.12
+      - name: Verify tkinter
+        shell: bash
+        run: python -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)"
 
       - name: Install dependencies
         run: |
