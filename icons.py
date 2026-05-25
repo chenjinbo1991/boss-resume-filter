@@ -578,6 +578,27 @@ def _download(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _check(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """勾号 ✓ — 确认/确定"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    d.line([_s(5, S), _s(12, S), _s(10, S), _s(18, S)], fill=fill, width=sw)
+    d.line([_s(10, S), _s(18, S), _s(19, S), _s(6, S)], fill=fill, width=sw)
+    return img
+
+
+def _close(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """叉号 ✕ — 取消/关闭"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    pad = _s(6, S)
+    d.line([pad, pad, S - pad, S - pad], fill=fill, width=sw)
+    d.line([S - pad, pad, pad, S - pad], fill=fill, width=sw)
+    return img
+
+
 # ---------------------------------------------------------------------------
 # 图标注册表
 # ---------------------------------------------------------------------------
@@ -609,6 +630,8 @@ ICON_REGISTRY: Dict[str, Callable] = {
     'star':         _star,
     'chat':         _chat,
     'download':     _download,
+    'check':        _check,
+    'close':        _close,
     'document':     _document,
     'shield_check': _shield_check,
 }

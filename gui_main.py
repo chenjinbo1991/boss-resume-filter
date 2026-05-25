@@ -151,8 +151,6 @@ def _calculate_effective_scale(dpi_scale, screen_width, screen_height, platform=
 
     min_scale = 0.85
     result = _clamp(effective_scale, min_scale, 2.5)
-    print(f"[DPI] dpi_scale={dpi_scale:.3f}, screen={screen_width}x{screen_height}, "
-          f"effective={result:.3f}, platform={platform}")
     return result
 
 
@@ -457,12 +455,6 @@ class BossFilterGUI:
             self.dpi_scale = 1.0
         self.zoom_factor = effective_scale / self.dpi_scale if self.dpi_scale else 1.0
 
-        print(f"[DPI] dpi_scale={self.dpi_scale:.3f}, "
-              f"display_scale={_display_scale:.3f}, "
-              f"screen={_screen_width}x{_screen_height}, "
-              f"effective={effective_scale:.3f}, "
-              f"zoom={self.zoom_factor:.3f}")
-
         # 初始化图标缓存（DPI 感知的高清图标）
         self.icons = icons.init(effective_scale)
 
@@ -616,6 +608,7 @@ class BossFilterGUI:
             'text_sidebar_subtitle': '#94A3B8',    # 侧边栏副标题
             'text_sidebar_version': '#64748B',     # 侧边栏版本号
             'border': '#E2E8F0',        # 边框
+            'bg_hover': '#EDF2F7',      # 悬停背景
         }
 
         # 设置字体 - 使用更清晰的大字体（根据 DPI 缩放）
@@ -6073,10 +6066,12 @@ class BossFilterGUI:
         dialog = tk.Toplevel(self.root)
         dialog.title("清空候选人")
         dialog.transient(self.root)
+        dialog.configure(background=self.colors['bg_main'])
         dialog.withdraw()
 
-        dialog_width = 460
-        dialog_height = 300
+        _s = self.dpi_scale * self.zoom_factor
+        dialog_width = max(460, int(460 * _s))
+        dialog_height = max(300, int(300 * _s))
         self._center_window(dialog, dialog_width, dialog_height)
 
         # 标题
@@ -6093,8 +6088,10 @@ class BossFilterGUI:
         # 配置大号 RadioButton 样式
         dialog_rb_font = (FONT_FAMILY, int(14 * self.dpi_scale * self.zoom_factor))
         style = ttk.Style()
-        style.configure('ClearDialog.TRadiobutton', font=dialog_rb_font)
-        style.configure('ClearDialog.TCheckbutton', font=dialog_rb_font)
+        style.configure('ClearDialog.TRadiobutton', font=dialog_rb_font,
+                        background=self.colors['bg_main'])
+        style.configure('ClearDialog.TCheckbutton', font=dialog_rb_font,
+                        background=self.colors['bg_main'])
 
         rb_current = ttk.Radiobutton(radio_frame,
                                      text=f"清空当前岗位数据（{selected_job}）",
@@ -6220,8 +6217,34 @@ class BossFilterGUI:
             except Exception as e:
                 messagebox.showerror("错误", f"清空失败：{e}")
 
-        ttk.Button(btn_frame, text="确定", command=do_clear).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-        ttk.Button(btn_frame, text="取消", command=dialog.destroy).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+        icon_check = self.icons.button('check', self.colors['primary'])
+        icon_close = self.icons.button('close', self.colors['text_secondary'])
+        _pad = int(10 * self.dpi_scale * self.zoom_factor)
+
+        def _icon_btn(parent, icon, text, command):
+            frame = tk.Frame(parent, bg=self.colors['bg_card'],
+                           highlightbackground=self.colors['border'],
+                           highlightthickness=1, cursor='hand2')
+            tk.Label(frame, image=icon, bg=self.colors['bg_card']).pack(
+                side='left', padx=(_pad, 2), pady=4, anchor='center')
+            tk.Label(frame, text=text, bg=self.colors['bg_card'],
+                    font=self.font_button, fg=self.colors['text_primary']).pack(
+                side='left', padx=(2, _pad), pady=4, anchor='center')
+            _children = [frame] + list(frame.winfo_children())
+            def _on_enter(e, f=frame, ch=_children, c=self.colors['bg_hover']):
+                for w in ch:
+                    w.config(bg=c)
+            def _on_leave(e, f=frame, ch=_children, c=self.colors['bg_card']):
+                for w in ch:
+                    w.config(bg=c)
+            for widget in _children:
+                widget.bind('<Enter>', _on_enter)
+                widget.bind('<Leave>', _on_leave)
+                widget.bind('<Button-1>', lambda e, cmd=command: cmd())
+            return frame
+
+        _icon_btn(btn_frame, icon_check, '确定', do_clear).pack(side='left', padx=_pad)
+        _icon_btn(btn_frame, icon_close, '取消', dialog.destroy).pack(side='left', padx=_pad)
 
         dialog.deiconify()
 
@@ -6257,73 +6280,116 @@ class BossFilterGUI:
         dialog.title("关于 BOSS 简历筛选器")
         dialog.transient(self.root)
         dialog.resizable(False, False)
+        dialog.configure(background=self.colors['bg_main'])
 
-        _place_window_centered(dialog, 480, 420, parent=self.root)
+        _s = self.dpi_scale * self.zoom_factor
+        dialog_width = max(480, int(480 * _s))
+        dialog_height = max(420, int(420 * _s))
+        self._center_window(dialog, dialog_width, dialog_height)
 
         # 标题
         tk.Label(dialog, text="BOSS 简历筛选器",
-                 font=('Microsoft YaHei UI', 18, 'bold')).pack(pady=(25, 5))
+                 font=(FONT_FAMILY, int(18 * _s), 'bold'),
+                 bg=self.colors['bg_main'],
+                 fg=self.colors['text_primary']).pack(pady=(int(25 * _s), int(5 * _s)))
 
         # 版本号
         tk.Label(dialog, text=f"v{__version__}",
-                 font=('Microsoft YaHei UI', 11),
-                 foreground=self.colors.get('text_secondary', '#666')).pack(pady=(0, 15))
+                 font=(FONT_FAMILY, int(11 * _s)),
+                 bg=self.colors['bg_main'],
+                 fg=self.colors['text_secondary']).pack(pady=(0, int(15 * _s)))
 
         # 功能描述
         tk.Label(dialog, text="智能候选人筛选 · 自动打招呼 · Excel 导出",
-                 font=('Microsoft YaHei UI', 10)).pack(pady=(0, 5))
+                 font=(FONT_FAMILY, int(10 * _s)),
+                 bg=self.colors['bg_main'],
+                 fg=self.colors['text_primary']).pack(pady=(0, int(5 * _s)))
 
         tk.Label(dialog, text="基于 DrissionPage 的 BOSS 直聘自动化工具",
-                 font=('Microsoft YaHei UI', 10),
-                 foreground=self.colors.get('text_secondary', '#666')).pack(pady=(0, 15))
+                 font=(FONT_FAMILY, int(10 * _s)),
+                 bg=self.colors['bg_main'],
+                 fg=self.colors['text_secondary']).pack(pady=(0, int(15 * _s)))
 
         # 分隔线
-        ttk.Separator(dialog, orient="horizontal").pack(fill="x", padx=40, pady=10)
+        tk.Frame(dialog, bg=self.colors['border'], height=1).pack(
+            fill="x", padx=int(40 * _s), pady=int(10 * _s))
 
         # GitHub 项目链接
         github_url = "https://github.com/yaoyouzhong/boss-resume-filter"
-        github_frame = tk.Frame(dialog)
-        github_frame.pack(pady=(5, 2))
+        github_frame = tk.Frame(dialog, bg=self.colors['bg_main'])
+        github_frame.pack(pady=(int(5 * _s), int(2 * _s)))
         tk.Label(github_frame, text="GitHub: ",
-                 font=('Microsoft YaHei UI', 10)).pack(side="left")
+                 font=(FONT_FAMILY, int(10 * _s)),
+                 bg=self.colors['bg_main'],
+                 fg=self.colors['text_primary']).pack(side="left")
         github_label = tk.Label(github_frame, text=github_url,
-                                font=('Microsoft YaHei UI', 10),
-                                foreground="#1E88E5", cursor="hand2")
+                                font=(FONT_FAMILY, int(10 * _s)),
+                                bg=self.colors['bg_main'],
+                                fg=self.colors['primary'],
+                                cursor="hand2")
         github_label.pack(side="left")
         github_label.bind("<Button-1>",
                           lambda e: webbrowser.open(github_url))
 
         # Issue 反馈
         issue_url = "https://github.com/yaoyouzhong/boss-resume-filter/issues"
-        issue_frame = tk.Frame(dialog)
-        issue_frame.pack(pady=(2, 10))
+        issue_frame = tk.Frame(dialog, bg=self.colors['bg_main'])
+        issue_frame.pack(pady=(int(2 * _s), int(10 * _s)))
         tk.Label(issue_frame, text="反馈: ",
-                 font=('Microsoft YaHei UI', 10)).pack(side="left")
+                 font=(FONT_FAMILY, int(10 * _s)),
+                 bg=self.colors['bg_main'],
+                 fg=self.colors['text_primary']).pack(side="left")
         issue_label = tk.Label(issue_frame, text="问题反馈与建议",
-                               font=('Microsoft YaHei UI', 10),
-                               foreground="#1E88E5", cursor="hand2")
+                               font=(FONT_FAMILY, int(10 * _s)),
+                               bg=self.colors['bg_main'],
+                               fg=self.colors['primary'],
+                               cursor="hand2")
         issue_label.pack(side="left")
         issue_label.bind("<Button-1>",
                          lambda e: webbrowser.open(issue_url))
 
         # 开源协议
         tk.Label(dialog, text="MIT License · 开源免费",
-                 font=('Microsoft YaHei UI', 9),
-                 foreground=self.colors.get('text_muted', '#999')).pack(pady=(5, 15))
+                 font=(FONT_FAMILY, int(9 * _s)),
+                 bg=self.colors['bg_main'],
+                 fg=self.colors['text_muted']).pack(pady=(int(5 * _s), int(15 * _s)))
 
         # 按钮区
-        btn_frame = tk.Frame(dialog)
-        btn_frame.pack(pady=(5, 10))
+        btn_frame = tk.Frame(dialog, bg=self.colors['bg_main'])
+        btn_frame.pack(pady=(int(5 * _s), int(10 * _s)))
 
-        tk.Button(btn_frame, text="检查更新", width=12,
-                  font=('Microsoft YaHei UI', 10),
-                  command=lambda: (dialog.destroy(),
-                                   updater.check_and_update_gui(self.root, silent=False))
-                  ).pack(side="left", padx=10)
+        icon_refresh = self.icons.button('refresh', self.colors['primary'])
+        icon_close = self.icons.button('close', self.colors['text_secondary'])
+        _pad = int(10 * _s)
 
-        tk.Button(btn_frame, text="关闭", width=12,
-                  font=('Microsoft YaHei UI', 10),
-                  command=dialog.destroy).pack(side="left", padx=10)
+        def _icon_btn(parent, icon, text, command):
+            frame = tk.Frame(parent, bg=self.colors['bg_card'],
+                           highlightbackground=self.colors['border'],
+                           highlightthickness=1, cursor='hand2')
+            tk.Label(frame, image=icon, bg=self.colors['bg_card']).pack(
+                side='left', padx=(_pad, 2), pady=4, anchor='center')
+            tk.Label(frame, text=text, bg=self.colors['bg_card'],
+                    font=self.font_button, fg=self.colors['text_primary']).pack(
+                side='left', padx=(2, _pad), pady=4, anchor='center')
+            _children = [frame] + list(frame.winfo_children())
+            def _on_enter(e, f=frame, ch=_children, c=self.colors['bg_hover']):
+                for w in ch:
+                    w.config(bg=c)
+            def _on_leave(e, f=frame, ch=_children, c=self.colors['bg_card']):
+                for w in ch:
+                    w.config(bg=c)
+            for widget in _children:
+                widget.bind('<Enter>', _on_enter)
+                widget.bind('<Leave>', _on_leave)
+                widget.bind('<Button-1>', lambda e, cmd=command: cmd())
+            return frame
+
+        _icon_btn(btn_frame, icon_refresh, '检查更新',
+                  lambda: updater.check_and_update_gui(self.root, silent=False)
+                  ).pack(side="left", padx=_pad)
+
+        _icon_btn(btn_frame, icon_close, '关闭',
+                  dialog.destroy).pack(side="left", padx=_pad)
 
         # ESC 关闭
         dialog.bind('<Escape>', lambda e: dialog.destroy())
@@ -6391,16 +6457,20 @@ class BossFilterGUI:
                  font=(FONT_FAMILY, int(14 * fs), 'bold')).pack(anchor="center")
         tk.Label(title_frame, text=f"共 {len(versions)} 个版本", bg=sidebar_bg, fg='#A0AEC0',
                  font=(FONT_FAMILY, int(9 * fs))).pack(anchor="center", pady=(int(2 * fs), 0))
-        if len(versions) > 12:
+        if len(versions) > 20:
             tk.Label(title_frame, text="可滚动查看", bg=sidebar_bg, fg='#718096',
                      font=(FONT_FAMILY, int(9 * fs))).pack(anchor="center")
 
         # 版本列表
         list_container = tk.Frame(left_frame, bg=sidebar_bg)
-        list_container.pack(fill="both", expand=True, padx=(int(12 * fs), int(8 * fs)), pady=(int(4 * fs), int(6 * fs)))
+        list_container.pack(fill="both", expand=True, padx=int(16 * fs), pady=(int(4 * fs), int(6 * fs)))
+
+        # wrapper 撑满容器高度（显示全部版本），内容水平居中
+        list_wrapper = tk.Frame(list_container, bg=sidebar_bg)
+        list_wrapper.pack(fill="both", expand=True)
 
         listbox_font = (FONT_FAMILY, int(12 * fs))
-        listbox = tk.Listbox(list_container, width=18, font=listbox_font,
+        listbox = tk.Listbox(list_wrapper, font=listbox_font,
                              bg=sidebar_bg, fg='#CBD5E0',
                              selectbackground=self.colors['primary'],
                              selectforeground='#FFFFFF',
@@ -6409,9 +6479,9 @@ class BossFilterGUI:
                              selectborderwidth=0,
                              justify='left',
                              relief='flat')
-        list_scrollbar = tk.Scrollbar(list_container, orient="vertical",
+        list_scrollbar = tk.Scrollbar(list_wrapper, orient="vertical",
                                       command=listbox.yview,
-                                      width=max(12, int(12 * fs)),
+                                      width=max(8, int(8 * fs)),
                                       bg='#718096',
                                       activebackground='#CBD5E0',
                                       troughcolor='#1F2937',
@@ -6419,17 +6489,39 @@ class BossFilterGUI:
                                       highlightthickness=0,
                                       relief='flat')
         listbox.configure(yscrollcommand=list_scrollbar.set)
-        listbox.pack(side="left", fill="both", expand=True)
-        list_scrollbar.pack(side="right", fill="y")
+        listbox.pack(fill="y", expand=True)
+        # 滚动条仅在内容溢出时显示
+        list_scrollbar_visible = False
+
+        def update_scrollbar_visibility():
+            nonlocal list_scrollbar_visible
+            # 检查是否需要滚动条
+            if listbox.size() > 0:
+                listbox.update_idletasks()
+                visible_lines = listbox.winfo_height() // listbox.tk.call('font', 'metrics', listbox_font, '-linespace')
+                needs_scroll = listbox.size() > visible_lines
+                if needs_scroll and not list_scrollbar_visible:
+                    list_scrollbar.pack(side="right", fill="y")
+                    list_scrollbar_visible = True
+                elif not needs_scroll and list_scrollbar_visible:
+                    list_scrollbar.pack_forget()
+                    list_scrollbar_visible = False
 
         for idx, (tag, title_line, _) in enumerate(versions):
             display_text = f"  ● {tag}"
-            if idx == 0:
-                display_text = f"  ● {tag}  最新"
             listbox.insert("end", display_text)
             row_bg = '#243041' if idx % 2 == 0 else sidebar_bg
             row_fg = '#F8FAFC' if idx == 0 else '#CBD5E0'
             listbox.itemconfig(idx, background=row_bg, foreground=row_fg)
+
+        # 按内容最大宽度设置 listbox 宽度，使版本列表在侧栏居中
+        max_len = max((len(f"  ● {tag}") for tag, _, _ in versions), default=8)
+        listbox.configure(width=max_len + 2)
+
+        # 初始化后检查是否需要显示滚动条
+        dialog.after(100, update_scrollbar_visibility)
+        # 窗口大小变化时重新检查
+        dialog.bind('<Configure>', lambda e: update_scrollbar_visibility() if e.widget == dialog else None)
 
         # 左侧边栏底部：关于链接
         about_label = tk.Label(left_frame, text="关于",
@@ -6437,7 +6529,7 @@ class BossFilterGUI:
                                font=(FONT_FAMILY, int(10 * fs)),
                                cursor="hand2")
         about_label.pack(padx=int(12 * fs), pady=(int(8 * fs), int(12 * fs)))
-        about_label.bind("<Button-1>", lambda e: (dialog.destroy(), self.show_about()))
+        about_label.bind("<Button-1>", lambda e: self.show_about())
 
         # ---- 右侧详情 ----
         right_outer = tk.Frame(dialog, bg=self.colors['bg_main'])
