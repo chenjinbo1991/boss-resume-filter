@@ -4,12 +4,16 @@
   "downloads": {
     "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter.exe",
     "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter.dmg"
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter.dmg",
+    "job_config": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/job_config.json",
+    "readme": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/README.md"
   },
   "downloads_cn": {
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter.exe",
     "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter.dmg"
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/BOSS_ResumeFilter.dmg",
+    "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/job_config.json",
+    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.8/README.md"
   },
   "release_notes": "## v2.8.8 更新内容\n\n### 体验优化\n- **高分辨率屏幕自动适配**：4K、2K 等高 DPI 显示器上界面大小自动调整\n- **窗口居中更准确**：主窗口启动时和更新弹窗在多显示器环境下正确居中\n- **Mac 安装包更规范**：DMG 双击打开后，直接拖拽应用到 Applications 文件夹即可安装\n- **关于页面新增开源协议声明**：显示 MIT License 开源协议信息\n- **侧边栏图标更新**：岗位配置、筛选结果、数据统计使用更匹配的图标\n- **Logo 升级为彩色放大镜**：BOSS 标题旁的 Logo 改为高分辨率彩色图案\n- **清空候选人弹窗优化**：背景色统一、按钮带确认/取消图标、尺寸随 DPI 自适应\n- **关于页面风格统一**：背景色、字体、按钮与其他弹窗保持一致\n- **更新日志版本列表居中**：版本号左对齐、列表块居中显示\n- **国内备用更新源**：新增 Gitee 更新检测和下载，国内用户无需 VPN 也能快速检测和下载新版本\n\n### 问题修复\n- **Mac 版本检测修复**：修复 Mac 应用启动时错误提示有新版本的问题\n- **Mac 配置读取修复**：修复 Mac 应用无法读取岗位配置的问题\n- **Mac 首次启动配置初始化**：修复 DMG 安装后首次启动时岗位配置为空的问题\n- **招聘需求模板读取修复**：修复 Mac 应用点击招聘需求模板按钮时提示找不到模板的问题\n- **命令行工具配置读取修复**：修复命令行模式下配置文件读取失败的问题\n- **Text 输入框滚动修复**：修复双指滚动时会滚动整个页面的问题\n- **Mac 自动更新修复**：修复自动更新后程序不重启的问题\n- **Mac 窗口恢复修复**：修复最小化后点击 Dock 图标无法恢复窗口的问题\n- **模型列表对话框修复**：修复点击获取模型列表后对话框异常退出的问题\n- **更新日志弹窗修复**：修复点击\"关于\"链接或\"检查更新\"按钮时弹窗意外关闭的问题"
 }

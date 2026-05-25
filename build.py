@@ -663,7 +663,9 @@ def update_latest_json(version, release_notes, downloads_cn=None):
         "downloads": {
             "windows": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.exe",
             "macos": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter_mac.zip",
-            "macos_dmg": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.dmg"
+            "macos_dmg": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.dmg",
+            "job_config": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/job_config.json",
+            "readme": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/README.md"
         },
         "release_notes": release_notes
     }
@@ -842,14 +844,20 @@ def _gitee_release(version, release_title, release_notes):
     tag = f"v{version}"
     api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
 
-    # 按平台选择上传的主产物（不上传 config/readme，Gitee 只提供主程序下载）
+    # 按平台选择上传的主产物
     if IS_MAC:
         artifacts = [
             DIST_DIR / "BOSS_ResumeFilter.dmg",
             DIST_DIR / "BOSS_ResumeFilter_mac.zip",
+            DIST_DIR / "job_config.json",
+            DIST_DIR / "README.md",
         ]
     else:
-        artifacts = [DIST_DIR / "BOSS_ResumeFilter.exe"]
+        artifacts = [
+            DIST_DIR / "BOSS_ResumeFilter.exe",
+            DIST_DIR / "job_config.json",
+            DIST_DIR / "README.md",
+        ]
 
     try:
         # 查找已有 release
@@ -920,6 +928,16 @@ def _gitee_release(version, release_title, release_notes):
                 )
             elif f.name.endswith(".dmg"):
                 downloads_cn["macos_dmg"] = asset.get(
+                    "browser_download_url",
+                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
+                )
+            elif f.name == "job_config.json":
+                downloads_cn["job_config"] = asset.get(
+                    "browser_download_url",
+                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
+                )
+            elif f.name == "README.md":
+                downloads_cn["readme"] = asset.get(
                     "browser_download_url",
                     f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
                 )
