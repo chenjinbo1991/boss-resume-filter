@@ -294,7 +294,7 @@ def _check_dependencies():
     if missing:
         print("[依赖缺失] 以下包未安装：\n")
         for import_name, pkg_name in missing:
-            print(f"  ✗ {pkg_name}（import '{import_name}' 失败）")
+            print(f"  [X] {pkg_name}（import '{import_name}' 失败）")
         print(f"\n请在 pack_venv 中安装缺失依赖后重试：")
         print(f"  pack_venv\\Scripts\\pip install -r requirements.txt\n")
         sys.exit(1)
@@ -945,18 +945,25 @@ def _gitee_upload_local(version, release_title, release_notes):
     api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
 
     if IS_MAC:
-        artifacts = [
+        # 第一批：安装包 + 配置（优先）
+        batch1 = [
             DIST_DIR / "BOSS_ResumeFilter.dmg",
-            DIST_DIR / "BOSS_ResumeFilter_mac.zip",
             DIST_DIR / "job_config.json",
             DIST_DIR / "README.md",
         ]
+        # 第二批：自动更新用 ZIP（放最后）
+        batch2 = [DIST_DIR / "BOSS_ResumeFilter_mac.zip"]
     else:
-        artifacts = [
+        batch1 = [
             DIST_DIR / "BOSS_ResumeFilter.exe",
             DIST_DIR / "job_config.json",
             DIST_DIR / "README.md",
         ]
+        batch2 = []
+
+    # 过滤存在的文件
+    batch1 = [f for f in batch1 if f.exists()]
+    batch2 = [f for f in batch2 if f.exists()]
 
     try:
         release_id, _ = _gitee_find_or_create_release(
@@ -964,22 +971,48 @@ def _gitee_upload_local(version, release_title, release_notes):
 
         downloads_cn = {}
         failed = []
-        for f in artifacts:
-            if not f.exists():
-                print(f"  [Gitee 跳过] 文件不存在: {f.name}")
-                continue
-            try:
-                name, asset = _gitee_upload_single(f, api_base, token, release_id)
-                url = asset.get("browser_download_url", _gitee_asset_url(owner, repo, tag, name))
-                downloads_cn[_downloads_cn_key(name)] = url
-                print(f"  [OK] Gitee 已上传: {name}")
-            except requests.exceptions.RequestException as e:
-                print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
-                failed.append(f.name)
+
+        # 第一批：并行上传安装包和配置
+        if batch1:
+            print(f"  并行上传 {len(batch1)} 个本地产物到 Gitee Release...")
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {
+                    pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
+                    for f in batch1
+                }
+                for future in as_completed(futures):
+                    f = futures[future]
+                    try:
+                        name, asset = future.result()
+                        url = asset.get("browser_download_url", _gitee_asset_url(owner, repo, tag, name))
+                        downloads_cn[_downloads_cn_key(name)] = url
+                        print(f"  [OK] Gitee 已上传: {name}")
+                    except Exception as e:
+                        print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
+                        failed.append(f.name)
+
+        # 第二批：ZIP（自动更新用，放最后）
+        if batch2:
+            print(f"  上传自动更新包...")
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {
+                    pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
+                    for f in batch2
+                }
+                for future in as_completed(futures):
+                    f = futures[future]
+                    try:
+                        name, asset = future.result()
+                        url = asset.get("browser_download_url", _gitee_asset_url(owner, repo, tag, name))
+                        downloads_cn[_downloads_cn_key(name)] = url
+                        print(f"  [OK] Gitee 已上传: {name}")
+                    except Exception as e:
+                        print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
+                        failed.append(f.name)
 
         if failed:
             print(f"\n{'!'*60}")
-            print(f"  ⚠️  Gitee 上传部分失败: {', '.join(failed)}")
+            print(f"  [!!]  Gitee 上传部分失败: {', '.join(failed)}")
             print(f"  手动补传: python build.py --gitee-upload {version}")
             print(f"{'!'*60}\n")
 
@@ -987,7 +1020,7 @@ def _gitee_upload_local(version, release_title, release_notes):
 
     except requests.exceptions.RequestException as e:
         print(f"\n{'!'*60}")
-        print(f"  ⚠️  Gitee Release 整体失败: {e}")
+        print(f"  [!!]  Gitee Release 整体失败: {e}")
         print(f"  手动补传: python build.py --gitee-upload {version}")
         print(f"{'!'*60}\n")
         return None
@@ -1048,15 +1081,6 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     else:
         opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
 
-    # 所有需要上传到 Gitee 的本地文件（两个平台共用）
-    all_local_files = [
-        DIST_DIR / "BOSS_ResumeFilter.exe",
-        DIST_DIR / "BOSS_ResumeFilter.dmg",
-        DIST_DIR / "BOSS_ResumeFilter_mac.zip",
-        DIST_DIR / "job_config.json",
-        DIST_DIR / "README.md",
-    ]
-
     print(f"\n>>> 同步 Gitee Release（从 GitHub 下载对端产物）")
 
     if need_wait:
@@ -1085,7 +1109,7 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
             elapsed += poll_interval
         else:
             print(f"\n{'!'*60}")
-            print(f"  ⚠️  等待超时 ({max_wait}s)，CI 可能未完成")
+            print(f"  [!!]  等待超时 ({max_wait}s)，CI 可能未完成")
             print(f"  手动同步: python build.py --gitee-upload {version}")
             print(f"{'!'*60}\n")
             return None
@@ -1111,18 +1135,14 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
                 print(f"  [失败] 下载失败: {name} ({e})")
 
     if not downloaded:
-        print(f"\n  ⚠️  未成功下载任何对端产物")
+        print(f"\n  [!!]  未成功下载任何对端产物")
         return None
 
-    # 收集所有需要上传的文件（本地已有的 + 刚下载的）
-    upload_files = []
-    for f in all_local_files:
-        if f.exists():
-            upload_files.append(f)
-    upload_files.extend(downloaded)
+    # 只上传从 GitHub 下载的对端产物（本地文件由 _gitee_upload_local 负责）
+    upload_files = downloaded
 
     # 并行上传到 Gitee
-    print(f"  并行上传 {len(upload_files)} 个文件到 Gitee Release...")
+    print(f"  并行上传 {len(upload_files)} 个对端产物到 Gitee Release...")
     try:
         release_id, existing = _gitee_find_or_create_release(
             api_base, token, tag, release_title, release_notes)
@@ -1149,7 +1169,7 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
 
         if failed:
             print(f"\n{'!'*60}")
-            print(f"  ⚠️  Gitee 上传部分失败: {', '.join(failed)}")
+            print(f"  [!!]  Gitee 上传部分失败: {', '.join(failed)}")
             print(f"  手动补传: python build.py --gitee-upload {version}")
             print(f"{'!'*60}\n")
 
@@ -1161,7 +1181,7 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     except requests.exceptions.RequestException as e:
         shutil.rmtree(download_dir, ignore_errors=True)
         print(f"\n{'!'*60}")
-        print(f"  ⚠️  Gitee Release 同步失败: {e}")
+        print(f"  [!!]  Gitee Release 同步失败: {e}")
         print(f"  手动补传: python build.py --gitee-upload {version}")
         print(f"{'!'*60}\n")
         return None
@@ -1214,7 +1234,7 @@ def main():
         try:
             r = subprocess.run(
                 ["gh", "release", "view", tag, "--json", "name,body"],
-                capture_output=True, text=True, cwd=BASE_DIR,
+                capture_output=True, text=True, encoding='utf-8', cwd=BASE_DIR,
             )
             if r.returncode == 0:
                 data = json.loads(r.stdout)
