@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+from constants import SCORE_THRESHOLD_PASS
 
 
 CANDIDATES_FILE = "candidates_all.json"
@@ -48,12 +49,12 @@ def save_candidates_all(candidates_all):
     """保存 candidates_all.json，支持去重、中断恢复和 .bak 备份。"""
     unique_candidates = _dedupe_candidates(candidates_all)
 
-    # 过滤低于 55 分的候选人（淘汰候选人不保留）
+    # 过滤低于通过分的候选人（淘汰候选人不保留）
     before_count = len(unique_candidates)
-    unique_candidates = [c for c in unique_candidates if c.get('match_score', 0) >= 55]
+    unique_candidates = [c for c in unique_candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS]
     filtered_count = before_count - len(unique_candidates)
     if filtered_count > 0:
-        print(f"已过滤 {filtered_count} 个低于 55 分的淘汰候选人")
+        print(f"已过滤 {filtered_count} 个低于 {SCORE_THRESHOLD_PASS} 分的淘汰候选人")
 
     if os.path.exists(CANDIDATES_FILE):
         try:
@@ -97,8 +98,18 @@ def _dedupe_candidates(candidates_all):
     return unique_candidates
 
 
-def is_already_greeted(candidates_all, geek_id, job_name=None):
-    """检查是否已打过招呼，支持 (geek_id, job_name) 复合键。"""
+def is_already_greeted(candidates_all, geek_id, job_name=None, greeted_index=None):
+    """检查是否已打过招呼，支持 (geek_id, job_name) 复合键。
+
+    可通过 greeted_index 参数传入预建的 set[(geek_id, job_name)] 索引，
+    避免每次 O(n) 遍历。用 build_greeted_index() 构建。
+    """
+    if greeted_index is not None:
+        if job_name is not None:
+            return (geek_id, job_name) in greeted_index
+        # 无 job_name 时检查该 geek_id 是否在任何岗位打过招呼
+        return any(gid == geek_id for gid, _ in greeted_index)
+
     for c in candidates_all:
         if c.get('geek_id') == geek_id and c.get('greet_sent') is True:
             if job_name is not None:
@@ -107,3 +118,12 @@ def is_already_greeted(candidates_all, geek_id, job_name=None):
             else:
                 return True
     return False
+
+
+def build_greeted_index(candidates_all):
+    """构建 (geek_id, job_name) 打招呼索引，O(n) 一次构建，后续查询 O(1)。"""
+    return set(
+        (c.get('geek_id'), c.get('job_name', ''))
+        for c in candidates_all
+        if c.get('geek_id') and c.get('greet_sent') is True
+    )

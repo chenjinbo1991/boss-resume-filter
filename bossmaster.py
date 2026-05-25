@@ -23,28 +23,14 @@ from filtering import (
     parse_experience_years,
 )
 from storage import (
+    build_greeted_index,
     get_greeted_geek_ids,
     is_already_greeted,
     load_candidates_all,
     save_candidates_all,
 )
-
-
-# ========== 路径常量 ==========
-def _get_base_dir():
-    if getattr(sys, 'frozen', False):
-        exe_dir = Path(sys.executable).parent.resolve()
-        if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
-            return exe_dir.parent.parent.parent
-        return exe_dir
-    return Path(__file__).parent.resolve()
-
-
-BASE_DIR = _get_base_dir()
-SELECTORS_PATH = BASE_DIR / "selectors.json"
-CONFIG_PATH = BASE_DIR / "job_config.json"
-CANDIDATES_PATH = BASE_DIR / "candidates_all.json"
-CANDIDATES_XLSX_PATH = BASE_DIR / "candidates_all.xlsx"
+from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
+from paths import BASE_DIR, SELECTORS_PATH, CONFIG_PATH, CANDIDATES_PATH, CANDIDATES_XLSX_PATH
 
 
 class StopRequested(Exception):
@@ -241,14 +227,14 @@ def export_to_excel(candidates, filename):
         for i, c in enumerate(sorted_candidates):
             score = c.get('match_score', 0)
             # 根据匹配分计算推荐指数
-            if score >= 75:
+            if score >= SCORE_THRESHOLD_STRONG:
                 recommend_level = "强烈推荐"
-            elif score >= 65:
+            elif score >= SCORE_THRESHOLD_RECOMMEND:
                 recommend_level = "推荐"
-            elif score >= 55:
+            elif score >= SCORE_THRESHOLD_PASS:
                 recommend_level = "待定"
             else:
-                continue  # 低于 55 分直接过滤，不进入导出
+                continue  # 低于通过分直接过滤，不进入导出
 
             summary_info = extract_summary_info(c.get('summary', ''))
             row = {
@@ -562,7 +548,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
         if scroll_round > 0:
             if iframe:
                 # 同时滚动 window 和可能的滚动容器（BOSS 直聘虚拟列表的实际滚动目标）
-                _scroll_sel = _sel('scroll', 'container_js_selectorors',
+                _scroll_sel = _sel('scroll', 'container_js_selectors',
                     '.candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]')
                 iframe.run_js(f'''
                     window.scrollBy(0, 800);
@@ -1225,11 +1211,11 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
         if stop_event and stop_event.is_set():
             raise StopRequested()
         passed, score, details = filter_candidate(candidate['summary'], job_info['rule'])
-        if passed and score >= 55:
+        if passed and score >= SCORE_THRESHOLD_PASS:
             # 计算推荐等级
-            if score >= 75:
+            if score >= SCORE_THRESHOLD_STRONG:
                 recommend_level = "强烈推荐"
-            elif score >= 65:
+            elif score >= SCORE_THRESHOLD_RECOMMEND:
                 recommend_level = "推荐"
             else:
                 recommend_level = "待定"

@@ -23,41 +23,21 @@ from pathlib import Path
 from urllib.parse import urlparse
 from security import save_api_key, get_api_key, delete_api_key
 import updater
+from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
 
 # ========== 路径常量 - 解决相对路径问题 ==========
 # PyInstaller --onefile 模式下 __file__ 指向临时解压目录，需特殊处理
-def _get_base_dir():
-    import sys
-    if getattr(sys, 'frozen', False):
-        exe_dir = Path(sys.executable).parent.resolve()
-        # macOS .app: sys.executable 在 .app/Contents/MacOS/ 内，
-        # 用户配置文件（job_config.json 等）在 .app 旁边
-        if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
-            base = exe_dir.parent.parent.parent
-        else:
-            base = exe_dir
+from paths import BASE_DIR, get_base_dir, ensure_config_files
 
-        # 首次运行时配置文件可能不存在（如 macOS DMG 安装后），
-        # 从嵌入的 _MEIPASS 复制默认配置到可写位置
-        meipass = Path(sys._MEIPASS)
-        for fname in ["job_config.json", "selectors.json", "api_config.json"]:
-            target = base / fname
-            if not target.exists():
-                src = meipass / fname
-                if src.exists():
-                    import shutil
-                    shutil.copy2(str(src), str(target))
-
-        return base
-    return Path(__file__).parent.resolve()
-
-BASE_DIR = _get_base_dir()
 CONFIG_PATH = BASE_DIR / "job_config.json"
 CANDIDATES_PATH = BASE_DIR / "candidates_all.json"
 CANDIDATES_XLSX_PATH = BASE_DIR / "candidates_all.xlsx"
 CONFIG_BACKUP_PATH = BASE_DIR / "job_config.json.bak"
 API_CONFIG_PATH = BASE_DIR / "api_config.json"
 CHROME_DEBUG_PORT_FILE = BASE_DIR / ".chrome_debug_port"
+
+# 首次运行时确保配置文件存在
+ensure_config_files(BASE_DIR)
 
 
 def get_font_family():
@@ -2420,11 +2400,11 @@ class BossFilterGUI:
                     cutoff_str = cutoff.strftime("%Y%m%d_%H%M%S")
                     candidates = [c for c in candidates if c.get('batch_timestamp', '') >= cutoff_str]
 
-            # 汇总统计（只计 ≥55 分的候选人）
-            qualified = [c for c in candidates if c.get('match_score', 0) >= 55]
+            # 汇总统计（只计通过分的候选人）
+            qualified = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS]
             total = len(qualified)
-            strong = sum(1 for c in qualified if c.get('match_score', 0) >= 75)
-            recommended = sum(1 for c in qualified if 65 <= c.get('match_score', 0) < 75)
+            strong = sum(1 for c in qualified if c.get('match_score', 0) >= SCORE_THRESHOLD_STRONG)
+            recommended = sum(1 for c in qualified if SCORE_THRESHOLD_RECOMMEND <= c.get('match_score', 0) < SCORE_THRESHOLD_STRONG)
             greeted = sum(1 for c in qualified if c.get('greet_sent', False))
 
             self.stats_summary_vars['total'].set(str(total))
@@ -2446,13 +2426,13 @@ class BossFilterGUI:
             for c in candidates:
                 job = c.get('job_name', '未知')
                 score = c.get('match_score', 0)
-                if score < 55:
-                    continue  # 低于 55 分不计入统计
+                if score < SCORE_THRESHOLD_PASS:
+                    continue  # 低于通过分不计入统计
 
                 job_stats[job]['total'] += 1
-                if score >= 75:
+                if score >= SCORE_THRESHOLD_STRONG:
                     job_stats[job]['strong'] += 1
-                elif score >= 65:
+                elif score >= SCORE_THRESHOLD_RECOMMEND:
                     job_stats[job]['recommended'] += 1
                 else:
                     job_stats[job]['pending'] += 1
@@ -2704,15 +2684,15 @@ class BossFilterGUI:
                 if selected_job != "全部岗位":
                     candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
 
-                # 只统计 ≥55 分的候选人
-                candidates = [c for c in candidates if c.get('match_score', 0) >= 55]
+                # 只统计通过分的候选人
+                candidates = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS]
 
                 total = len(candidates)
                 greeted = sum(1 for c in candidates if c.get('greet_sent', False))
-                # 强烈推荐：匹配分>=75
-                strong = sum(1 for c in candidates if c.get('match_score', 0) >= 75)
-                # 推荐：匹配分>=65 且<75
-                recommended = sum(1 for c in candidates if 65 <= c.get('match_score', 0) < 75)
+                # 强烈推荐：匹配分>=SCORE_THRESHOLD_STRONG
+                strong = sum(1 for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_STRONG)
+                # 推荐：匹配分>=SCORE_THRESHOLD_RECOMMEND 且<SCORE_THRESHOLD_STRONG
+                recommended = sum(1 for c in candidates if SCORE_THRESHOLD_RECOMMEND <= c.get('match_score', 0) < SCORE_THRESHOLD_STRONG)
 
                 self.home_stats_vars['total_home'].set(str(total))
                 self.home_stats_vars['recommended_home'].set(str(recommended))
@@ -2752,19 +2732,19 @@ class BossFilterGUI:
                 if selected_job != "全部岗位":
                     candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
 
-            # 根据类型筛选候选人（只统计 ≥55 分）
+            # 根据类型筛选候选人（只统计通过分）
             if stat_type == 'total_home':
                 title = "累计候选人"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 55]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS]
             elif stat_type == 'strong_home':
                 title = "强烈推荐"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 75]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_STRONG]
             elif stat_type == 'recommended_home':
                 title = "推荐"
-                filtered = [c for c in candidates if 65 <= c.get('match_score', 0) < 75]
+                filtered = [c for c in candidates if SCORE_THRESHOLD_RECOMMEND <= c.get('match_score', 0) < SCORE_THRESHOLD_STRONG]
             elif stat_type == 'greeted_home':
                 title = "已打招呼"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 55 and c.get('greet_sent', False)]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS and c.get('greet_sent', False)]
             else:
                 return
 
@@ -2944,7 +2924,7 @@ class BossFilterGUI:
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
-                level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
+                level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
                 status = "已招呼" if c.get('greet_sent', False) else "未招呼"
                 salary, exp = self._parse_salary_exp(c.get('summary', ''))
                 ai_adj = c.get('llm_adjustment')
@@ -2990,18 +2970,18 @@ class BossFilterGUI:
             if stat_type == 'passed':
                 # 通过筛选：强烈推荐 + 推荐
                 title = "通过筛选"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 65]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_RECOMMEND]
                 # 只显示已打招呼的
                 detail_type = 'greeted'
             elif stat_type == 'strong':
                 # 强烈推荐
                 title = "强烈推荐"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= 75]
+                filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_STRONG]
                 detail_type = 'all'
             elif stat_type == 'recommended':
                 # 推荐
                 title = "推荐"
-                filtered = [c for c in candidates if 65 <= c.get('match_score', 0) < 75]
+                filtered = [c for c in candidates if SCORE_THRESHOLD_RECOMMEND <= c.get('match_score', 0) < SCORE_THRESHOLD_STRONG]
                 detail_type = 'all'
             else:
                 return
@@ -3085,7 +3065,7 @@ class BossFilterGUI:
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
-                level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
+                level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
                 status = "已招呼" if c.get('greet_sent', False) else "未招呼"
                 salary, exp = self._parse_salary_exp(c.get('summary', ''))
                 ai_adj = c.get('llm_adjustment')
@@ -5441,13 +5421,13 @@ class BossFilterGUI:
                 # 计算新的指标
                 total = len(candidates)
 
-                # 强烈推荐：匹配分>=75
-                strong_list = [c for c in candidates if c.get('match_score', 0) >= 75]
+                # 强烈推荐：匹配分>=SCORE_THRESHOLD_STRONG
+                strong_list = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_STRONG]
                 strong_total = len(strong_list)
                 strong_greeted = sum(1 for c in strong_list if c.get('greet_sent', False))
 
-                # 推荐：匹配分>=65 且<75
-                recommended_list = [c for c in candidates if 65 <= c.get('match_score', 0) < 75]
+                # 推荐：匹配分>=SCORE_THRESHOLD_RECOMMEND 且<SCORE_THRESHOLD_STRONG
+                recommended_list = [c for c in candidates if SCORE_THRESHOLD_RECOMMEND <= c.get('match_score', 0) < SCORE_THRESHOLD_STRONG]
                 recommended_total = len(recommended_list)
                 recommended_greeted = sum(1 for c in recommended_list if c.get('greet_sent', False))
 
@@ -5476,15 +5456,15 @@ class BossFilterGUI:
 
                 for c in sorted_candidates[:100]:
                     score = c.get('match_score', 0)
-                    if score < 55:
-                        continue  # 低于 55 分不显示
-                    level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
+                    if score < SCORE_THRESHOLD_PASS:
+                        continue  # 低于通过分不显示
+                    level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
                     status = "已招呼" if c.get('greet_sent', False) else "未招呼"
 
                     # 根据推荐等级设置颜色标记
-                    if score >= 75:
+                    if score >= SCORE_THRESHOLD_STRONG:
                         tag = 'strong_recommend'
-                    elif score >= 65:
+                    elif score >= SCORE_THRESHOLD_RECOMMEND:
                         tag = 'recommend'
                     else:
                         tag = 'pending'
@@ -5671,7 +5651,7 @@ class BossFilterGUI:
         lines.append("")
         lines.append("【评分信息】")
         score = c.get('match_score', 0)
-        level = "强烈推荐" if score >= 75 else ("推荐" if score >= 65 else "待定")
+        level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
         lines.append(f"  匹配分：{score}（{level}）")
         lines.append(f"  技能匹配：{c.get('skill_match_ratio', '—')}")
         if c.get('greet_sent'):

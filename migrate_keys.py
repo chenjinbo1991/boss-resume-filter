@@ -63,7 +63,7 @@ def migrate():
                 try:
                     from security import get_api_key as get_old_api_key
                     old_key = get_old_api_key(model_config["api_key_ref"])
-                except:
+                except Exception:
                     pass
 
                 if old_key:

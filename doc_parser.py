@@ -9,16 +9,10 @@ import json
 import re
 import os
 from typing import Dict, List
+from constants import MAJOR_CITIES
 
 
-# 中国主要城市列表（按长度降序，优先匹配长名如"哈尔滨"）
-_MAJOR_CITIES = sorted([
-    '北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '武汉',
-    '西安', '苏州', '重庆', '长沙', '合肥', '郑州', '天津', '济南',
-    '青岛', '厦门', '福州', '珠海', '东莞', '无锡', '宁波', '大连',
-    '沈阳', '昆明', '贵阳', '南宁', '海口', '南昌', '太原', '长春',
-    '哈尔滨', '石家庄',
-], key=len, reverse=True)
+_major_cities_set = set(MAJOR_CITIES)
 
 
 def _resolve_city(raw: str) -> str:
@@ -29,10 +23,10 @@ def _resolve_city(raw: str) -> str:
     m = re.search(r'([一-龥]{2,3})市', raw)
     if m:
         candidate = m.group(1)
-        if candidate in _MAJOR_CITIES:
+        if candidate in _major_cities_set:
             return candidate
     # 直接匹配城市名（按长度降序，防止"吉林"误匹配"吉林市"）
-    for city in _MAJOR_CITIES:
+    for city in MAJOR_CITIES:
         if city in raw:
             return city
     return ""
@@ -61,7 +55,7 @@ def _extract_work_location(text: str) -> str:
         if city:
             return city
     # 兜底：全文扫描城市名
-    for city in _MAJOR_CITIES:
+    for city in MAJOR_CITIES:
         if city in text:
             return city
     return ""
@@ -405,7 +399,7 @@ def parse_job_requirements(text: str) -> Dict:
         required_conditions.append('211 院校')
 
     # 年龄限制
-    age_match = re.search(r'年龄在？\s*(\d+)\s*岁', required_section)
+    age_match = re.search(r'年龄在?\s*(\d+)\s*岁', required_section)
     max_age = None
     if age_match:
         max_age = int(age_match.group(1))
@@ -651,7 +645,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
             try:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     existing_config = json.load(f)
-            except:
+            except Exception:
                 existing_config = {"job_requirements": {}}
         else:
             existing_config = {"job_requirements": {}}
@@ -735,7 +729,7 @@ def main():
                     job_keys = [k for k in existing.get("job_requirements", {}).keys() if k != "default"]
                     if job_title in job_keys:
                         is_new_job = False
-            except:
+            except Exception:
                 pass
 
         if is_new_job:

@@ -16,6 +16,7 @@ import plistlib
 from pathlib import Path
 from tkinter import messagebox
 import tkinter as tk
+from paths import get_base_dir
 
 
 def _place_dialog_centered(dialog, parent, width, height):
@@ -35,20 +36,6 @@ def _place_dialog_centered(dialog, parent, width, height):
     x = min(max(0, x), max(0, screen_width - width))
     y = min(max(0, y), max(0, screen_height - height))
     dialog.geometry(f"{width}x{height}+{x}+{y}")
-
-
-def get_base_dir():
-    """获取程序基础目录（处理 PyInstaller 打包后的路径）"""
-    if getattr(sys, 'frozen', False):
-        exe_dir = Path(sys.executable).parent.resolve()
-        # macOS .app: sys.executable 在 .app/Contents/MacOS/ 内，
-        # 用户配置文件和更新文件在 .app 旁边
-        if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
-            return exe_dir.parent.parent.parent
-        return exe_dir
-    else:
-        # 开发环境
-        return Path(__file__).parent.resolve()
 
 
 def get_current_version():
@@ -108,7 +95,7 @@ def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
             try:
                 parts = [int(x) for x in v.split('.')]
                 return tuple(parts)
-            except:
+            except Exception:
                 return (0, 0, 0)
 
         current_tuple = parse_version(result['current'])
@@ -172,7 +159,7 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
             try:
                 parts = [int(x) for x in v.split('.')]
                 return tuple(parts)
-            except:
+            except Exception:
                 return (0, 0, 0)
 
         current_tuple = parse_version(result['current'])

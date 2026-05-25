@@ -29,7 +29,7 @@
   "scroll": {
     "_desc": "滚动控制和到底检测",
     "bottom_texts": ["到底", "没有更多"],
-    "container_js_selectorors": ".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]",
+    "container_js_selectors": ".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]",
     "scroll_amount": 800
   },
 

@@ -9,6 +9,7 @@ from filtering import (
 )
 from storage import load_candidates_all, save_candidates_all
 from doc_parser import _extract_salary_range
+from constants import SCORE_THRESHOLD_STRONG
 import contextlib
 import io
 import json
@@ -101,7 +102,7 @@ def test_filter_candidate_scores_and_hard_rejections_are_stable():
         rule,
     )
     assert passed is True
-    assert score >= 75
+    assert score >= SCORE_THRESHOLD_STRONG
     assert details["skill_matched_count"] == 4
 
     passed, _, details = filter_candidate(

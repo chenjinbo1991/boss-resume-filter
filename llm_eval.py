@@ -5,8 +5,10 @@ import re
 import time
 import random
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
+from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
 
 import requests
 
@@ -197,11 +199,24 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str) -> LLMEvalResu
 
 def _recalc_recommend_level(score: int) -> str:
     """Recalculate recommend level from adjusted score."""
-    if score >= 75:
+    if score >= SCORE_THRESHOLD_STRONG:
         return "强烈推荐"
-    elif score >= 65:
+    elif score >= SCORE_THRESHOLD_RECOMMEND:
         return "推荐"
     return "待定"
+
+
+def _evaluate_single(index: int, candidate: dict, job_requirement: str,
+                     api_config: dict, api_key: str) -> tuple:
+    """Evaluate a single candidate with LLM. Returns (index, result, candidate_ref)."""
+    messages = _build_prompt(job_requirement, candidate.get('summary', ''))
+    result = _call_llm_api(messages, api_config, api_key)
+
+    # Rate limiting delay between calls
+    delay = 1.0 + random.uniform(0, 0.5)
+    time.sleep(delay)
+
+    return index, result, candidate
 
 
 def evaluate_batch(
@@ -213,17 +228,19 @@ def evaluate_batch(
     max_candidates: int = 50,
     progress_callback=None,
     stop_event: Optional[threading.Event] = None,
+    max_workers: int = 3,
 ) -> list:
-    """Evaluate candidates with LLM and adjust scores.
+    """Evaluate candidates with LLM and adjust scores (concurrent).
 
     Args:
-        candidates: list of candidate_record dicts (passed filter, score >= 55)
+        candidates: list of candidate_record dicts (passed filter, score >= SCORE_THRESHOLD_PASS)
         job_requirement: raw job requirement text
         api_config: dict with 'base_url' and 'model'
         api_key: API key string
         max_candidates: max number of candidates to evaluate
         progress_callback: callable(percentage, description)
         stop_event: threading.Event for cancellation
+        max_workers: number of concurrent API calls (default 3)
 
     Returns:
         Updated candidates list (same objects, modified in-place).
@@ -235,52 +252,69 @@ def evaluate_batch(
     to_evaluate = candidates[:max_candidates]
     total = len(to_evaluate)
 
-    print(f"开始 AI 评估：{total} 人（共 {len(candidates)} 人通过筛选）")
+    print(f"开始 AI 评估：{total} 人（共 {len(candidates)} 人通过筛选），并发数：{max_workers}")
 
-    for i, candidate in enumerate(to_evaluate):
-        # Check stop event
-        if stop_event and stop_event.is_set():
-            print("  [停止] 用户请求停止，跳过剩余 AI 评估")
-            break
+    completed_count = 0
+    count_lock = threading.Lock()
 
-        name = candidate.get('name', '?')
-        rule_score = candidate.get('match_score', 0)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_index = {}
+        for i, candidate in enumerate(to_evaluate):
+            if stop_event and stop_event.is_set():
+                print("  [停止] 用户请求停止，跳过剩余 AI 评估")
+                break
+            future = executor.submit(
+                _evaluate_single, i, candidate, job_requirement, api_config, api_key
+            )
+            future_to_index[future] = i
 
-        # Build prompt
-        messages = _build_prompt(job_requirement, candidate.get('summary', ''))
+        # Collect results as they complete
+        for future in as_completed(future_to_index):
+            if stop_event and stop_event.is_set():
+                # Cancel remaining futures
+                for f in future_to_index:
+                    f.cancel()
+                print("  [停止] 用户请求停止，取消剩余 AI 评估")
+                break
 
-        # Call LLM
-        result = _call_llm_api(messages, api_config, api_key)
+            try:
+                idx, result, candidate = future.result()
+                name = candidate.get('name', '?')
+                rule_score = candidate.get('match_score', 0)
 
-        if result.success:
-            # Store original score
-            candidate['rule_score'] = rule_score
+                if result.success:
+                    # Store original score
+                    candidate['rule_score'] = rule_score
 
-            # Apply adjustment and clamp
-            new_score = max(0, min(100, rule_score + result.adjustment))
-            candidate['match_score'] = new_score
-            candidate['recommend_level'] = _recalc_recommend_level(new_score)
+                    # Apply adjustment and clamp
+                    new_score = max(0, min(100, rule_score + result.adjustment))
+                    candidate['match_score'] = new_score
+                    candidate['recommend_level'] = _recalc_recommend_level(new_score)
 
-            # Store LLM metadata
-            candidate['llm_evaluated'] = True
-            candidate['llm_adjustment'] = result.adjustment
-            candidate['llm_reason'] = result.reason
-            candidate['llm_model'] = result.model
+                    # Store LLM metadata
+                    candidate['llm_evaluated'] = True
+                    candidate['llm_adjustment'] = result.adjustment
+                    candidate['llm_reason'] = result.reason
+                    candidate['llm_model'] = result.model
 
-            sign = "+" if result.adjustment > 0 else ""
-            print(f"  [{i+1}/{total}] {name}: {rule_score} → {new_score} ({sign}{result.adjustment}) {result.reason}")
-        else:
-            candidate['llm_evaluated'] = False
-            print(f"  [{i+1}/{total}] {name}: 评估失败 ({result.reason})，保留原始分数 {rule_score}")
+                    sign = "+" if result.adjustment > 0 else ""
+                    print(f"  [{idx+1}/{total}] {name}: {rule_score} → {new_score} ({sign}{result.adjustment}) {result.reason}")
+                else:
+                    candidate['llm_evaluated'] = False
+                    print(f"  [{idx+1}/{total}] {name}: 评估失败 ({result.reason})，保留原始分数 {rule_score}")
 
-        # Progress callback
-        if progress_callback:
-            pct = int((i + 1) / total * 100)
-            progress_callback(pct, f"AI 评估中... {i+1}/{total}")
+                # Update progress (thread-safe)
+                with count_lock:
+                    completed_count += 1
+                    current = completed_count
 
-        # Rate limiting delay between calls (skip after last)
-        if i < total - 1:
-            delay = 1.0 + random.uniform(0, 0.5)
-            time.sleep(delay)
+                # Progress callback
+                if progress_callback:
+                    pct = int(current / total * 100)
+                    progress_callback(pct, f"AI 评估中... {current}/{total}")
+
+            except Exception as e:
+                print(f"  [错误] AI 评估异常: {e}")
 
     return candidates

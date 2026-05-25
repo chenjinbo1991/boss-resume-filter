@@ -1,15 +1,9 @@
 """Pure candidate filtering rules for BOSS resume screening."""
 import re
+from constants import MAJOR_CITIES, SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
 
 
-# 中国主要城市列表（按长度降序，优先匹配长名）
-_MAJOR_CITIES = sorted([
-    '北京', '上海', '广州', '深圳', '杭州', '南京', '成都', '武汉',
-    '西安', '苏州', '重庆', '长沙', '合肥', '郑州', '天津', '济南',
-    '青岛', '厦门', '福州', '珠海', '东莞', '无锡', '宁波', '大连',
-    '沈阳', '昆明', '贵阳', '南宁', '海口', '南昌', '太原', '长春',
-    '哈尔滨', '石家庄',
-], key=len, reverse=True)
+_major_cities_set = set(MAJOR_CITIES)
 
 
 def _extract_city(text: str) -> str:
@@ -20,11 +14,11 @@ def _extract_city(text: str) -> str:
     if city_match:
         raw = city_match.group(1)
         m = re.match(r'([一-龥]{2,3})市', raw)
-        if m and m.group(1) in _MAJOR_CITIES:
+        if m and m.group(1) in _major_cities_set:
             return m.group(1)
-        if raw in _MAJOR_CITIES:
+        if raw in _major_cities_set:
             return raw
-    for city in _MAJOR_CITIES:
+    for city in MAJOR_CITIES:
         if city in text:
             return city
     return ""
