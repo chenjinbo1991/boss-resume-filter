@@ -793,16 +793,25 @@ def _gh_release(version, release_title, release_notes):
 
     # 创建 Release（如果已存在则跳过创建步骤）
     r = subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=BASE_DIR)
-    if r.returncode != 0:
-        # Release 不存在，创建它
-        subprocess.run(["gh", "release", "create", tag, "--title", release_title, "--notes", release_notes],
-                       cwd=BASE_DIR, check=True)
-        print(f"  [OK] GitHub Release 已创建: {tag}")
-    else:
-        print(f"  [OK] GitHub Release 已存在: {tag}")
-        subprocess.run(["gh", "release", "edit", tag, "--title", release_title, "--notes", release_notes],
-                       cwd=BASE_DIR, check=True)
-        print("  [OK] GitHub Release 标题和说明已同步")
+
+    # 写入临时文件传递 release notes（避免 Windows GBK 命令行参数编码问题）
+    _notes_file = BASE_DIR / "_release_notes_tmp.txt"
+    _notes_file.write_text(release_notes, encoding="utf-8")
+    try:
+        if r.returncode != 0:
+            # Release 不存在，创建它
+            subprocess.run(
+                ["gh", "release", "create", tag, "--title", release_title, "--notes-file", str(_notes_file)],
+                cwd=BASE_DIR, check=True)
+            print(f"  [OK] GitHub Release 已创建: {tag}")
+        else:
+            print(f"  [OK] GitHub Release 已存在: {tag}")
+            subprocess.run(
+                ["gh", "release", "edit", tag, "--title", release_title, "--notes-file", str(_notes_file)],
+                cwd=BASE_DIR, check=True)
+            print("  [OK] GitHub Release 标题和说明已同步")
+    finally:
+        _notes_file.unlink(missing_ok=True)
 
     # 上传资源
     for f, label in artifacts:
