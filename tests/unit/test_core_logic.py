@@ -239,3 +239,17 @@ def test_load_candidates_all_restores_from_backup_when_main_json_is_corrupt():
 
     assert loaded == backup_data
     assert restored == backup_data
+
+
+def test_save_candidates_all_accepts_explicit_path():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = os.path.join(tmpdir, "nested_candidates.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            save_candidates_all([
+                {"geek_id": "g1", "job_name": "Java", "match_score": 70},
+            ], target)
+
+        with open(target, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+
+    assert saved == [{"geek_id": "g1", "job_name": "Java", "match_score": 70}]

@@ -422,6 +422,31 @@ def _check_changelog_updated():
     print("  [OK] CHANGELOG 已同步更新")
 
 
+def _check_todo_not_stale():
+    """检测 TODO.md 是否还保留已完成的发布事项。"""
+    todo_path = BASE_DIR / "TODO.md"
+    if not todo_path.exists():
+        return
+
+    content = todo_path.read_text(encoding="utf-8")
+    stale_items = [
+        ("国内备用更新源", "Gitee/GitHub 双源更新已在 v2.8.8 落地"),
+    ]
+    found = [
+        (keyword, reason)
+        for keyword, reason in stale_items
+        if re.search(rf"^\s*-\s+\[\s*\]\s+.*{re.escape(keyword)}", content, re.MULTILINE)
+    ]
+    if found:
+        print("[错误] TODO.md 含已完成但仍未勾选的事项：")
+        for keyword, reason in found:
+            print(f"  - {keyword}：{reason}")
+        print("请先删除、勾选或改写为真实未完成事项。")
+        sys.exit(1)
+
+    print("  [OK] TODO.md 无已完成待办残留")
+
+
 def _preflight_checks(require_clean=True):
     """发布/打包前检查"""
     print("\n>>> 发布前检查")
@@ -432,6 +457,7 @@ def _preflight_checks(require_clean=True):
     _check_api_config_has_no_plaintext_key()
     _check_source_compiles()
     _check_changelog_updated()
+    _check_todo_not_stale()
     _run_unit_checks()
 
     if require_clean:

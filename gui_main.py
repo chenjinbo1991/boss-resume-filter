@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from security import save_api_key, get_api_key, delete_api_key
 import updater
 from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
+from storage import save_candidates_all
 
 # ========== 路径常量 - 解决相对路径问题 ==========
 # PyInstaller --onefile 模式下 __file__ 指向临时解压目录，需特殊处理
@@ -2875,8 +2876,7 @@ class BossFilterGUI:
                         with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                             candidates = json.load(f)
                         candidates = [c for c in candidates if c.get('geek_id') != target_geek_id]
-                        with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
-                            json.dump(candidates, f, ensure_ascii=False, indent=2)
+                        save_candidates_all(candidates, CANDIDATES_PATH)
                     # 从表格中移除行
                     tree.delete(clicked_item)
                     # 更新弹窗内统计标签
@@ -3138,8 +3138,7 @@ class BossFilterGUI:
                         with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                             candidates_all = json.load(f)
                         candidates_all = [c for c in candidates_all if c.get('geek_id') != target_geek_id]
-                        with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
-                            json.dump(candidates_all, f, ensure_ascii=False, indent=2)
+                        save_candidates_all(candidates_all, CANDIDATES_PATH)
                     tree.delete(clicked_item)
                     # 更新弹窗内统计标签
                     new_total = len(filtered_ref[0])
@@ -5900,8 +5899,7 @@ class BossFilterGUI:
                     updated = True
                     break
             if updated:
-                with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
-                    json.dump(candidates, f, ensure_ascii=False, indent=2)
+                save_candidates_all(candidates, CANDIDATES_PATH)
         except Exception as e:
             self.append_log(f"[打招呼] 更新状态失败：{e}")
 
@@ -5946,8 +5944,7 @@ class BossFilterGUI:
                     with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                         candidates = json.load(f)
                     candidates = [c for c in candidates if c.get('geek_id') != target_geek_id]
-                    with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
-                        json.dump(candidates, f, ensure_ascii=False, indent=2)
+                    save_candidates_all(candidates, CANDIDATES_PATH)
 
                     # 从树中移除
                     self.result_tree.delete(item)
@@ -6154,8 +6151,7 @@ class BossFilterGUI:
 
                     removed = len(removed_list)
 
-                    with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
-                        json.dump(candidates, f, ensure_ascii=False, indent=2)
+                    save_candidates_all(candidates, CANDIDATES_PATH)
 
                     log_msg = f"已清空岗位「{selected_job}」的 {removed} 条候选人数据"
                     info_msg = f"已清空 {removed} 条候选人数据"
@@ -6175,8 +6171,7 @@ class BossFilterGUI:
                         removed = len(candidates)
                         candidates = []
 
-                    with open(CANDIDATES_PATH, 'w', encoding='utf-8') as f:
-                        json.dump(candidates, f, ensure_ascii=False, indent=2)
+                    save_candidates_all(candidates, CANDIDATES_PATH)
 
                     log_msg = f"已清空全部 {removed} 条候选人数据"
                     info_msg = f"已清空全部 {removed} 条候选人数据"

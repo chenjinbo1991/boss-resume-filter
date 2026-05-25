@@ -1,4 +1,6 @@
 """Unit tests for llm_eval module — mocked HTTP, no real API calls."""
+import contextlib
+import io
 import json
 import threading
 from unittest.mock import patch, MagicMock
@@ -11,6 +13,11 @@ from llm_eval import (
     _recalc_recommend_level,
     evaluate_batch,
 )
+
+
+def quiet_evaluate_batch(*args, **kwargs):
+    with contextlib.redirect_stdout(io.StringIO()):
+        return evaluate_batch(*args, **kwargs)
 
 
 # === _parse_response ===
@@ -186,7 +193,7 @@ def test_batch_success_updates_candidate(mock_call):
     candidates = [
         {'name': '张三', 'match_score': 65, 'recommend_level': '推荐', 'summary': '5年Java'},
     ]
-    result = evaluate_batch(candidates, "岗位要求", {'base_url': 'x', 'model': 'y'}, "key")
+    result = quiet_evaluate_batch(candidates, "岗位要求", {'base_url': 'x', 'model': 'y'}, "key")
     c = result[0]
     assert c['llm_evaluated'] is True
     assert c['llm_adjustment'] == 7
@@ -202,7 +209,7 @@ def test_batch_failure_preserves_score(mock_call):
     candidates = [
         {'name': '李四', 'match_score': 60, 'recommend_level': '待定', 'summary': '3年Python'},
     ]
-    result = evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
+    result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     c = result[0]
     assert c['llm_evaluated'] is False
     assert c['match_score'] == 60
@@ -213,7 +220,7 @@ def test_batch_failure_preserves_score(mock_call):
 def test_batch_score_clamped_high(mock_call):
     mock_call.return_value = LLMEvalResult(success=True, adjustment=10, reason="极好", model="m")
     candidates = [{'name': '王五', 'match_score': 95, 'recommend_level': '强烈推荐', 'summary': '10年'}]
-    result = evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
+    result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     assert result[0]['match_score'] == 100
 
 
@@ -221,7 +228,7 @@ def test_batch_score_clamped_high(mock_call):
 def test_batch_score_clamped_low(mock_call):
     mock_call.return_value = LLMEvalResult(success=True, adjustment=-10, reason="不匹配", model="m")
     candidates = [{'name': '赵六', 'match_score': 55, 'recommend_level': '待定', 'summary': '1年'}]
-    result = evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
+    result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     assert result[0]['match_score'] == 45
 
 
@@ -229,7 +236,7 @@ def test_batch_score_clamped_low(mock_call):
 def test_batch_level_upgrade(mock_call):
     mock_call.return_value = LLMEvalResult(success=True, adjustment=10, reason="极好", model="m")
     candidates = [{'name': 'A', 'match_score': 66, 'recommend_level': '推荐', 'summary': 'x'}]
-    result = evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
+    result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     assert result[0]['match_score'] == 76
     assert result[0]['recommend_level'] == '强烈推荐'
 
@@ -242,7 +249,7 @@ def test_batch_max_candidates_limit(mock_call, mock_sleep):
         {'name': f'C{i}', 'match_score': 60, 'recommend_level': '待定', 'summary': 'x'}
         for i in range(10)
     ]
-    evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key", max_candidates=3)
+    quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key", max_candidates=3)
     assert mock_call.call_count == 3
 
 
@@ -257,13 +264,13 @@ def test_batch_stop_event_interrupts(mock_call):
         for i in range(5)
     ]
     with contextlib.redirect_stdout(io.StringIO()):
-        evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
-                       stop_event=stop_event)
+        quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
+                             stop_event=stop_event)
     assert mock_call.call_count == 0
 
 
 def test_batch_empty_candidates():
-    result = evaluate_batch([], "岗位", {}, "key")
+    result = quiet_evaluate_batch([], "岗位", {}, "key")
     assert result == []
 
 
@@ -278,7 +285,7 @@ def test_batch_progress_callback(mock_call, mock_sleep):
         {'name': 'A', 'match_score': 60, 'recommend_level': '待定', 'summary': 'x'},
         {'name': 'B', 'match_score': 58, 'recommend_level': '待定', 'summary': 'y'},
     ]
-    evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
-                   progress_callback=on_progress)
+    quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
+                         progress_callback=on_progress)
     assert len(progress_calls) == 2
     assert "AI 评估中" in progress_calls[0][1]
