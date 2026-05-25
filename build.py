@@ -711,13 +711,20 @@ def _gh_release(version, release_title, release_notes):
         print("[错误] gh CLI 未安装或未登录，请先运行 gh auth login")
         sys.exit(1)
 
-    # 删除 Release 中已有的同名资源（如果存在）
+    # 删除 Release 中已有的当前平台资源（保留对端产物，由 _trigger_cross_platform_ci 处理）
     existing = subprocess.run(["gh", "release", "view", tag, "--json", "assets"],
                               capture_output=True, text=True, cwd=BASE_DIR)
     if existing.returncode == 0 and existing.stdout.strip():
         import json
         assets = json.loads(existing.stdout).get("assets", [])
+        # 只删当前平台产物，保留对端（Windows 保留 DMG/ZIP，macOS 保留 EXE）
+        if IS_MAC:
+            skip_names = {"BOSS_ResumeFilter.exe"}
+        else:
+            skip_names = {"BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"}
         for a in assets:
+            if a['name'] in skip_names:
+                continue
             print(f"  删除旧资源: {a['name']}")
             subprocess.run(["gh", "release", "delete-asset", tag, a["name"], "-y"],
                            cwd=BASE_DIR, check=True)
@@ -743,6 +750,47 @@ def _gh_release(version, release_title, release_notes):
             print(f"  [OK] 已上传: {f.name}")
         else:
             print(f"  [跳过] 文件不存在: {f.name}")
+
+    # 覆盖发布：删除对端产物 + 触发 CI 重建
+    _trigger_cross_platform_ci(tag)
+
+
+def _trigger_cross_platform_ci(tag):
+    """覆盖发布后，删除对端旧产物并触发 CI 重建。
+
+    Windows 发布 → 删旧 DMG/ZIP → CI 自动构建 macOS
+    macOS 发布 → 删旧 EXE → CI 自动构建 Windows
+    """
+    if IS_MAC:
+        opposite_assets = ["BOSS_ResumeFilter.exe"]
+    else:
+        opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
+
+    # 删除对端旧产物
+    deleted = False
+    for asset_name in opposite_assets:
+        r = subprocess.run(
+            ["gh", "release", "delete-asset", tag, asset_name, "-y"],
+            capture_output=True, text=True, cwd=BASE_DIR
+        )
+        if r.returncode == 0:
+            print(f"  [OK] 已删除旧产物: {asset_name}")
+            deleted = True
+
+    if not deleted:
+        print("  [跳过] 对端产物不存在，无需触发 CI")
+        return
+
+    # 手动触发 CI workflow
+    r = subprocess.run(
+        ["gh", "workflow", "run", "release.yml", "--ref", tag],
+        capture_output=True, text=True, cwd=BASE_DIR
+    )
+    if r.returncode == 0:
+        print(f"  [OK] 已触发 CI 构建对端产物 ({tag})")
+    else:
+        print(f"  [警告] CI 触发失败: {r.stderr.strip()}")
+        print("  可手动执行: gh workflow run release.yml --ref " + tag)
 
 
 # ---------------------------------------------------------------------------

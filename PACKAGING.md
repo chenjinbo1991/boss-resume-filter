@@ -13,15 +13,22 @@
 
 ### 自动补齐（GitHub Actions）
 
-在任一平台本地发布后，CI 自动补齐另一平台的产物：
+在任一平台本地发布后，`build.py` 会自动删除对端旧产物并触发 CI 重建：
 
 ```bash
 # Mac 本地发布
-python build.py --release --version 2.9   # 打包 macOS → 打 tag → 推送 → CI 自动构建 EXE
+python build.py --release --version 2.9
+# 打包 macOS → 打 tag → 推送 → 自动删除旧 EXE → CI 构建新 EXE
 
 # Windows 本地发布
-python build.py --release --version 2.9   # 打包 Windows → 打 tag → 推送 → CI 自动构建 DMG+ZIP
+python build.py --release --version 2.9
+# 打包 Windows → 打 tag → 推送 → 自动删除旧 DMG/ZIP → CI 构建新 DMG+ZIP
 ```
+
+**自动触发流程：**
+1. `build.py --release` 在本地平台打包并上传产物
+2. 自动删除 Release 中对端的旧产物（Windows 发布删 DMG/ZIP，macOS 发布删 EXE）
+3. 自动触发 `gh workflow run release.yml`，CI 检测缺失产物并构建
 
 CI 检测 Release 已有产物，只构建缺失的部分：
 - 已有 EXE → CI 只构建 macOS（DMG+ZIP）
@@ -39,6 +46,7 @@ Release 页面最终包含：
 - macOS 使用 `macos-latest`（Apple Silicon M1）runner，生成的 .app 兼容 Apple Silicon Mac；Intel Mac 用户建议从源码运行
 - 虚拟环境（`.venv-ci`）按 `requirements.txt` hash 缓存，依赖不变时跳过安装
 - 支持 `workflow_dispatch` 手动触发
+- 覆盖发布时自动触发对端重建，无需手动删除产物
 
 ---
 
