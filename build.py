@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
@@ -813,10 +814,18 @@ def _gh_release(version, release_title, release_notes):
             print(f"  [跳过] 文件不存在: {f.name}")
 
     # 覆盖发布：删除对端产物 + 触发 CI 重建
-    _trigger_cross_platform_ci(tag)
+    need_ci = _trigger_cross_platform_ci(tag)
 
-    # 上传产物到 Gitee Release（国内下载源）
-    return _gitee_release(version, release_title, release_notes)
+    # 上传本地平台产物到 Gitee Release（国内下载源）
+    downloads_cn = _gitee_upload_local(version, release_title, release_notes)
+
+    # 等待 CI 完成，从 GitHub 下载对端产物并上传到 Gitee
+    gitee_sync = _sync_gitee_from_github(version, release_title, release_notes, need_wait=need_ci)
+    if gitee_sync:
+        downloads_cn = downloads_cn or {}
+        downloads_cn.update(gitee_sync)
+
+    return downloads_cn
 
 
 def _trigger_cross_platform_ci(tag):
@@ -824,6 +833,8 @@ def _trigger_cross_platform_ci(tag):
 
     Windows 发布 → 删旧 DMG/ZIP → CI 自动构建 macOS
     macOS 发布 → 删旧 EXE → CI 自动构建 Windows
+
+    返回 True 表示需要等待 CI 构建对端产物。
     """
     if IS_MAC:
         opposite_assets = ["BOSS_ResumeFilter.exe"]
@@ -843,7 +854,7 @@ def _trigger_cross_platform_ci(tag):
 
     if not deleted:
         print("  [跳过] 对端产物不存在，无需触发 CI")
-        return
+        return False
 
     # 手动触发 CI workflow
     r = subprocess.run(
@@ -856,12 +867,72 @@ def _trigger_cross_platform_ci(tag):
         print(f"  [警告] CI 触发失败: {r.stderr.strip()}")
         print("  可手动执行: gh workflow run release.yml --ref " + tag)
 
+    return True
 
-def _gitee_release(version, release_title, release_notes):
-    """上传产物到 Gitee Release，返回 downloads_cn 字典（国内下载链接）。
 
-    需要环境变量 GITEE_TOKEN。未设置时跳过并返回 None。
-    上传失败时带重试（2 次），仍失败则打印醒目的手动补传提示。
+def _gitee_find_or_create_release(api_base, token, tag, release_title, release_notes):
+    """查找或创建 Gitee Release，返回 (release_id, existing_asset_names)。"""
+    resp = requests.get(
+        f"{api_base}/releases",
+        params={"access_token": token},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    release = next((r for r in resp.json() if r.get("tag_name") == tag), None)
+
+    if release:
+        return release["id"], {a["name"] for a in release.get("assets", [])}
+
+    resp = requests.post(
+        f"{api_base}/releases",
+        data={
+            "access_token": token,
+            "tag_name": tag,
+            "name": release_title or tag,
+            "body": release_notes or "",
+            "target_commitish": "master",
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    print(f"  [OK] Gitee Release 已创建: {tag}")
+    return resp.json()["id"], set()
+
+
+def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=3):
+    """上传单个文件到 Gitee Release，带重试。返回 (文件名, 响应JSON)。"""
+    for attempt in range(max_retries):
+        try:
+            with open(filepath, "rb") as fh:
+                resp = requests.post(
+                    f"{api_base}/releases/{release_id}/attach_files",
+                    files={"file": (filepath.name, fh)},
+                    params={"access_token": token},
+                    timeout=300,
+                )
+            resp.raise_for_status()
+            return filepath.name, resp.json()
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                delay = 2 ** (attempt + 1)
+                print(f"  [Gitee] {filepath.name} 上传失败 ({e})，{delay}s 后重试 ({attempt+1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                raise
+
+
+def _gitee_asset_url(owner, repo, tag, filename):
+    """构造 Gitee Release 下载链接。"""
+    return f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{filename}"
+
+
+def _gitee_upload_local(version, release_title, release_notes):
+    """上传本地平台的产物到 Gitee Release。
+
+    Windows: EXE + job_config.json + README.md
+    macOS:   DMG + ZIP + job_config.json + README.md
+
+    返回 downloads_cn 字典。需要环境变量 GITEE_TOKEN，未设置时返回 None。
     """
     token = os.environ.get("GITEE_TOKEN")
     if not token:
@@ -873,7 +944,6 @@ def _gitee_release(version, release_title, release_notes):
     tag = f"v{version}"
     api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
 
-    # 按平台选择上传的主产物
     if IS_MAC:
         artifacts = [
             DIST_DIR / "BOSS_ResumeFilter.dmg",
@@ -888,105 +958,29 @@ def _gitee_release(version, release_title, release_notes):
             DIST_DIR / "README.md",
         ]
 
-    def _upload_file(filepath, release_id, max_retries=3):
-        """上传单个文件到 Gitee Release，带重试。"""
-        for attempt in range(max_retries):
-            try:
-                with open(filepath, "rb") as fh:
-                    resp = requests.post(
-                        f"{api_base}/releases/{release_id}/attach_files",
-                        files={"file": (filepath.name, fh)},
-                        params={"access_token": token},
-                        timeout=300,
-                    )
-                resp.raise_for_status()
-                return resp.json()
-            except requests.exceptions.RequestException as e:
-                if attempt < max_retries - 1:
-                    delay = 2 ** (attempt + 1)
-                    print(f"  [Gitee] {filepath.name} 上传失败 ({e})，{delay}s 后重试 ({attempt+1}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    raise
-
     try:
-        # 查找已有 release
-        resp = requests.get(
-            f"{api_base}/releases",
-            params={"access_token": token},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        release = next((r for r in resp.json() if r.get("tag_name") == tag), None)
+        release_id, _ = _gitee_find_or_create_release(
+            api_base, token, tag, release_title, release_notes)
 
-        if release:
-            release_id = release["id"]
-            # Gitee API 不返回 asset ID，无法删除单个文件，直接上传覆盖
-        else:
-            # 创建 release
-            resp = requests.post(
-                f"{api_base}/releases",
-                data={
-                    "access_token": token,
-                    "tag_name": tag,
-                    "name": release_title,
-                    "body": release_notes,
-                    "target_commitish": "master",
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
-            release_id = resp.json()["id"]
-            print(f"  [OK] Gitee Release 已创建: {tag}")
-
-        # 上传产物
         downloads_cn = {}
         failed = []
         for f in artifacts:
             if not f.exists():
                 print(f"  [Gitee 跳过] 文件不存在: {f.name}")
                 continue
-
             try:
-                asset = _upload_file(f, release_id)
-                print(f"  [OK] Gitee 已上传: {f.name}")
+                name, asset = _gitee_upload_single(f, api_base, token, release_id)
+                url = asset.get("browser_download_url", _gitee_asset_url(owner, repo, tag, name))
+                downloads_cn[_downloads_cn_key(name)] = url
+                print(f"  [OK] Gitee 已上传: {name}")
             except requests.exceptions.RequestException as e:
                 print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
                 failed.append(f.name)
-                continue
-
-            # 记录下载链接
-            if f.name.endswith(".exe"):
-                downloads_cn["windows"] = asset.get(
-                    "browser_download_url",
-                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
-                )
-            elif f.name.endswith("_mac.zip"):
-                downloads_cn["macos"] = asset.get(
-                    "browser_download_url",
-                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
-                )
-            elif f.name.endswith(".dmg"):
-                downloads_cn["macos_dmg"] = asset.get(
-                    "browser_download_url",
-                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
-                )
-            elif f.name == "job_config.json":
-                downloads_cn["job_config"] = asset.get(
-                    "browser_download_url",
-                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
-                )
-            elif f.name == "README.md":
-                downloads_cn["readme"] = asset.get(
-                    "browser_download_url",
-                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
-                )
 
         if failed:
             print(f"\n{'!'*60}")
             print(f"  ⚠️  Gitee 上传部分失败: {', '.join(failed)}")
-            print(f"  GitHub Release 不受影响，但国内用户无法从 Gitee 下载这些文件")
-            print(f"  手动补传命令: python build.py --gitee-upload {version}")
+            print(f"  手动补传: python build.py --gitee-upload {version}")
             print(f"{'!'*60}\n")
 
         return downloads_cn if downloads_cn else None
@@ -994,8 +988,181 @@ def _gitee_release(version, release_title, release_notes):
     except requests.exceptions.RequestException as e:
         print(f"\n{'!'*60}")
         print(f"  ⚠️  Gitee Release 整体失败: {e}")
-        print(f"  GitHub Release 不受影响")
-        print(f"  手动补传命令: python build.py --gitee-upload {version}")
+        print(f"  手动补传: python build.py --gitee-upload {version}")
+        print(f"{'!'*60}\n")
+        return None
+
+
+def _downloads_cn_key(filename):
+    """文件名 → downloads_cn 字典 key。"""
+    if filename.endswith(".exe"):
+        return "windows"
+    if filename.endswith("_mac.zip"):
+        return "macos"
+    if filename.endswith(".dmg"):
+        return "macos_dmg"
+    if filename == "job_config.json":
+        return "job_config"
+    if filename == "README.md":
+        return "readme"
+    return filename
+
+
+def _download_from_github_release(tag, asset_name, dest_dir):
+    """从 GitHub Release 下载单个产物。返回下载后的 Path。"""
+    owner = "yaoyouzhong"
+    repo = "boss-resume-filter"
+    url = (
+        f"https://api.github.com/repos/{owner}/{repo}/releases/assets/"
+    )
+    # 使用 gh CLI 下载更可靠（自动认证）
+    dest = Path(dest_dir) / asset_name
+    r = subprocess.run(
+        ["gh", "release", "download", tag, "-p", asset_name, "-D", str(dest_dir)],
+        capture_output=True, text=True, cwd=BASE_DIR,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"gh download 失败: {r.stderr.strip()}")
+    return dest
+
+
+def _sync_gitee_from_github(version, release_title, release_notes, need_wait=False):
+    """从 GitHub Release 下载对端产物，并行上传到 Gitee Release。
+
+    当 need_wait=True 时，先轮询等待 CI 构建完成（对端产物出现在 GitHub Release）。
+    返回 downloads_cn 字典，失败返回 None。
+    """
+    token = os.environ.get("GITEE_TOKEN")
+    if not token:
+        print("  [跳过] Gitee 同步: 未设置 GITEE_TOKEN")
+        return None
+
+    owner = "yaoyouzhong"
+    repo = "boss-resume-filter"
+    tag = f"v{version}"
+    api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+    # 对端产物列表
+    if IS_MAC:
+        opposite_assets = ["BOSS_ResumeFilter.exe"]
+    else:
+        opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
+
+    # 所有需要上传到 Gitee 的本地文件（两个平台共用）
+    all_local_files = [
+        DIST_DIR / "BOSS_ResumeFilter.exe",
+        DIST_DIR / "BOSS_ResumeFilter.dmg",
+        DIST_DIR / "BOSS_ResumeFilter_mac.zip",
+        DIST_DIR / "job_config.json",
+        DIST_DIR / "README.md",
+    ]
+
+    print(f"\n>>> 同步 Gitee Release（从 GitHub 下载对端产物）")
+
+    if need_wait:
+        print(f"  等待 CI 构建对端产物（{', '.join(opposite_assets)}）...")
+        poll_interval = 30
+        max_wait = 600
+        elapsed = 0
+        while elapsed < max_wait:
+            try:
+                r = subprocess.run(
+                    ["gh", "release", "view", tag, "--json", "assets"],
+                    capture_output=True, text=True, cwd=BASE_DIR,
+                )
+                if r.returncode == 0:
+                    gh_assets = {a["name"] for a in json.loads(r.stdout).get("assets", [])}
+                    if all(name in gh_assets for name in opposite_assets):
+                        print(f"  [OK] 对端产物已就绪（{elapsed}s）")
+                        break
+                    missing = [n for n in opposite_assets if n not in gh_assets]
+                    print(f"  等待中... {elapsed}s / {max_wait}s，缺少: {', '.join(missing)}")
+                else:
+                    print(f"  等待中... {elapsed}s / {max_wait}s（GitHub Release 查询失败）")
+            except Exception:
+                pass
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+        else:
+            print(f"\n{'!'*60}")
+            print(f"  ⚠️  等待超时 ({max_wait}s)，CI 可能未完成")
+            print(f"  手动同步: python build.py --gitee-upload {version}")
+            print(f"{'!'*60}\n")
+            return None
+
+    # 并行下载对端产物
+    download_dir = DIST_DIR / "_gh_download"
+    download_dir.mkdir(exist_ok=True)
+
+    print(f"  并行下载对端产物...")
+    downloaded = []
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(_download_from_github_release, tag, name, download_dir): name
+            for name in opposite_assets
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                path = future.result()
+                print(f"  [OK] 已下载: {name}")
+                downloaded.append(path)
+            except Exception as e:
+                print(f"  [失败] 下载失败: {name} ({e})")
+
+    if not downloaded:
+        print(f"\n  ⚠️  未成功下载任何对端产物")
+        return None
+
+    # 收集所有需要上传的文件（本地已有的 + 刚下载的）
+    upload_files = []
+    for f in all_local_files:
+        if f.exists():
+            upload_files.append(f)
+    upload_files.extend(downloaded)
+
+    # 并行上传到 Gitee
+    print(f"  并行上传 {len(upload_files)} 个文件到 Gitee Release...")
+    try:
+        release_id, existing = _gitee_find_or_create_release(
+            api_base, token, tag, release_title, release_notes)
+
+        downloads_cn = {}
+        failed = []
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = {
+                pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
+                for f in upload_files
+            }
+            for future in as_completed(futures):
+                f = futures[future]
+                try:
+                    name, asset = future.result()
+                    url = asset.get("browser_download_url",
+                                    _gitee_asset_url(owner, repo, tag, name))
+                    downloads_cn[_downloads_cn_key(name)] = url
+                    print(f"  [OK] Gitee 已上传: {name}")
+                except Exception as e:
+                    print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
+                    failed.append(f.name)
+
+        if failed:
+            print(f"\n{'!'*60}")
+            print(f"  ⚠️  Gitee 上传部分失败: {', '.join(failed)}")
+            print(f"  手动补传: python build.py --gitee-upload {version}")
+            print(f"{'!'*60}\n")
+
+        # 清理临时下载目录
+        shutil.rmtree(download_dir, ignore_errors=True)
+
+        return downloads_cn if downloads_cn else None
+
+    except requests.exceptions.RequestException as e:
+        shutil.rmtree(download_dir, ignore_errors=True)
+        print(f"\n{'!'*60}")
+        print(f"  ⚠️  Gitee Release 同步失败: {e}")
+        print(f"  手动补传: python build.py --gitee-upload {version}")
         print(f"{'!'*60}\n")
         return None
 
@@ -1056,7 +1223,15 @@ def main():
         except Exception:
             pass
 
-        downloads_cn = _gitee_release(version, release_title, release_notes)
+        # 上传本地已有的产物
+        downloads_cn = _gitee_upload_local(version, release_title, release_notes)
+
+        # 从 GitHub 下载对端产物并上传到 Gitee（不等待，CI 应已完成）
+        gitee_sync = _sync_gitee_from_github(version, release_title, release_notes, need_wait=False)
+        if gitee_sync:
+            downloads_cn = downloads_cn or {}
+            downloads_cn.update(gitee_sync)
+
         if downloads_cn:
             update_latest_json(version, release_notes, downloads_cn)
             print(f"\n  [OK] downloads_cn 已更新，请手动提交推送：")
