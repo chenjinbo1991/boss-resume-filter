@@ -253,6 +253,8 @@ boss-resume-filter/
 ├── icons.py               # 图标绘制模块（Pillow 矢量图标）
 ├── doc_parser.py          # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
+├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
+├── latest.json           # 版本清单（Gitee 更新源，build.py --release 自动维护）
 ├── gui.bat               # GUI 启动脚本
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）

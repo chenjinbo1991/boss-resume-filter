@@ -7,13 +7,16 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.8.8）
-├── updater.py            # 自动更新模块（GitHub Release 检查、下载替换、启动时自动检查）
-├── icons.py              # 图标绘制模块（Pillow 矢量图标，24个图标函数 + IconCache）
+├── gui_main.py           # 图形界面主程序（v2.8.9）
+├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、启动时自动检查）
+├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
+├── constants.py          # 共享常量（评分阈值、城市列表）
+├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
+├── latest.json           # 版本清单（Gitee 更新源，build.py --release 自动维护）
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── selectors.json        # 页面选择器配置（CSS/XPath/关键词，DOM 变化时修改）
@@ -67,11 +70,15 @@ boss-resume-filter/
 - macOS 打包使用 `--onedir --windowed` 生成 .app，Windows 使用 `--onefile --noconsole` 生成 EXE
 - macOS DMG 使用系统自带 `hdiutil` 生成，ZIP 使用 Python `zipfile` 模块
 - **GitHub Actions 自动补齐打包**：推送 tag 后 CI 检查 Release 已有产物，只构建缺失的平台（`.github/workflows/release.yml`）；本地 Mac 发布时上传 DMG+ZIP → CI 构建 EXE；本地 Windows 发布时上传 EXE → CI 构建 DMG+ZIP；CI 模式使用 `--ci --release` 跳过虚拟环境切换和 git 操作
+- **覆盖发布自动触发对端重建**：`build.py --release` 上传当前平台产物后，自动删除对端旧产物并触发 `gh workflow run release.yml`，CI 检测缺失产物并重建（Windows 发布删旧 DMG/ZIP，macOS 发布删旧 EXE）
+- **CI 只负责构建和上传 GitHub Release，不上传 Gitee**
 - job_config.json、api_config.json、selectors.json 和 CHANGELOG.md 内嵌到 EXE 中，dist 中额外放置 job_config.json 和 selectors.json 供用户编辑
 - CHANGELOG.md 通过 `--add-data` 打包进 EXE，`gui_main.py:show_changelog()` 优先从 `sys._MEIPASS` 读取（PyInstaller 解压目录），回退到 `BASE_DIR`
-- 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、稳定单元回归和导入烟测
+- 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、**CHANGELOG 同步**（核心代码有变更时 CHANGELOG.md 必须更新）、稳定单元回归和导入烟测
 - `build.py` 会显式收集 Anaconda Python 的 Tcl/Tk 运行库，防止 EXE 启动时报 `No module named 'tkinter'`
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 体验优化 / 问题修复"顺序分类时直接中断
+- `--release` 使用 `--notes-file` + UTF-8 临时文件创建/更新 Release，避免 Windows 终端 GBK 编码导致中文乱码
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动从本地并行上传产物到 Gitee Release（ThreadPoolExecutor 3 路，需要 `GITEE_TOKEN` 环境变量）；上传顺序：配置文件/EXE/ZIP 优先，DMG 最后；CI 构建的对端产物从 GitHub 下载后再上传到 Gitee
 - CHANGELOG 面向用户，避免技术细节：描述"做了什么"和"对用户的好处"，不描述实现原理、内部模块、函数名、技术栈；Bug 修复只写现象和结果，不写根因和修复方案；分类用用户视角（"体验优化"而非"行为优化/构建改进"）；功能归类要准确反映适用范围；只记录原始需求和原始 bug，不记录开发过程中自己引入又修掉的问题
 - Release 模式不再 `git add -A`；只允许自动提交 `--version` 引起的 `gui_main.py` 版本号变化，其他变更必须先手工提交
 - 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；tag 冲突时自动 `--force`（master 除外）
@@ -163,8 +170,8 @@ boss-resume-filter/
 - CLI：`--ai-eval` 标志启用
 - API 配置复用 `api_config.json` + `security.py` keyring，不额外配置
 - 429 限流指数退避（2s→4s→8s），其他异常 graceful fallback（保留原始分数）
-- 每次调用间隔 1s + 随机抖动防限流；支持 stop_event 中断
-- 实现位置：`llm_eval.py:evaluate_batch()`、`llm_eval.py:_call_llm_api()`、`bossmaster.py:smart_scan_candidates()` 阶段 1.5
+- **并发调用**：`evaluate_batch()` 使用 `ThreadPoolExecutor` 默认 3 路并发（`max_workers=3`），每次调用后仍保留 1s+ 随机抖动防限流；支持 stop_event 中断和取消剩余任务
+- 实现位置：`llm_eval.py:evaluate_batch()`、`llm_eval.py:_evaluate_single()`、`llm_eval.py:_call_llm_api()`、`bossmaster.py:smart_scan_candidates()` 阶段 1.5
 
 ### 必要条件（v2.4 UI 重构）
 - GUI 使用下拉框选择条件类型 + 逗号分隔关键词，无需手写 JSON
@@ -249,14 +256,21 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - 新电脑部署：首次启动检测 API Key 缺失并引导重新配置
 
 ## 自动更新（v2.8）
-- 启动时延迟 3 秒自动检查 GitHub Release 最新版本
+- 启动时延迟 3 秒自动检查最新版本
+- **检查顺序**：Gitee 优先 → Gitee 失败回退 GitHub → Gitee 返回"无更新"时 GitHub 复核（防止镜像同步延迟漏报新版本）
+- **Gitee 源**（国内快，5s 超时）：`https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/latest.json`
+- **GitHub 源**（fallback，10s 超时）：`https://api.github.com/repos/yaoyouzhong/boss-resume-filter/releases/latest`
+- **下载链接**：`latest.json` 中 `downloads_cn` 字段存储 Gitee 国内下载链接，优先使用；无则回退到 GitHub
 - 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」
 - **Windows**：下载新 EXE → 生成 `update.bat` 脚本 → 启动脚本 → 退出当前程序 → 脚本替换 EXE 并重启
 - **macOS**：
   - 从 .app 运行：下载 ZIP → 解压 → 生成 shell 脚本替换 .app → 重启应用
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
-- 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`
+- `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
+- **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
+- 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_release()`
 
 ## 踩坑警示
 
@@ -266,7 +280,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
     return exe_dir.parent.parent.parent  # .app 的父目录
 ```
-Windows EXE 直接用 `sys.executable.parent` 即可。`gui_main.py` 和 `updater.py` 都有这个逻辑，改一个别忘了另一个。
+Windows EXE 直接用 `sys.executable.parent` 即可。路径逻辑统一在 `paths.py:get_base_dir()` 中维护，所有模块（`gui_main.py`、`updater.py`、`bossmaster.py`）从这里导入，修改只需改一处。
 
 ### PyInstaller 版本号读取
 不能从 `sys._MEIPASS` 读取 `gui_main.py` 源文件，因为源码被编译进 PYZ 归档，文件不存在。应该直接 `import gui_main` 读取模块属性，兼容所有打包模式（源码 / Windows EXE / macOS .app）。

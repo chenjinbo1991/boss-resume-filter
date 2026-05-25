@@ -43,10 +43,32 @@ Release 页面最终包含：
 配置文件：`.github/workflows/release.yml`
 
 **CI 说明：**
+- **CI 只负责构建和上传 GitHub Release，不上传 Gitee**
 - macOS 使用 `macos-latest`（Apple Silicon M1）runner，生成的 .app 兼容 Apple Silicon Mac；Intel Mac 用户建议从源码运行
 - 虚拟环境（`.venv-ci`）按 `requirements.txt` hash 缓存，依赖不变时跳过安装
 - 支持 `workflow_dispatch` 手动触发
 - 覆盖发布时自动触发对端重建，无需手动删除产物
+
+### Gitee Release 上传（本地并行）
+
+Gitee 上传从 CI 移到本地执行，解决跨境网络上传慢的问题。需要 `GITEE_TOKEN` 环境变量（在 https://gitee.com/profile/personal_access_tokens 生成，勾选 projects 权限）。
+
+**上传流程（`build.py --release` 自动执行）：**
+
+1. 上传当前平台产物到 GitHub Release
+2. 触发 CI 构建对端产物
+3. **从本地 dist 并行上传当前平台产物到 Gitee Release**（ThreadPoolExecutor 3 路）
+4. 等待 CI 构建完毕，从 GitHub Release 下载对端产物
+5. **从本地并行上传对端产物到 Gitee Release**（非 DMG 优先，DMG 最后）
+6. 更新 `latest.json` 的 `downloads_cn` 字段并自动提交推送
+
+**上传优先级**：配置文件（job_config.json/README.md）→ EXE/ZIP → DMG（体积最大，放最后）
+
+**去重机制**：上传前检查 Gitee Release 已有资产，已存在的文件跳过，避免重复上传。
+
+`latest.json` 字段说明：
+- `downloads`：GitHub 下载链接（国际）
+- `downloads_cn`：Gitee 下载链接（国内优先，`updater.py` 优先使用此字段）
 
 ---
 
@@ -388,4 +410,4 @@ dist/
 
 ---
 
-**最后更新**: 2026-05-24
+**最后更新**: 2026-05-25
