@@ -14,6 +14,7 @@ boss-resume-filter/
 ├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── constants.py          # 共享常量（评分阈值、城市列表）
+├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
 ├── latest.json           # 版本清单（Gitee 更新源，build.py --release 自动维护）
 ├── job_config.json       # 岗位筛选规则配置
@@ -166,8 +167,8 @@ boss-resume-filter/
 - CLI：`--ai-eval` 标志启用
 - API 配置复用 `api_config.json` + `security.py` keyring，不额外配置
 - 429 限流指数退避（2s→4s→8s），其他异常 graceful fallback（保留原始分数）
-- 每次调用间隔 1s + 随机抖动防限流；支持 stop_event 中断
-- 实现位置：`llm_eval.py:evaluate_batch()`、`llm_eval.py:_call_llm_api()`、`bossmaster.py:smart_scan_candidates()` 阶段 1.5
+- **并发调用**：`evaluate_batch()` 使用 `ThreadPoolExecutor` 默认 3 路并发（`max_workers=3`），每次调用后仍保留 1s+ 随机抖动防限流；支持 stop_event 中断和取消剩余任务
+- 实现位置：`llm_eval.py:evaluate_batch()`、`llm_eval.py:_evaluate_single()`、`llm_eval.py:_call_llm_api()`、`bossmaster.py:smart_scan_candidates()` 阶段 1.5
 
 ### 必要条件（v2.4 UI 重构）
 - GUI 使用下拉框选择条件类型 + 逗号分隔关键词，无需手写 JSON
@@ -276,7 +277,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 if sys.platform == 'darwin' and exe_dir.name == 'MacOS':
     return exe_dir.parent.parent.parent  # .app 的父目录
 ```
-Windows EXE 直接用 `sys.executable.parent` 即可。`gui_main.py` 和 `updater.py` 都有这个逻辑，改一个别忘了另一个。
+Windows EXE 直接用 `sys.executable.parent` 即可。路径逻辑统一在 `paths.py:get_base_dir()` 中维护，所有模块（`gui_main.py`、`updater.py`、`bossmaster.py`）从这里导入，修改只需改一处。
 
 ### PyInstaller 版本号读取
 不能从 `sys._MEIPASS` 读取 `gui_main.py` 源文件，因为源码被编译进 PYZ 归档，文件不存在。应该直接 `import gui_main` 读取模块属性，兼容所有打包模式（源码 / Windows EXE / macOS .app）。
