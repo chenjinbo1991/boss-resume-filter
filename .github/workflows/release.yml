@@ -107,3 +107,60 @@ jobs:
             dist/BOSS_ResumeFilter_mac.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Gitee Release
+        if: ${{ secrets.GITEE_TOKEN != '' }}
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          pip install requests >/dev/null 2>&1
+          python -c "
+          import requests, os, glob
+
+          token = os.environ['GITEE_TOKEN']
+          owner, repo = 'yaoyouzhong', 'boss-resume-filter'
+          api_base = f'https://gitee.com/api/v5/repos/{owner}/{repo}'
+          tag = '${TAG}'
+
+          # Find or create release
+          resp = requests.get(f'{api_base}/releases', params={'access_token': token}, timeout=10)
+          resp.raise_for_status()
+          release = next((r for r in resp.json() if r.get('tag_name') == tag), None)
+
+          if release:
+              release_id = release['id']
+              existing = {a['name'] for a in release.get('assets', [])}
+          else:
+              resp = requests.post(f'{api_base}/releases', data={
+                  'access_token': token,
+                  'tag_name': tag,
+                  'name': tag,
+                  'body': f'CI build for {tag}',
+                  'target_commitish': 'master',
+              }, timeout=10)
+              resp.raise_for_status()
+              release_id = resp.json()['id']
+              existing = set()
+
+          # Upload built artifacts
+          for pattern in ['dist/BOSS_ResumeFilter.exe', 'dist/BOSS_ResumeFilter.dmg', 'dist/BOSS_ResumeFilter_mac.zip']:
+              files = glob.glob(pattern)
+              for f in files:
+                  name = os.path.basename(f)
+                  if name in existing:
+                      print(f'Skip {name} (already exists on Gitee)')
+                      continue
+                  with open(f, 'rb') as fh:
+                      resp = requests.post(
+                          f'{api_base}/releases/{release_id}/attach_files',
+                          files={'file': (name, fh)},
+                          params={'access_token': token},
+                          timeout=300,
+                      )
+                  if resp.ok:
+                      print(f'Uploaded {name} to Gitee Release')
+                  else:
+                      print(f'Failed to upload {name}: {resp.status_code}')
+          "
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
