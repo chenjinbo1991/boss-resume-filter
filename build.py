@@ -662,7 +662,8 @@ def update_latest_json(version, release_notes, downloads_cn=None):
         "release_date": date.today().isoformat(),
         "downloads": {
             "windows": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.exe",
-            "macos": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter_mac.zip"
+            "macos": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter_mac.zip",
+            "macos_dmg": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.dmg"
         },
         "release_notes": release_notes
     }
@@ -914,6 +915,11 @@ def _gitee_release(version, release_title, release_notes):
                 )
             elif f.name.endswith("_mac.zip"):
                 downloads_cn["macos"] = asset.get(
+                    "browser_download_url",
+                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
+                )
+            elif f.name.endswith(".dmg"):
+                downloads_cn["macos_dmg"] = asset.get(
                     "browser_download_url",
                     f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
                 )

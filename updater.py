@@ -190,8 +190,10 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
         downloads_cn = data.get('downloads_cn', {})
         if sys.platform == 'win32':
             result['download_url'] = downloads_cn.get('windows') or downloads.get('windows')
+            result['download_url_fallback'] = downloads.get('windows')
         elif sys.platform == 'darwin':
             result['download_url'] = downloads_cn.get('macos') or downloads.get('macos')
+            result['download_url_fallback'] = downloads.get('macos')
 
     except requests.exceptions.Timeout:
         result['error'] = "Gitee 连接超时"
@@ -618,12 +620,18 @@ def show_update_dialog(root, result):
                 success, error = download_file(str(download_url), temp_exe, progress_callback)
 
                 if not success:
-                    root.after(0, lambda: messagebox.showerror(
-                        "下载失败",
-                        f"下载新版本失败: {error}",
-                        parent=dialog
-                    ))
-                    return
+                    # Gitee 下载失败，尝试 GitHub fallback
+                    fallback_url = result.get('download_url_fallback')
+                    if fallback_url and str(fallback_url) != str(download_url):
+                        root.after(0, lambda: progress_label.config(text="Gitee 下载失败，尝试 GitHub..."))
+                        success, error = download_file(str(fallback_url), temp_exe, progress_callback)
+                    if not success:
+                        root.after(0, lambda: messagebox.showerror(
+                            "下载失败",
+                            f"下载新版本失败: {error}",
+                            parent=dialog
+                        ))
+                        return
 
                 # 执行更新
                 root.after(0, lambda: progress_label.config(text="正在安装..."))
@@ -672,12 +680,18 @@ def show_update_dialog(root, result):
                     success, error = download_file(str(download_url), temp_zip, progress_callback)
 
                     if not success:
-                        root.after(0, lambda: messagebox.showerror(
-                            "下载失败",
-                            f"下载新版本失败: {error}",
-                            parent=dialog
-                        ))
-                        return
+                        # Gitee 下载失败，尝试 GitHub fallback
+                        fallback_url = result.get('download_url_fallback')
+                        if fallback_url and str(fallback_url) != str(download_url):
+                            root.after(0, lambda: progress_label.config(text="Gitee 下载失败，尝试 GitHub..."))
+                            success, error = download_file(str(fallback_url), temp_zip, progress_callback)
+                        if not success:
+                            root.after(0, lambda: messagebox.showerror(
+                                "下载失败",
+                                f"下载新版本失败: {error}",
+                                parent=dialog
+                            ))
+                            return
 
                     # 执行更新
                     root.after(0, lambda: progress_label.config(text="正在安装..."))
