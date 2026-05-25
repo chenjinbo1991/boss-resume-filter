@@ -1083,8 +1083,11 @@ def main():
         # Gitee 上传成功后，更新 latest.json 加入国内下载链接
         if downloads_cn:
             update_latest_json(version, release_notes, downloads_cn)
-            print("  [提示] latest.json 已更新国内下载链接，请手动提交：")
-            print("         git add latest.json && git commit -m \"chore: 更新 Gitee 下载链接\"")
+            subprocess.run(["git", "add", "latest.json"], cwd=BASE_DIR, check=True)
+            subprocess.run(["git", "commit", "-m", "chore: 更新 Gitee 下载链接"],
+                           cwd=BASE_DIR, check=True)
+            subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
+            print("  [OK] latest.json 已自动提交并推送（含 Gitee 下载链接）")
 
         print(f"\n{'='*60}")
         print(f"  v{version} 发布完成！")
