@@ -77,8 +77,9 @@ FONT_FAMILY = get_font_family()
 
 # UI 配置常量（续）
 UI_CONFIG = {
-    'zoom_factor': 1.1,              # 额外放大系数（默认，Windows/Linux）；微调补偿，DPI 缩放仍由系统主导
+    'zoom_factor': 1.0,              # 额外放大系数（默认，Windows/Linux）；普通 1080P 保持原生比例
     'mac_zoom_factor': 0.9,          # macOS Retina 下 Tk 已有 DPI 缩放，避免界面过大
+    'high_dpi_reduction': 0.6,       # 高 DPI（>130%）等比例缩减系数，避免 UI 整体过大
     'window_base_width': 1500,       # 窗口基础宽度
     'window_base_height': 950,       # 窗口基础高度
     'window_min_width': 1300,        # 最小窗口宽度
@@ -122,6 +123,259 @@ UI_CONFIG = {
     'font_size_status': 11,          # 状态提示字体大小
     'font_size_model_label': 14,     # 模型标签字体大小
 }
+
+
+def _clamp(value, min_value, max_value):
+    return max(min_value, min(max_value, value))
+
+
+def _calculate_effective_scale(dpi_scale, screen_width, screen_height, platform=sys.platform):
+    """根据 DPI 和屏幕尺寸计算最终 UI 缩放比例。
+
+    所有 UI 元素（窗口大小、字体、间距、图标）统一使用此缩放比例。
+    """
+    base_zoom = UI_CONFIG['mac_zoom_factor'] if platform == 'darwin' else UI_CONFIG['zoom_factor']
+    effective_scale = dpi_scale * base_zoom
+
+    # 高 DPI 显示器（>130%）：等比例缩减，避免 UI 整体过大
+    # 4K@175% 下，Windows 自动缩放 1.75 倍，UI 元素视觉偏大。
+    # 缩减 30% 使 UI 整体缩小到合理的视觉比例。
+    if dpi_scale > 1.3:
+        effective_scale *= UI_CONFIG.get('high_dpi_reduction', 0.7)
+
+    # 低 DPI 大屏幕（如 4K@100%）：适当放大窗口利用空间
+    if dpi_scale <= 1.1 and (screen_width >= 2400 or screen_height >= 1350):
+        target_w = (screen_width * 0.64) / UI_CONFIG['window_base_width']
+        target_h = (screen_height * 0.74) / UI_CONFIG['window_base_height']
+        effective_scale = max(effective_scale, min(target_w, target_h))
+
+    min_scale = 0.85
+    result = _clamp(effective_scale, min_scale, 2.5)
+    print(f"[DPI] dpi_scale={dpi_scale:.3f}, screen={screen_width}x{screen_height}, "
+          f"effective={result:.3f}, platform={platform}")
+    return result
+
+
+def _get_windows_monitor_area(window=None, parent=None):
+    """返回当前相关显示器工作区 (left, top, width, height)。"""
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", wintypes.DWORD),
+            ]
+
+        user32 = ctypes.windll.user32
+        user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+        user32.GetCursorPos.restype = wintypes.BOOL
+        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        user32.MonitorFromPoint.restype = wintypes.HMONITOR
+        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.MonitorFromWindow.restype = wintypes.HMONITOR
+        user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+        user32.GetMonitorInfoW.restype = wintypes.BOOL
+
+        monitor = None
+        if parent is not None:
+            parent.update_idletasks()
+            point = wintypes.POINT(
+                parent.winfo_rootx() + parent.winfo_width() // 2,
+                parent.winfo_rooty() + parent.winfo_height() // 2,
+            )
+            monitor = user32.MonitorFromPoint(point, 2)  # MONITOR_DEFAULTTONEAREST
+        else:
+            point = wintypes.POINT()
+            if user32.GetCursorPos(ctypes.byref(point)):
+                monitor = user32.MonitorFromPoint(point, 2)
+            if not monitor and window is not None:
+                monitor = user32.MonitorFromWindow(window.winfo_id(), 2)
+
+        if not monitor:
+            return None
+
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+
+        work = info.rcWork
+        return work.left, work.top, work.right - work.left, work.bottom - work.top
+    except (ImportError, OSError, AttributeError, tk.TclError):
+        return None
+
+
+def _enable_high_dpi_awareness():
+    """不启用 DPI 感知（保持 DPI Unaware 模式）。
+
+    DPI Unaware 模式下 Windows 自动缩放 UI，但导致高 DPI 显示器上 UI 过大。
+    我们通过 _detect_display_scale() 检测真实缩放倍数，用 zoom_factor 补偿。
+    不启用 V2 是因为 Tk 8.6 对 V2 支持不完善，会导致布局混乱。
+    """
+    pass
+
+
+def _get_primary_physical_width() -> int:
+    """获取主显示器的物理像素宽度（DPI Unaware 模式下绕过虚拟化）。
+
+    EnumDisplaySettingsW(None, -1) 不受 DPI 虚拟化影响，返回真实物理像素。
+    返回 0 表示获取失败。
+    """
+    if sys.platform != 'win32':
+        return 0
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class DEVMODEW(ctypes.Structure):
+            _fields_ = [
+                ('dmDeviceName', wintypes.WCHAR * 32),
+                ('dmSpecVersion', wintypes.WORD),
+                ('dmDriverVersion', wintypes.WORD),
+                ('dmSize', wintypes.WORD),
+                ('dmDriverExtra', wintypes.WORD),
+                ('dmFields', wintypes.DWORD),
+                ('dmOrientation', wintypes.WORD),
+                ('dmPaperSize', wintypes.WORD),
+                ('dmPaperLength', wintypes.WORD),
+                ('dmPaperWidth', wintypes.WORD),
+                ('dmScale', wintypes.WORD),
+                ('dmCopies', wintypes.WORD),
+                ('dmDefaultSource', wintypes.WORD),
+                ('dmPrintQuality', wintypes.WORD),
+                ('dmColor', wintypes.WORD),
+                ('dmDuplex', wintypes.WORD),
+                ('dmYResolution', wintypes.WORD),
+                ('dmTTOption', wintypes.WORD),
+                ('dmCollate', wintypes.WORD),
+                ('dmFormName', wintypes.WCHAR * 32),
+                ('dmLogPixels', wintypes.WORD),
+                ('dmBitsPerPel', wintypes.DWORD),
+                ('dmPelsWidth', wintypes.DWORD),
+                ('dmPelsHeight', wintypes.DWORD),
+                ('dmDisplayFlags', wintypes.DWORD),
+                ('dmDisplayFrequency', wintypes.DWORD),
+            ]
+
+        dm = DEVMODEW()
+        dm.dmSize = ctypes.sizeof(DEVMODEW)
+        dm.dmDriverExtra = 0
+        if ctypes.windll.user32.EnumDisplaySettingsW(None, -1, ctypes.byref(dm)):
+            return dm.dmPelsWidth
+    except Exception:
+        pass
+    return 0
+
+
+def _place_window_centered(
+    window,
+    width=None,
+    height=None,
+    parent=None,
+    screen_width=None,
+    screen_height=None,
+    screen_left=None,
+    screen_top=None,
+    max_width_ratio=0.9,
+    max_height_ratio=0.85,
+):
+    """居中放置窗口，并把最终位置夹在屏幕可见范围内。"""
+    if parent is not None:
+        parent.update_idletasks()
+    window.update_idletasks()
+
+    width = int(width or window.winfo_width() or window.winfo_reqwidth())
+    height = int(height or window.winfo_height() or window.winfo_reqheight())
+    monitor_area = None
+    if screen_width is None or screen_height is None:
+        monitor_area = _get_windows_monitor_area(window, parent)
+
+    if monitor_area is not None:
+        screen_left, screen_top, screen_width, screen_height = monitor_area
+    else:
+        screen_left = int(screen_left or 0)
+        screen_top = int(screen_top or 0)
+        screen_width = int(screen_width or window.winfo_screenwidth())
+        screen_height = int(screen_height or window.winfo_screenheight())
+
+    if width > screen_width:
+        width = max(1, int(screen_width * max_width_ratio))
+    if height > screen_height:
+        height = max(1, int(screen_height * max_height_ratio))
+
+    if parent is not None:
+        parent_x = parent.winfo_rootx()
+        parent_y = parent.winfo_rooty()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        x = parent_x + (parent_width - width) // 2
+        y = parent_y + (parent_height - height) // 2
+    else:
+        x = screen_left + (screen_width - width) // 2
+        y = screen_top + (screen_height - height) // 2
+
+    min_x = screen_left
+    min_y = screen_top
+    max_x = screen_left + max(0, screen_width - width)
+    max_y = screen_top + max(0, screen_height - height)
+    x = min(max(min_x, x), max_x)
+    y = min(max(min_y, y), max_y)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    return width, height, x, y
+
+
+def _place_main_window(root, monitor_area=None):
+    """按启动目标显示器居中主窗口。"""
+    if monitor_area is None:
+        return _place_window_centered(root)
+
+    screen_left, screen_top, screen_width, screen_height = monitor_area
+    return _place_window_centered(
+        root,
+        screen_left=screen_left,
+        screen_top=screen_top,
+        screen_width=screen_width,
+        screen_height=screen_height,
+    )
+
+
+def _show_main_window_centered(root, monitor_area=None):
+    """显示主窗口前后复位居中，避免启动首帧偏移闪烁。"""
+    transparent_until_centered = sys.platform == 'win32'
+    if transparent_until_centered:
+        try:
+            root.attributes("-alpha", 0.0)
+        except tk.TclError:
+            transparent_until_centered = False
+
+    _place_main_window(root, monitor_area)
+    root.deiconify()
+
+    def reveal_after_centering():
+        _place_main_window(root, monitor_area)
+        if transparent_until_centered:
+            try:
+                root.attributes("-alpha", 1.0)
+            except tk.TclError:
+                pass
+
+    root.after(50, reveal_after_centering)
+    root.after(250, lambda: _place_main_window(root, monitor_area))
+
 
 # macOS Tk 9.0+ 触控板滚动修复标记：
 # Tk 9.0 的 Cocoa 后端不向 Canvas 派发触控板滚动事件（scrollWheel: 在 NSView 层被消费），
@@ -178,27 +432,36 @@ class BossFilterGUI:
         self.root = root
         self.root.title(f"BOSS 简历筛选器 v{__version__} - 智能候选人筛选工具")
 
-        # 在 DPI 感知生效前捕获屏幕尺寸（此时与 tkinter geometry 同一虚拟坐标系）
+        # 获取屏幕尺寸（DPI Unaware 模式下为虚拟像素）
         self.root.update_idletasks()
         _screen_width = self.root.winfo_screenwidth()
         _screen_height = self.root.winfo_screenheight()
 
-        # 高 DPI 支持 - Per Monitor DPI Aware V2
-        try:
-            from ctypes import windll
-            windll.shcore.SetProcessDpiAwareness(2)  # 2 = Per Monitor DPI Aware V2
-        except (ImportError, OSError, AttributeError):
-            pass
+        # 检测主显示器的真实缩放倍数：物理像素宽度 / 虚拟像素宽度
+        # DPI Unaware 模式下，Tk 报告的 dpi_scale ≈ 1.0，但 Windows 实际缩放 > 1.0
+        _physical_width = _get_primary_physical_width()
+        if _physical_width > 0 and _screen_width > 0:
+            _display_scale = _physical_width / _screen_width
+        else:
+            _display_scale = self.root.winfo_fpixels('1i') / 96.0 if self.dpi_scale else 1.0
 
-        # 使用 tkinter 内置方法获取 DPI 缩放比例（兼容 PyInstaller 打包）
+        # 用真实 display_scale 计算 effective_scale（_calculate_effective_scale 内置高 DPI 缩减）
+        # 所有 UI 元素（窗口、字体、间距、图标）统一使用此缩放比例
+        effective_scale = _calculate_effective_scale(_display_scale, _screen_width, _screen_height)
+
+        # self.dpi_scale 保持 Tk 报告值（≈1.0），zoom_factor 承载全部缩放
+        # 最终缩放 = dpi_scale × zoom_factor = effective_scale
         try:
             self.dpi_scale = self.root.winfo_fpixels('1i') / 96.0
         except Exception:
             self.dpi_scale = 1.0
+        self.zoom_factor = effective_scale / self.dpi_scale if self.dpi_scale else 1.0
 
-        # 额外放大系数。macOS Retina 下 Tk 已应用 DPI 缩放，再额外放大会显得过大。
-        self.zoom_factor = UI_CONFIG['mac_zoom_factor'] if sys.platform == 'darwin' else UI_CONFIG['zoom_factor']
-        effective_scale = self.dpi_scale * self.zoom_factor
+        print(f"[DPI] dpi_scale={self.dpi_scale:.3f}, "
+              f"display_scale={_display_scale:.3f}, "
+              f"screen={_screen_width}x{_screen_height}, "
+              f"effective={effective_scale:.3f}, "
+              f"zoom={self.zoom_factor:.3f}")
 
         # 初始化图标缓存（DPI 感知的高清图标）
         self.icons = icons.init(effective_scale)
@@ -222,11 +485,14 @@ class BossFilterGUI:
             window_width = int(screen_width * 0.9)
         if window_height > screen_height:
             window_height = int(screen_height * 0.85)
-        x = max(0, (screen_width - window_width) // 2)
-        y = max(0, (screen_height - window_height) // 2)
-
-        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        self.root.minsize(int(UI_CONFIG['window_min_width'] * effective_scale), int(UI_CONFIG['window_min_height'] * effective_scale))
+        placed_width, placed_height, _, _ = _place_window_centered(
+            self.root,
+            window_width,
+            window_height,
+        )
+        min_width = min(int(UI_CONFIG['window_min_width'] * effective_scale), placed_width)
+        min_height = min(int(UI_CONFIG['window_min_height'] * effective_scale), placed_height)
+        self.root.minsize(min_width, min_height)
 
         # 运行状态
         self.is_running = False
@@ -2464,10 +2730,7 @@ class BossFilterGUI:
 
     def _center_window(self, window, width, height):
         """将子窗口相对于主窗口居中"""
-        self.root.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - width) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - height) // 2
-        window.geometry(f"+{x}+{y}")
+        _place_window_centered(window, width, height, parent=self.root)
 
     def _set_window_icon(self):
         """设置窗口图标，替换 tkinter 默认羽毛图标"""
@@ -2525,7 +2788,6 @@ class BossFilterGUI:
             # 设置固定大小并相对主窗口居中
             window_width = 1000
             window_height = 650
-            detail_window.geometry(f"{window_width}x{window_height}")
             self._center_window(detail_window, window_width, window_height)
 
             # 标题 - 加大加粗
@@ -2615,15 +2877,7 @@ class BossFilterGUI:
                                 tw.pack(fill='both', expand=True, padx=20, pady=10)
                                 tw.insert('1.0', self._format_candidate_detail(c))
                                 self.bind_text_context_menu(tw, editable=False)
-                                d_win.update_idletasks()
-                                px = self.root.winfo_x()
-                                py = self.root.winfo_y()
-                                pw = self.root.winfo_width()
-                                ph = self.root.winfo_height()
-                                dw, dh = 700, 580
-                                dx = px + (pw - dw) // 2
-                                dy = py + (ph - dh) // 2
-                                d_win.geometry(f"{dw}x{dh}+{max(0, dx)}+{max(0, dy)}")
+                                _place_window_centered(d_win, 700, 580, parent=self.root)
                                 d_win.deiconify()
                                 break
 
@@ -2777,7 +3031,6 @@ class BossFilterGUI:
             # 设置固定大小并相对主窗口居中
             window_width = 1000
             window_height = 650
-            detail_window.geometry(f"{window_width}x{window_height}")
             self._center_window(detail_window, window_width, window_height)
 
             # 标题
@@ -2890,15 +3143,7 @@ class BossFilterGUI:
                                 tw.pack(fill='both', expand=True, padx=20, pady=10)
                                 tw.insert('1.0', self._format_candidate_detail(c))
                                 self.bind_text_context_menu(tw, editable=False)
-                                d_win.update_idletasks()
-                                px = self.root.winfo_x()
-                                py = self.root.winfo_y()
-                                pw = self.root.winfo_width()
-                                ph = self.root.winfo_height()
-                                dw, dh = 700, 580
-                                dx = px + (pw - dw) // 2
-                                dy = py + (ph - dh) // 2
-                                d_win.geometry(f"{dw}x{dh}+{max(0, dx)}+{max(0, dy)}")
+                                _place_window_centered(d_win, 700, 580, parent=self.root)
                                 d_win.deiconify()
                                 break
 
@@ -3487,15 +3732,7 @@ class BossFilterGUI:
                                 listbox.selection_set(0)
                                 listbox.see(0)
 
-                            # 相对父窗口居中（不受多显示器DPI差异影响）
-                            dialog.update_idletasks()
-                            px = self.root.winfo_x()
-                            py = self.root.winfo_y()
-                            pw = self.root.winfo_width()
-                            ph = self.root.winfo_height()
-                            x = px + (pw - dialog_width) // 2
-                            y = py + (ph - dialog_height) // 2
-                            dialog.geometry(f"{dialog_width}x{dialog_height}+{max(0, x)}+{max(0, y)}")
+                            _place_window_centered(dialog, dialog_width, dialog_height, parent=self.root)
                             dialog.deiconify()
                             dialog.grab_set()
                             # 不使用 wait_window()：它会创建嵌套事件循环，
@@ -4958,10 +5195,7 @@ class BossFilterGUI:
     @staticmethod
     def _center_window_on_screen(window, width, height):
         """将子窗口相对于屏幕居中（不依赖父窗口位置）"""
-        window.update_idletasks()
-        x = (window.winfo_screenwidth() - width) // 2
-        y = (window.winfo_screenheight() - height) // 2
-        window.geometry(f"+{max(0, x)}+{max(0, y)}")
+        _place_window_centered(window, width, height)
 
     def start_run(self):
         """开始运行"""
@@ -5526,16 +5760,7 @@ class BossFilterGUI:
                     text_widget.insert('1.0', detail_text)
                     break
 
-            # 相对父窗口居中（与模型列表弹窗相同实现）
-            detail_window.update_idletasks()
-            px = self.root.winfo_x()
-            py = self.root.winfo_y()
-            pw = self.root.winfo_width()
-            ph = self.root.winfo_height()
-            w, h = 700, 580
-            x = px + (pw - w) // 2
-            y = py + (ph - h) // 2
-            detail_window.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+            _place_window_centered(detail_window, 700, 580, parent=self.root)
             detail_window.deiconify()
 
         except Exception as e:
@@ -6033,12 +6258,7 @@ class BossFilterGUI:
         dialog.transient(self.root)
         dialog.resizable(False, False)
 
-        # 居中显示
-        dialog.update_idletasks()
-        w, h = 480, 420
-        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
-        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        _place_window_centered(dialog, 480, 420, parent=self.root)
 
         # 标题
         tk.Label(dialog, text="BOSS 简历筛选器",
@@ -6154,14 +6374,7 @@ class BossFilterGUI:
         dialog.withdraw()
 
         dw, dh = 940, 620
-        self.root.update_idletasks()
-        rx = self.root.winfo_rootx()
-        ry = self.root.winfo_rooty()
-        rw = self.root.winfo_width()
-        rh = self.root.winfo_height()
-        x = rx + (rw - dw) // 2
-        y = ry + (rh - dh) // 2
-        dialog.geometry(f"{dw}x{dh}+{x}+{y}")
+        _place_window_centered(dialog, dw, dh, parent=self.root)
 
         fs = self.dpi_scale * self.zoom_factor
 
@@ -6392,6 +6605,8 @@ class BossFilterGUI:
 
 
 def main():
+    _enable_high_dpi_awareness()
+    startup_monitor_area = _get_windows_monitor_area()
     root = tk.Tk()
 
     # 先隐藏窗口
@@ -6400,16 +6615,8 @@ def main():
     # 创建应用（会初始化界面）
     app = BossFilterGUI(root)
 
-    # 窗口居中显示
-    root.update_idletasks()
-    width = root.winfo_width()
-    height = root.winfo_height()
-    x = (root.winfo_screenwidth() - width) // 2
-    y = (root.winfo_screenheight() - height) // 2
-    root.geometry(f'{width}x{height}+{x}+{y}')
-
-    # 显示窗口
-    root.deiconify()
+    # 显示窗口前后复位，避免启动首帧偏移闪烁。
+    _show_main_window_centered(root, startup_monitor_area)
 
     root.mainloop()
 
