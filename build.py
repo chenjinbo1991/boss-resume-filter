@@ -921,16 +921,7 @@ def _gitee_release(version, release_title, release_notes):
 
         if release:
             release_id = release["id"]
-            # 删除当前平台旧产物
-            for asset in release.get("assets", []):
-                name = asset.get("name", "")
-                if any(a.name == name for a in artifacts):
-                    requests.delete(
-                        f"{api_base}/releases/{release_id}/attach_files/{asset['id']}",
-                        params={"access_token": token},
-                        timeout=10,
-                    )
-                    print(f"  [Gitee] 已删除旧资源: {name}")
+            # Gitee API 不返回 asset ID，无法删除单个文件，直接上传覆盖
         else:
             # 创建 release
             resp = requests.post(
