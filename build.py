@@ -378,6 +378,48 @@ def _run_unit_checks():
     _run_checked([sys.executable, "tests/test_import.py"], "导入烟测")
 
 
+def _check_changelog_updated():
+    """检测核心代码有变更时 CHANGELOG.md 必须同步更新。"""
+    result = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0"],
+        capture_output=True, text=True, cwd=BASE_DIR
+    )
+    if result.returncode != 0:
+        print("  [跳过] CHANGELOG 检查：无法获取上一个 tag")
+        return
+
+    last_tag = result.stdout.strip()
+
+    # 检查核心代码是否有变更
+    core_files = ["gui_main.py", "bossmaster.py", "filtering.py", "storage.py",
+                  "llm_eval.py", "doc_parser.py", "security.py", "updater.py", "icons.py"]
+    result = subprocess.run(
+        ["git", "diff", "--name-only", last_tag, "HEAD", "--"] + core_files,
+        capture_output=True, text=True, cwd=BASE_DIR
+    )
+    changed_core = [f for f in result.stdout.strip().splitlines() if f]
+
+    if not changed_core:
+        print("  [OK] CHANGELOG 检查：核心代码无变更")
+        return
+
+    # 检查 CHANGELOG.md 是否更新
+    result = subprocess.run(
+        ["git", "diff", "--name-only", last_tag, "HEAD", "--", "CHANGELOG.md"],
+        capture_output=True, text=True, cwd=BASE_DIR
+    )
+    changelog_changed = bool(result.stdout.strip())
+
+    if not changelog_changed:
+        print("[错误] 核心代码已变更但 CHANGELOG.md 未更新：\n")
+        for f in changed_core:
+            print(f"  - {f}")
+        print("\n请先更新 CHANGELOG.md 再发布")
+        sys.exit(1)
+
+    print("  [OK] CHANGELOG 已同步更新")
+
+
 def _preflight_checks(require_clean=True):
     """发布/打包前检查"""
     print("\n>>> 发布前检查")
@@ -387,6 +429,7 @@ def _preflight_checks(require_clean=True):
     _check_sensitive_files_not_tracked()
     _check_api_config_has_no_plaintext_key()
     _check_source_compiles()
+    _check_changelog_updated()
     _run_unit_checks()
 
     if require_clean:
