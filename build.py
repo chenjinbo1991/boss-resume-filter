@@ -638,7 +638,8 @@ def _check_readme_release(version):
 def _git_status():
     """返回 (has_changes, status_text)"""
     r = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=BASE_DIR)
-    return bool(r.stdout.strip()), r.stdout.strip()
+    status_text = r.stdout.rstrip()
+    return bool(status_text), status_text
 
 
 def _git_commit(version, allowed_paths=None):
