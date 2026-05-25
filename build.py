@@ -6,6 +6,7 @@ BOSS 简历筛选器 - 打包脚本
   python build.py --release            打包 → 提交 → 打 tag → 推送 → GitHub Release
   python build.py --release --version 2.5  自动更新 __version__ + 一键发布
   python build.py --ci --release       CI 模式：跳过 venv/git，由 GitHub Actions 调用
+  python build.py --gitee-upload X.Y.Z 手动补传产物到 Gitee Release
 """
 import argparse
 import ast
@@ -860,6 +861,7 @@ def _gitee_release(version, release_title, release_notes):
     """上传产物到 Gitee Release，返回 downloads_cn 字典（国内下载链接）。
 
     需要环境变量 GITEE_TOKEN。未设置时跳过并返回 None。
+    上传失败时带重试（2 次），仍失败则打印醒目的手动补传提示。
     """
     token = os.environ.get("GITEE_TOKEN")
     if not token:
@@ -885,6 +887,27 @@ def _gitee_release(version, release_title, release_notes):
             DIST_DIR / "job_config.json",
             DIST_DIR / "README.md",
         ]
+
+    def _upload_file(filepath, release_id, max_retries=3):
+        """上传单个文件到 Gitee Release，带重试。"""
+        for attempt in range(max_retries):
+            try:
+                with open(filepath, "rb") as fh:
+                    resp = requests.post(
+                        f"{api_base}/releases/{release_id}/attach_files",
+                        files={"file": (filepath.name, fh)},
+                        params={"access_token": token},
+                        timeout=300,
+                    )
+                resp.raise_for_status()
+                return resp.json()
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    delay = 2 ** (attempt + 1)
+                    print(f"  [Gitee] {filepath.name} 上传失败 ({e})，{delay}s 后重试 ({attempt+1}/{max_retries})")
+                    time.sleep(delay)
+                else:
+                    raise
 
     try:
         # 查找已有 release
@@ -927,20 +950,19 @@ def _gitee_release(version, release_title, release_notes):
 
         # 上传产物
         downloads_cn = {}
+        failed = []
         for f in artifacts:
             if not f.exists():
                 print(f"  [Gitee 跳过] 文件不存在: {f.name}")
                 continue
 
-            resp = requests.post(
-                f"{api_base}/releases/{release_id}/attach_files",
-                files={"file": (f.name, open(f, "rb"))},
-                params={"access_token": token},
-                timeout=300,  # 大文件上传，5 分钟超时
-            )
-            resp.raise_for_status()
-            asset = resp.json()
-            print(f"  [OK] Gitee 已上传: {f.name}")
+            try:
+                asset = _upload_file(f, release_id)
+                print(f"  [OK] Gitee 已上传: {f.name}")
+            except requests.exceptions.RequestException as e:
+                print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
+                failed.append(f.name)
+                continue
 
             # 记录下载链接
             if f.name.endswith(".exe"):
@@ -969,11 +991,21 @@ def _gitee_release(version, release_title, release_notes):
                     f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
                 )
 
+        if failed:
+            print(f"\n{'!'*60}")
+            print(f"  ⚠️  Gitee 上传部分失败: {', '.join(failed)}")
+            print(f"  GitHub Release 不受影响，但国内用户无法从 Gitee 下载这些文件")
+            print(f"  手动补传命令: python build.py --gitee-upload {version}")
+            print(f"{'!'*60}\n")
+
         return downloads_cn if downloads_cn else None
 
     except requests.exceptions.RequestException as e:
-        print(f"  [警告] Gitee Release 上传失败: {e}")
-        print("  GitHub Release 不受影响，可稍后手动上传到 Gitee")
+        print(f"\n{'!'*60}")
+        print(f"  ⚠️  Gitee Release 整体失败: {e}")
+        print(f"  GitHub Release 不受影响")
+        print(f"  手动补传命令: python build.py --gitee-upload {version}")
+        print(f"{'!'*60}\n")
         return None
 
 
@@ -991,6 +1023,8 @@ def main():
                         help="自动更新 gui_main.py 中的 __version__")
     parser.add_argument("--ci", action="store_true",
                         help="CI 模式：跳过虚拟环境切换和 git 操作，用于 GitHub Actions")
+    parser.add_argument("--gitee-upload", type=str, default=None, metavar="X.Y.Z",
+                        help="手动补传产物到 Gitee Release（需要 GITEE_TOKEN）")
     args = parser.parse_args()
 
     version_changed = False
@@ -1009,6 +1043,35 @@ def main():
 
     if args.check:
         _preflight_checks(require_clean=True)
+        return
+
+    if args.gitee_upload:
+        version = args.gitee_upload
+        tag = f"v{version}"
+        print(f"\n>>> 手动上传产物到 Gitee Release {tag}")
+
+        # 从 GitHub Release 读取 release notes
+        release_title = tag
+        release_notes = ""
+        try:
+            r = subprocess.run(
+                ["gh", "release", "view", tag, "--json", "name,body"],
+                capture_output=True, text=True, cwd=BASE_DIR,
+            )
+            if r.returncode == 0:
+                data = json.loads(r.stdout)
+                release_title = data.get("name", tag)
+                release_notes = data.get("body", "")
+        except Exception:
+            pass
+
+        downloads_cn = _gitee_release(version, release_title, release_notes)
+        if downloads_cn:
+            update_latest_json(version, release_notes, downloads_cn)
+            print(f"\n  [OK] downloads_cn 已更新，请手动提交推送：")
+            print(f"  git add latest.json && git commit -m \"chore: 更新 Gitee 下载链接\" && git push")
+        else:
+            print(f"\n  [失败] Gitee 上传未成功")
         return
 
     print("""
