@@ -77,7 +77,7 @@ FONT_FAMILY = get_font_family()
 
 # UI 配置常量（续）
 UI_CONFIG = {
-    'zoom_factor': 1.3,              # 额外放大系数（默认，Windows/Linux）
+    'zoom_factor': 1.1,              # 额外放大系数（默认，Windows/Linux）；微调补偿，DPI 缩放仍由系统主导
     'mac_zoom_factor': 0.9,          # macOS Retina 下 Tk 已有 DPI 缩放，避免界面过大
     'window_base_width': 1500,       # 窗口基础宽度
     'window_base_height': 950,       # 窗口基础高度
