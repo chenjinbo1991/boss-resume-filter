@@ -945,14 +945,14 @@ def _gitee_upload_local(version, release_title, release_notes):
     api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
 
     if IS_MAC:
-        # 第一批：安装包 + 配置（优先）
+        # 第一批：自动更新用 ZIP + 配置（优先）
         batch1 = [
-            DIST_DIR / "BOSS_ResumeFilter.dmg",
+            DIST_DIR / "BOSS_ResumeFilter_mac.zip",
             DIST_DIR / "job_config.json",
             DIST_DIR / "README.md",
         ]
-        # 第二批：自动更新用 ZIP（放最后）
-        batch2 = [DIST_DIR / "BOSS_ResumeFilter_mac.zip"]
+        # 第二批：安装包 DMG（放最后）
+        batch2 = [DIST_DIR / "BOSS_ResumeFilter.dmg"]
     else:
         batch1 = [
             DIST_DIR / "BOSS_ResumeFilter.exe",
@@ -1138,11 +1138,11 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         print(f"\n  [!!]  未成功下载任何对端产物")
         return None
 
-    # 只上传从 GitHub 下载的对端产物（本地文件由 _gitee_upload_local 负责）
-    upload_files = downloaded
+    # 分批：非 DMG 先上传（并行），DMG 放最后
+    batch1 = [f for f in downloaded if not f.name.endswith(".dmg")]
+    batch2 = [f for f in downloaded if f.name.endswith(".dmg")]
 
-    # 并行上传到 Gitee
-    print(f"  并行上传 {len(upload_files)} 个对端产物到 Gitee Release...")
+    # 上传到 Gitee
     try:
         release_id, existing = _gitee_find_or_create_release(
             api_base, token, tag, release_title, release_notes)
@@ -1150,22 +1150,29 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         downloads_cn = {}
         failed = []
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = {
-                pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
-                for f in upload_files
-            }
-            for future in as_completed(futures):
-                f = futures[future]
-                try:
-                    name, asset = future.result()
-                    url = asset.get("browser_download_url",
-                                    _gitee_asset_url(owner, repo, tag, name))
-                    downloads_cn[_downloads_cn_key(name)] = url
-                    print(f"  [OK] Gitee 已上传: {name}")
-                except Exception as e:
-                    print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
-                    failed.append(f.name)
+        def _upload_batch(files, label):
+            if not files:
+                return
+            print(f"  {label}...")
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {
+                    pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
+                    for f in files
+                }
+                for future in as_completed(futures):
+                    f = futures[future]
+                    try:
+                        name, asset = future.result()
+                        url = asset.get("browser_download_url",
+                                        _gitee_asset_url(owner, repo, tag, name))
+                        downloads_cn[_downloads_cn_key(name)] = url
+                        print(f"  [OK] Gitee 已上传: {name}")
+                    except Exception as e:
+                        print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
+                        failed.append(f.name)
+
+        _upload_batch(batch1, f"上传 {len(batch1)} 个对端产物")
+        _upload_batch(batch2, "上传 DMG")
 
         if failed:
             print(f"\n{'!'*60}")
