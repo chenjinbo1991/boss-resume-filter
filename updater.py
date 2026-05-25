@@ -140,6 +140,69 @@ def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
     return result
 
 
+def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/latest.json"):
+    """
+    从 Gitee 检查最新版本（国内备用源）
+
+    Args:
+        latest_json_url: Gitee 上 latest.json 的 URL
+
+    Returns:
+        dict: 与 check_github_release() 返回结构相同
+    """
+    result = {
+        'latest': None,
+        'current': get_current_version(),
+        'has_update': False,
+        'release_info': None,
+        'download_url': None,
+        'error': None
+    }
+
+    try:
+        response = requests.get(latest_json_url, timeout=5)  # 5秒超时，国内快
+        response.raise_for_status()
+
+        data = response.json()
+        latest_version = data.get('version', '').lstrip('v')
+        result['latest'] = latest_version
+
+        # 比较版本号
+        def parse_version(v):
+            try:
+                parts = [int(x) for x in v.split('.')]
+                return tuple(parts)
+            except:
+                return (0, 0, 0)
+
+        current_tuple = parse_version(result['current'])
+        latest_tuple = parse_version(latest_version)
+        result['has_update'] = latest_tuple > current_tuple
+
+        # 构造 release_info（兼容 GitHub 格式）
+        result['release_info'] = {
+            'tag_name': f"v{latest_version}",
+            'body': data.get('release_notes', '无更新说明')
+        }
+
+        # 获取下载链接：优先使用 Gitee 国内下载链接，回退到 GitHub 链接
+        downloads = data.get('downloads', {})
+        downloads_cn = data.get('downloads_cn', {})
+        if sys.platform == 'win32':
+            result['download_url'] = downloads_cn.get('windows') or downloads.get('windows')
+        elif sys.platform == 'darwin':
+            result['download_url'] = downloads_cn.get('macos') or downloads.get('macos')
+
+    except requests.exceptions.Timeout:
+        result['error'] = "Gitee 连接超时"
+    except requests.exceptions.RequestException as e:
+        result['error'] = f"Gitee 请求失败: {e}"
+    except Exception as e:
+        result['error'] = f"检查更新失败: {e}"
+
+    return result
+
+
 def download_file(url, dest_path, progress_callback=None):
     """
     下载文件，支持进度回调
@@ -434,8 +497,22 @@ def check_and_update_gui(root, silent=False):
         silent: 是否静默检查（不显示"已是最新版本"提示）
     """
     def do_check():
-        # 在后台线程中检查
-        result = check_github_release()
+        # 优先尝试 Gitee（国内快）
+        result = check_gitee_latest()
+
+        if result['error']:
+            # Gitee 请求失败，回退到 GitHub
+            print(f"[更新] Gitee 检查失败: {result['error']}，尝试 GitHub...")
+            result = check_github_release()
+        elif not result['has_update']:
+            # Gitee 返回成功但无更新，用 GitHub 复核（防止 Gitee 镜像同步延迟）
+            print(f"[更新] Gitee 返回 v{result['latest']}（无更新），GitHub 复核...")
+            gh = check_github_release()
+            if not gh['error'] and gh['has_update']:
+                print(f"[更新] GitHub 发现新版本 v{gh['latest']}，使用 GitHub 结果")
+                result = gh
+            else:
+                print(f"[更新] GitHub 复核一致，确认无更新")
 
         # 回到主线程处理结果
         root.after(0, lambda: handle_result(result))

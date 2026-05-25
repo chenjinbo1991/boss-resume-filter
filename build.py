@@ -18,6 +18,8 @@ import sys
 import time
 from pathlib import Path
 
+import requests
+
 BASE_DIR = Path(__file__).parent.resolve()
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
@@ -647,6 +649,34 @@ def _git_commit(version, allowed_paths=None):
     print(f"  [OK] 已提交：{msg}")
 
 
+def update_latest_json(version, release_notes, downloads_cn=None):
+    """更新 latest.json 文件（供 Gitee 镜像使用）
+
+    Args:
+        downloads_cn: Gitee 国内下载链接字典 {"windows": url, "macos": url}
+    """
+    from datetime import date
+
+    latest_data = {
+        "version": version,
+        "release_date": date.today().isoformat(),
+        "downloads": {
+            "windows": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.exe",
+            "macos": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter_mac.zip"
+        },
+        "release_notes": release_notes
+    }
+
+    if downloads_cn:
+        latest_data["downloads_cn"] = downloads_cn
+
+    latest_path = BASE_DIR / "latest.json"
+    with open(latest_path, 'w', encoding='utf-8') as f:
+        json.dump(latest_data, f, ensure_ascii=False, indent=2)
+
+    print(f"  [OK] 已更新 latest.json (v{version})")
+
+
 def _git_tag(version):
     """创建或更新本地 tag"""
     tag = f"v{version}"
@@ -754,6 +784,9 @@ def _gh_release(version, release_title, release_notes):
     # 覆盖发布：删除对端产物 + 触发 CI 重建
     _trigger_cross_platform_ci(tag)
 
+    # 上传产物到 Gitee Release（国内下载源）
+    return _gitee_release(version, release_title, release_notes)
+
 
 def _trigger_cross_platform_ci(tag):
     """覆盖发布后，删除对端旧产物并触发 CI 重建。
@@ -791,6 +824,106 @@ def _trigger_cross_platform_ci(tag):
     else:
         print(f"  [警告] CI 触发失败: {r.stderr.strip()}")
         print("  可手动执行: gh workflow run release.yml --ref " + tag)
+
+
+def _gitee_release(version, release_title, release_notes):
+    """上传产物到 Gitee Release，返回 downloads_cn 字典（国内下载链接）。
+
+    需要环境变量 GITEE_TOKEN。未设置时跳过并返回 None。
+    """
+    token = os.environ.get("GITEE_TOKEN")
+    if not token:
+        print("  [跳过] Gitee Release: 未设置 GITEE_TOKEN 环境变量")
+        return None
+
+    owner = "yaoyouzhong"
+    repo = "boss-resume-filter"
+    tag = f"v{version}"
+    api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+    # 按平台选择上传的主产物（不上传 config/readme，Gitee 只提供主程序下载）
+    if IS_MAC:
+        artifacts = [
+            DIST_DIR / "BOSS_ResumeFilter.dmg",
+            DIST_DIR / "BOSS_ResumeFilter_mac.zip",
+        ]
+    else:
+        artifacts = [DIST_DIR / "BOSS_ResumeFilter.exe"]
+
+    try:
+        # 查找已有 release
+        resp = requests.get(
+            f"{api_base}/releases",
+            params={"access_token": token},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        release = next((r for r in resp.json() if r.get("tag_name") == tag), None)
+
+        if release:
+            release_id = release["id"]
+            # 删除当前平台旧产物
+            for asset in release.get("assets", []):
+                name = asset.get("name", "")
+                if any(a.name == name for a in artifacts):
+                    requests.delete(
+                        f"{api_base}/releases/{release_id}/attach_files/{asset['id']}",
+                        params={"access_token": token},
+                        timeout=10,
+                    )
+                    print(f"  [Gitee] 已删除旧资源: {name}")
+        else:
+            # 创建 release
+            resp = requests.post(
+                f"{api_base}/releases",
+                data={
+                    "access_token": token,
+                    "tag_name": tag,
+                    "name": release_title,
+                    "body": release_notes,
+                    "target_commitish": "master",
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            release_id = resp.json()["id"]
+            print(f"  [OK] Gitee Release 已创建: {tag}")
+
+        # 上传产物
+        downloads_cn = {}
+        for f in artifacts:
+            if not f.exists():
+                print(f"  [Gitee 跳过] 文件不存在: {f.name}")
+                continue
+
+            resp = requests.post(
+                f"{api_base}/releases/{release_id}/attach_files",
+                files={"file": (f.name, open(f, "rb"))},
+                params={"access_token": token},
+                timeout=300,  # 大文件上传，5 分钟超时
+            )
+            resp.raise_for_status()
+            asset = resp.json()
+            print(f"  [OK] Gitee 已上传: {f.name}")
+
+            # 记录下载链接
+            if f.name.endswith(".exe"):
+                downloads_cn["windows"] = asset.get(
+                    "browser_download_url",
+                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
+                )
+            elif f.name.endswith("_mac.zip"):
+                downloads_cn["macos"] = asset.get(
+                    "browser_download_url",
+                    f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{f.name}",
+                )
+
+        return downloads_cn if downloads_cn else None
+
+    except requests.exceptions.RequestException as e:
+        print(f"  [警告] Gitee Release 上传失败: {e}")
+        print("  GitHub Release 不受影响，可稍后手动上传到 Gitee")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -912,10 +1045,22 @@ def main():
         print(f"  Release 模式：v{version}")
         print(f"{'='*60}")
 
-        _git_commit(version, allowed_paths=["gui_main.py"] if args.version else [])
+        # 更新 latest.json（供 Gitee 镜像使用）
+        update_latest_json(version, release_notes)
+
+        # 提交变更（允许 gui_main.py 和 latest.json）
+        allowed = ["gui_main.py"] if args.version else []
+        allowed.append("latest.json")
+        _git_commit(version, allowed_paths=allowed)
         _git_tag(version)
         _git_push(version)
-        _gh_release(version, release_title, release_notes)
+        downloads_cn = _gh_release(version, release_title, release_notes)
+
+        # Gitee 上传成功后，更新 latest.json 加入国内下载链接
+        if downloads_cn:
+            update_latest_json(version, release_notes, downloads_cn)
+            print("  [提示] latest.json 已更新国内下载链接，请手动提交：")
+            print("         git add latest.json && git commit -m \"chore: 更新 Gitee 下载链接\"")
 
         print(f"\n{'='*60}")
         print(f"  v{version} 发布完成！")
