@@ -1051,7 +1051,7 @@ def _download_from_github_release(tag, asset_name, dest_dir):
     # 使用 gh CLI 下载更可靠（自动认证）
     dest = Path(dest_dir) / asset_name
     r = subprocess.run(
-        ["gh", "release", "download", tag, "-p", asset_name, "-D", str(dest_dir)],
+        ["gh", "release", "download", tag, "-p", asset_name, "-D", str(dest_dir), "--clobber"],
         capture_output=True, text=True, cwd=BASE_DIR,
     )
     if r.returncode != 0:
