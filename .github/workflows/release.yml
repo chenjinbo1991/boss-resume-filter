@@ -75,7 +75,7 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             .venv-ci/Scripts/pip install -r requirements.txt pyinstaller
           else
-            .venv-ci/bin/pip install -r requirements.txt pyinstaller
+            .venv-ci/bin/pip install -r requirements.txt pyinstaller dmgbuild
           fi
 
       - name: Verify tkinter
