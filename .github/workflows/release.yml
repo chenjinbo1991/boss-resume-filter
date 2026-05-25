@@ -119,13 +119,13 @@ jobs:
 
           TAG="${{ github.ref_name }}"
           pip install requests >/dev/null 2>&1
-          python -c "
+          python << 'GITEE_UPLOAD_SCRIPT'
           import requests, os, glob, time
 
           token = os.environ['GITEE_TOKEN']
           owner, repo = 'yaoyouzhong', 'boss-resume-filter'
           api_base = f'https://gitee.com/api/v5/repos/{owner}/{repo}'
-          tag = '${TAG}'
+          tag = os.environ['TAG']
           max_retries = 3
 
           # Find or create release
@@ -182,6 +182,7 @@ jobs:
               names = ", ".join(failed)
               print(f"WARNING: Gitee upload failed for: {names}")
               print(f"Manual upload needed: python build.py --gitee-upload {tag[1:]}")
-          "
+          GITEE_UPLOAD_SCRIPT
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ github.ref_name }}
