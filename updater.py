@@ -18,6 +18,25 @@ from tkinter import messagebox
 import tkinter as tk
 
 
+def _place_dialog_centered(dialog, parent, width, height):
+    """将更新弹窗相对父窗口居中，并限制在屏幕可见范围内。"""
+    parent.update_idletasks()
+    dialog.update_idletasks()
+
+    screen_width = dialog.winfo_screenwidth()
+    screen_height = dialog.winfo_screenheight()
+    if width > screen_width:
+        width = max(1, int(screen_width * 0.9))
+    if height > screen_height:
+        height = max(1, int(screen_height * 0.85))
+
+    x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
+    y = parent.winfo_rooty() + (parent.winfo_height() - height) // 2
+    x = min(max(0, x), max(0, screen_width - width))
+    y = min(max(0, y), max(0, screen_height - height))
+    dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+
 def get_base_dir():
     """获取程序基础目录（处理 PyInstaller 打包后的路径）"""
     if getattr(sys, 'frozen', False):
@@ -451,11 +470,7 @@ def show_update_dialog(root, result):
     dialog.grab_set()
 
     # 居中显示
-    dialog.geometry("600x500")
-    dialog.update_idletasks()  # 确保几何信息已计算
-    x = root.winfo_x() + (root.winfo_width() - 600) // 2
-    y = root.winfo_y() + (root.winfo_height() - 500) // 2
-    dialog.geometry(f"+{x}+{y}")
+    _place_dialog_centered(dialog, root, 600, 500)
 
     # 标题行：v2.7 → v2.8
     title_label = tk.Label(

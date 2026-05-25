@@ -115,10 +115,8 @@ Release 模式不会再执行 `git add -A`。除 `--version` 自动修改 `gui_m
 Release 标题和说明必须先写在 `CHANGELOG.md` 对应版本段落中。`python build.py --release` 会自动提取该段落作为 GitHub Release 内容；如果缺少对应版本，或未按以下顺序分类，发布会直接中断：
 
 - 新增功能
-- 行为优化
-- UI 改进
-- Bug 修复
-- 构建改进
+- 体验优化
+- 问题修复
 
 如果打包环境来自 Anaconda，`build.py` 会自动定位并打包：
 

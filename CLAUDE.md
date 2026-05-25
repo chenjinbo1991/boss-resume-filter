@@ -285,3 +285,13 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 
 ### Tk 对话框 `wait_window()` 嵌套事件循环崩溃
 `wait_window()` 在 `root.after()` 回调中创建嵌套事件循环，macOS 上与 Cocoa scroll hook（`NSView.scrollWheel:` swizzle）和浏览器轮询（2 秒间隔的 `root.after()`）冲突，导致应用异常崩溃退出。正确做法是用 `grab_set()` 实现模态（不阻塞主事件循环），用 `protocol("WM_DELETE_WINDOW")` + 统一 `_close_dialog()` 清理引用。同理 `self.root.update()` 在主线程中强制处理事件有重入风险，应移除。实现位置：`gui_main.py:fetch_model_list()` → `show_model_dialog()`。
+
+### Windows DPI 缩放（DPI Unaware 方案）
+`SetProcessDpiAwarenessContext(-4)` 在 64 位 Python 上默认失败——ctypes 不自动做符号扩展，`-4` 被截断为 32 位 `0xFFFFFFFC`，Windows 返回错误码 87 (INVALID_PARAMETER)。修复：设置 `argtypes = [wintypes.HANDLE]`，用 `ctypes.c_void_p(-4)` 传入。但即使修复成功，Tk 8.6 在 Per Monitor DPI V2 模式下内部坐标系与物理像素不匹配，导致布局错乱。最终方案：**保持 DPI Unaware**，不启用任何 DPI 感知。DPI Unaware 模式下：
+- `winfo_fpixels('1i')` 返回 ~96（虚拟化 DPI），`winfo_screenwidth()` 返回虚拟像素
+- Windows 在后台自动按系统缩放倍数放大 Tk 渲染内容
+- 用 `EnumDisplaySettingsW(None, -1)` 获取主显示器物理像素宽度（绕过虚拟化），除以 Tk 虚拟宽度，得到真实 `display_scale`
+- 高 DPI（>130%）时乘以 `high_dpi_reduction`（当前 0.6），避免 UI 占满屏幕
+- **所有 UI 元素统一使用同一个缩放比例**（窗口、字体、间距、图标），分开缩放会导致布局错乱
+- 实现位置：`gui_main.py:_get_primary_physical_width()`、`gui_main.py:_calculate_effective_scale()`、`gui_main.py:BossFilterGUI.__init__()`
+- macOS 不受影响：`winfo_screenwidth()` 返回物理像素，Retina 缩放由窗口系统处理
