@@ -109,9 +109,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload to Gitee Release
-        if: ${{ secrets.GITEE_TOKEN != '' }}
         shell: bash
         run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "Skip Gitee Release: GITEE_TOKEN is not set"
+            exit 0
+          fi
+
           TAG="${{ github.ref_name }}"
           pip install requests >/dev/null 2>&1
           python -c "
