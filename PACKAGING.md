@@ -36,7 +36,7 @@ Release 页面最终包含：
 配置文件：`.github/workflows/release.yml`
 
 **CI 说明：**
-- macOS 使用 `macos-13`（Intel）runner，确保生成的 .app 兼容 Intel + Apple Silicon Mac
+- macOS 使用 `macos-latest`（Apple Silicon M1）runner，生成的 .app 兼容 Apple Silicon Mac；Intel Mac 用户建议从源码运行
 - 虚拟环境（`.venv-ci`）按 `requirements.txt` hash 缓存，依赖不变时跳过安装
 - 支持 `workflow_dispatch` 手动触发
 
