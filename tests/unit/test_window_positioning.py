@@ -1,8 +1,12 @@
 from gui_main import (
     _calculate_effective_scale,
+    _calculate_system_dpi_aware_font_scale,
+    _calculate_system_dpi_aware_scale,
     _enable_high_dpi_awareness,
+    _is_system_dpi_aware_scale,
     _place_main_window,
     _place_window_centered,
+    _resolve_display_scale,
     _show_main_window_centered,
 )
 from updater import _place_dialog_centered
@@ -13,17 +17,23 @@ class FakeWindow:
         self,
         width=100,
         height=100,
+        req_width=None,
+        req_height=None,
         screen_width=1920,
         screen_height=1080,
         root_x=0,
         root_y=0,
+        y=None,
     ):
         self._width = width
         self._height = height
+        self._req_width = req_width if req_width is not None else width
+        self._req_height = req_height if req_height is not None else height
         self._screen_width = screen_width
         self._screen_height = screen_height
         self._root_x = root_x
         self._root_y = root_y
+        self._y = root_y if y is None else y
         self.geometry_value = None
         self.alpha_values = []
         self.after_calls = []
@@ -39,10 +49,10 @@ class FakeWindow:
         return self._height
 
     def winfo_reqwidth(self):
-        return self._width
+        return self._req_width
 
     def winfo_reqheight(self):
-        return self._height
+        return self._req_height
 
     def winfo_screenwidth(self):
         return self._screen_width
@@ -55,6 +65,9 @@ class FakeWindow:
 
     def winfo_rooty(self):
         return self._root_y
+
+    def winfo_y(self):
+        return self._y
 
     def geometry(self, value):
         self.geometry_value = value
@@ -99,6 +112,40 @@ def test_place_window_centered_keeps_parent_center_inside_visible_screen():
     assert dialog.geometry_value == "400x300+0+0"
 
 
+def test_place_window_centered_compensates_parent_titlebar_on_y_only():
+    parent = FakeWindow(width=1200, height=800, root_x=100, root_y=50, y=0)
+    dialog = FakeWindow()
+
+    width, height, x, y = _place_window_centered(
+        dialog,
+        940,
+        620,
+        parent=parent,
+        screen_width=1920,
+        screen_height=1080,
+    )
+
+    assert (width, height) == (940, 620)
+    assert (x, y) == (230, 115)
+    assert dialog.geometry_value == "940x620+230+115"
+
+
+def test_place_window_centered_uses_requested_size_when_hidden_window_reports_one_pixel():
+    parent = FakeWindow(width=1200, height=800, root_x=100, root_y=50)
+    dialog = FakeWindow(width=1, height=1, req_width=940, req_height=620)
+
+    width, height, x, y = _place_window_centered(
+        dialog,
+        parent=parent,
+        screen_width=1920,
+        screen_height=1080,
+    )
+
+    assert (width, height) == (940, 620)
+    assert (x, y) == (230, 140)
+    assert dialog.geometry_value == "940x620+230+140"
+
+
 def test_place_window_centered_uses_non_zero_screen_origin():
     window = FakeWindow()
 
@@ -118,7 +165,7 @@ def test_place_window_centered_uses_non_zero_screen_origin():
 
 
 def test_place_main_window_uses_fixed_startup_monitor_area():
-    window = FakeWindow(width=1200, height=800)
+    window = FakeWindow(width=1200, height=800, screen_width=4480, screen_height=1440)
 
     width, height, x, y = _place_main_window(window, (1920, 0, 2560, 1440))
 
@@ -127,8 +174,18 @@ def test_place_main_window_uses_fixed_startup_monitor_area():
     assert window.geometry_value == "1200x800+2600+320"
 
 
+def test_place_main_window_ignores_physical_monitor_area_when_tk_uses_virtual_pixels():
+    window = FakeWindow(width=1200, height=800, screen_width=2194, screen_height=1234)
+
+    width, height, x, y = _place_main_window(window, (0, 0, 3840, 2160))
+
+    assert (width, height) == (1200, 800)
+    assert (x, y) == (497, 217)
+    assert window.geometry_value == "1200x800+497+217"
+
+
 def test_show_main_window_centered_reveals_after_delayed_centering(monkeypatch=None):
-    window = FakeWindow(width=1200, height=800)
+    window = FakeWindow(width=1200, height=800, screen_width=4480, screen_height=1440)
 
     _show_main_window_centered(window, (1920, 0, 2560, 1440))
 
@@ -160,15 +217,15 @@ def test_effective_scale_uses_compact_target_on_2560x1440_screen():
 
 
 def test_effective_scale_reduces_high_dpi_150_percent():
-    # 150% > 130%，触发 high_dpi_reduction: 1.5 × 0.6 = 0.9
+    # 150% > 130%，触发 high_dpi_reduction: 1.5 × 0.50 = 0.75，再受 0.85 下限保护
     scale = _calculate_effective_scale(1.5, 2560, 1440, platform="win32")
-    assert 0.89 < scale < 0.91
+    assert 0.84 < scale < 0.86
 
 
 def test_effective_scale_reduces_4k_175():
-    # 175% > 130%，触发 high_dpi_reduction: 1.75 × 0.6 = 1.05
+    # 175% > 130%，触发 high_dpi_reduction: 1.75 × 0.50 = 0.875
     scale = _calculate_effective_scale(1.75, 3840, 2160, platform="win32")
-    assert 1.04 < scale < 1.06
+    assert 0.87 < scale < 0.88
 
 
 def test_effective_scale_no_reduction_below_130_percent():
@@ -180,6 +237,35 @@ def test_effective_scale_no_reduction_below_130_percent():
 def test_effective_scale_keeps_existing_default_on_normal_screen():
     scale = _calculate_effective_scale(1.0, 1920, 1080, platform="win32")
     assert scale == 1.0
+
+
+def test_resolve_display_scale_uses_physical_virtual_ratio_in_dpi_unaware_mode():
+    scale = _resolve_display_scale(1.0, 3840, 2194)
+
+    assert 1.74 < scale < 1.76
+
+
+def test_resolve_display_scale_prefers_tk_dpi_in_system_dpi_aware_mode():
+    scale = _resolve_display_scale(1.75, 3840, 3840)
+
+    assert scale == 1.75
+
+
+def test_system_dpi_aware_scale_is_larger_than_dpi_unaware_reduction_on_4k_175():
+    scale = _calculate_system_dpi_aware_scale(1.75, 3840, 2160)
+
+    assert 1.58 < scale < 1.59
+
+
+def test_system_dpi_aware_font_scale_is_restrained_below_native_4k_175():
+    scale = _calculate_system_dpi_aware_font_scale(1.75)
+
+    assert 1.08 < scale < 1.09
+
+
+def test_system_dpi_aware_detection_requires_physical_pixels_and_native_dpi():
+    assert _is_system_dpi_aware_scale(1.75, 3840, 3840)
+    assert not _is_system_dpi_aware_scale(1.0, 3840, 2194)
 
 
 def test_enable_high_dpi_awareness_is_noop_off_windows():

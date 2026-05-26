@@ -7,7 +7,7 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.8.8）
+├── gui_main.py           # 图形界面主程序（v2.8.9）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -298,15 +298,30 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 ### Tk 对话框 `wait_window()` 嵌套事件循环崩溃
 `wait_window()` 在 `root.after()` 回调中创建嵌套事件循环，macOS 上与 Cocoa scroll hook（`NSView.scrollWheel:` swizzle）和浏览器轮询（2 秒间隔的 `root.after()`）冲突，导致应用异常崩溃退出。正确做法是用 `grab_set()` 实现模态（不阻塞主事件循环），用 `protocol("WM_DELETE_WINDOW")` + 统一 `_close_dialog()` 清理引用。同理 `self.root.update()` 在主线程中强制处理事件有重入风险，应移除。实现位置：`gui_main.py:fetch_model_list()` → `show_model_dialog()`。
 
+### Tk Listbox 不支持 spacing1/spacing2/spacing3
+`tk.Listbox` 不接受 `spacing1`、`spacing2`、`spacing3` 参数——这些是 `tk.Text` 专属选项。传入会抛 `TclError: unknown option "-spacing1"`。调整 Listbox 行间距只能通过修改字体大小实现。
+
+### `pack_propagate(False)` 必须同时指定 width 和 height
+设置 `frame.pack_propagate(False)` 后，如果只设 `width` 不设 `height`（或反过来），frame 会在未指定维度上坍缩为 0，导致子控件不可见。搭配 `place(relx=0.5, rely=0.5)` 更危险——place 不传播尺寸，父 frame 高度始终为 0。正确做法：同时设 `width` 和 `height`，或在内部用 pack + `expand=True` 的内容 frame 撑开。
+
 ### Windows DPI 缩放（DPI Unaware 方案）
-`SetProcessDpiAwarenessContext(-4)` 在 64 位 Python 上默认失败——ctypes 不自动做符号扩展，`-4` 被截断为 32 位 `0xFFFFFFFC`，Windows 返回错误码 87 (INVALID_PARAMETER)。修复：设置 `argtypes = [wintypes.HANDLE]`，用 `ctypes.c_void_p(-4)` 传入。但即使修复成功，Tk 8.6 在 Per Monitor DPI V2 模式下内部坐标系与物理像素不匹配，导致布局错乱。最终方案：**保持 DPI Unaware**，不启用任何 DPI 感知。DPI Unaware 模式下：
+`SetProcessDpiAwarenessContext(-4)` 在 64 位 Python 上默认失败——ctypes 不自动做符号扩展，`-4` 被截断为 32 位 `0xFFFFFFFC`，Windows 返回错误码 87 (INVALID_PARAMETER)。修复：设置 `argtypes = [wintypes.HANDLE]`，用 `ctypes.c_void_p(-4)` 传入。但即使修复成功，Tk 8.6 在 Per Monitor DPI V2 模式下内部坐标系与物理像素不匹配，导致布局错乱。
+
+**System DPI Aware 也不可行**（2026-05-26 验证）：Tk 8.6 的字体渲染使用 `size × real_dpi/72` 计算物理像素，而 Windows 位图缩放使用不同的映射方式。单一 `effective_scale` 无法同时匹配字体和布局——字体清晰时窗口过小，窗口正常时字体过大。Tk 8.7（8.7a5，尚在 alpha）可能解决此问题，当前 Python 3.12/3.13 均内置 Tk 8.6。
+
+最终方案：**保持 DPI Unaware**，不启用任何 DPI 感知。DPI Unaware 模式下：
 - `winfo_fpixels('1i')` 返回 ~96（虚拟化 DPI），`winfo_screenwidth()` 返回虚拟像素
-- Windows 在后台自动按系统缩放倍数放大 Tk 渲染内容
+- Windows 在后台自动按系统缩放倍数放大 Tk 渲染内容（字体略有模糊但布局正确）
 - 用 `EnumDisplaySettingsW(None, -1)` 获取主显示器物理像素宽度（绕过虚拟化），除以 Tk 虚拟宽度，得到真实 `display_scale`
 - 高 DPI（>130%）时乘以 `high_dpi_reduction`（当前 0.6），避免 UI 占满屏幕
 - **所有 UI 元素统一使用同一个缩放比例**（窗口、字体、间距、图标），分开缩放会导致布局错乱
 - 实现位置：`gui_main.py:_get_primary_physical_width()`、`gui_main.py:_calculate_effective_scale()`、`gui_main.py:BossFilterGUI.__init__()`
 - macOS 不受影响：`winfo_screenwidth()` 返回物理像素，Retina 缩放由窗口系统处理
+
+### 字体常量与 Combobox 规范
+- `FONT_FAMILY` 和 `FONT_FAMILY_SEMIBOLD` 是跨平台字体常量（Windows: Microsoft YaHei UI, macOS: PingFang SC, Linux: Helvetica），所有 UI 字体定义统一引用这两个常量，不硬编码字体名
+- Combobox 下拉列表字体通过 `option_add('*TCombobox*Listbox.font', font, 80)` 设置，优先级 80 确保覆盖默认样式
+- 所有 Combobox 禁用鼠标滚轮：`bind_class('TCombobox', '<MouseWheel>', lambda e: 'break')`（同时绑定 Button-4/Button-5 兼容 Linux）
 
 ### Gitee Release API 限制
 Gitee API 与 GitHub 有两处关键差异，覆盖发布时容易踩坑：
