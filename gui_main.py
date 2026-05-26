@@ -479,7 +479,12 @@ def _place_main_window(root, monitor_area=None):
         tk_screen_width > 0 and tk_screen_height > 0
         and (screen_width > tk_screen_width * 1.25 or screen_height > tk_screen_height * 1.25)
     ):
-        return _place_window_centered(root)
+        # 用 Tk 虚拟屏幕尺寸居中，不再调用 Win32 API（避免工作区高度因任务栏产生偏差）
+        return _place_window_centered(
+            root,
+            screen_width=tk_screen_width,
+            screen_height=tk_screen_height,
+        )
 
     return _place_window_centered(
         root,
