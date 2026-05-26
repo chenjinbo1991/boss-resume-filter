@@ -880,7 +880,10 @@ def _trigger_cross_platform_ci(tag):
 
 
 def _gitee_find_or_create_release(api_base, token, tag, release_title, release_notes):
-    """查找或创建 Gitee Release，返回 (release_id, existing_asset_names)。"""
+    """查找或创建 Gitee Release，返回 (release_id, existing_assets)。
+
+    existing_assets: {文件名: 附件ID}，用于删除旧附件后重新上传。
+    """
     resp = requests.get(
         f"{api_base}/releases",
         params={"access_token": token},
@@ -890,7 +893,31 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
     release = next((r for r in resp.json() if r.get("tag_name") == tag), None)
 
     if release:
-        return release["id"], {a["name"] for a in release.get("assets", [])}
+        release_id = release["id"]
+        # 附件 ID 需要通过专门的 API 获取（releases 列表不返回 id）
+        assets_resp = requests.get(
+            f"{api_base}/releases/{release_id}/attach_files",
+            params={"access_token": token},
+            timeout=10,
+        )
+        assets_resp.raise_for_status()
+        existing_assets = {a["name"]: a["id"] for a in assets_resp.json()}
+        # 标题有变化时同步更新（以 CHANGELOG 为准），正文不覆盖（保留手动修改）
+        new_name = release_title or tag
+        if release.get("name") != new_name:
+            patch_resp = requests.patch(
+                f"{api_base}/releases/{release_id}",
+                data={
+                    "access_token": token,
+                    "tag_name": tag,
+                    "name": new_name,
+                    "body": release.get("body", ""),
+                },
+                timeout=10,
+            )
+            patch_resp.raise_for_status()
+            print(f"  [OK] Gitee Release 标题已更新: {new_name}")
+        return release_id, existing_assets
 
     resp = requests.post(
         f"{api_base}/releases",
@@ -933,6 +960,17 @@ def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=3):
 def _gitee_asset_url(owner, repo, tag, filename):
     """构造 Gitee Release 下载链接。"""
     return f"https://gitee.com/{owner}/{repo}/releases/download/{tag}/{filename}"
+
+
+def _gitee_delete_asset(api_base, token, release_id, asset_id, filename):
+    """删除 Gitee Release 上的旧附件。"""
+    resp = requests.delete(
+        f"{api_base}/releases/{release_id}/attach_files/{asset_id}",
+        params={"access_token": token},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    print(f"  删除旧附件: {filename}")
 
 
 def _gitee_upload_local(version, release_title, release_notes):
@@ -981,12 +1019,12 @@ def _gitee_upload_local(version, release_title, release_notes):
         downloads_cn = {}
         failed = []
 
-        # 第一批：并行上传安装包和配置（跳过已存在的）
+        # 第一批：删除旧附件后并行上传
         if batch1:
-            to_upload = [f for f in batch1 if f.name not in existing]
-            skipped = [f.name for f in batch1 if f.name in existing]
-            for name in skipped:
-                print(f"  [跳过] {name}（已存在）")
+            for f in batch1:
+                if f.name in existing:
+                    _gitee_delete_asset(api_base, token, release_id, existing[f.name], f.name)
+            to_upload = batch1
             if to_upload:
                 print(f"  并行上传 {len(to_upload)} 个本地产物到 Gitee Release...")
                 with ThreadPoolExecutor(max_workers=3) as pool:
@@ -1007,10 +1045,10 @@ def _gitee_upload_local(version, release_title, release_notes):
 
         # 第二批：ZIP（自动更新用，放最后）
         if batch2:
-            to_upload2 = [f for f in batch2 if f.name not in existing]
-            skipped2 = [f.name for f in batch2 if f.name in existing]
-            for name in skipped2:
-                print(f"  [跳过] {name}（已存在）")
+            for f in batch2:
+                if f.name in existing:
+                    _gitee_delete_asset(api_base, token, release_id, existing[f.name], f.name)
+            to_upload2 = batch2
             if to_upload2:
                 print(f"  上传自动更新包...")
                 with ThreadPoolExecutor(max_workers=3) as pool:
@@ -1172,10 +1210,11 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         def _upload_batch(files, label):
             if not files:
                 return
-            to_upload = [f for f in files if f.name not in existing]
-            skipped = [f.name for f in files if f.name in existing]
-            for name in skipped:
-                print(f"  [跳过] {name}（已存在）")
+            # 删除旧附件后重新上传
+            for f in files:
+                if f.name in existing:
+                    _gitee_delete_asset(api_base, token, release_id, existing[f.name], f.name)
+            to_upload = files
             if not to_upload:
                 return
             print(f"  {label}...")

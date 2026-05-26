@@ -79,6 +79,7 @@ boss-resume-filter/
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 体验优化 / 问题修复"顺序分类时直接中断
 - `--release` 使用 `--notes-file` + UTF-8 临时文件创建/更新 Release，避免 Windows 终端 GBK 编码导致中文乱码
 - **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动从本地并行上传产物到 Gitee Release（ThreadPoolExecutor 3 路，需要 `GITEE_TOKEN` 环境变量）；上传顺序：配置文件/EXE/ZIP 优先，DMG 最后；CI 构建的对端产物从 GitHub 下载后再上传到 Gitee
+- **Gitee 覆盖发布**：重新发布同一版本时，先删除旧附件再重新上传（与 GitHub 行为一致）；同时同步 Release 标题（以 CHANGELOG 为准，正文保留手动修改不覆盖）；附件 ID 通过 `attach_files` API 获取（releases 列表 API 不返回 ID）
 - CHANGELOG 面向用户，避免技术细节：描述"做了什么"和"对用户的好处"，不描述实现原理、内部模块、函数名、技术栈；Bug 修复只写现象和结果，不写根因和修复方案；分类用用户视角（"体验优化"而非"行为优化/构建改进"）；功能归类要准确反映适用范围；只记录原始需求和原始 bug，不记录开发过程中自己引入又修掉的问题
 - Release 模式不再 `git add -A`；只允许自动提交 `--version` 引起的 `gui_main.py` 版本号变化，其他变更必须先手工提交
 - 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；tag 冲突时自动 `--force`（master 除外）
@@ -268,9 +269,9 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测
-- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；覆盖发布时先删除旧附件再重新上传，同时同步标题；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
-- 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_release()`
+- 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_upload_local()`、`build.py:_gitee_delete_asset()`、`build.py:_sync_gitee_from_github()`
 
 ## 踩坑警示
 
@@ -309,3 +310,9 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 - **所有 UI 元素统一使用同一个缩放比例**（窗口、字体、间距、图标），分开缩放会导致布局错乱
 - 实现位置：`gui_main.py:_get_primary_physical_width()`、`gui_main.py:_calculate_effective_scale()`、`gui_main.py:BossFilterGUI.__init__()`
 - macOS 不受影响：`winfo_screenwidth()` 返回物理像素，Retina 缩放由窗口系统处理
+
+### Gitee Release API 限制
+Gitee API 与 GitHub 有两处关键差异，覆盖发布时容易踩坑：
+1. **PATCH release 必须带 `tag_name` 和 `body`**：只传 `name` 会返回 400 `"body is missing"`。更新标题时必须同时传 `tag_name`（原值）和 `body`（`release.get("body", "")` 保留现有正文）
+2. **releases 列表不返回附件 ID**：`GET /repos/{owner}/{repo}/releases` 的 `assets` 数组只有 `browser_download_url` 和 `name`，没有 `id`。删除附件需要通过专门的 `GET /releases/{id}/attach_files` 接口获取附件 ID
+实现位置：`build.py:_gitee_find_or_create_release()`、`build.py:_gitee_delete_asset()`

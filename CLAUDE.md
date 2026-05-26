@@ -266,6 +266,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测
 - **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，分两步同步 Gitee：(1) `_gitee_upload_local()` 上传本地平台产物（EXE/DMG+config+readme）；(2) `_sync_gitee_from_github()` 轮询等待 CI 完成 → 并行下载对端产物到本地 → 并行上传全部产物到 Gitee（`ThreadPoolExecutor` 3 路并发）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
+- **Gitee 覆盖发布**：重新发布同一版本时，先删除旧附件再重新上传（与 GitHub 行为一致）；同时同步 Release 标题（以 CHANGELOG 为准，正文保留手动修改不覆盖）；附件 ID 通过 `attach_files` API 获取（releases 列表 API 不返回 ID）
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
 - 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_upload_local()`、`build.py:_sync_gitee_from_github()`
 
@@ -306,3 +307,9 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 - **所有 UI 元素统一使用同一个缩放比例**（窗口、字体、间距、图标），分开缩放会导致布局错乱
 - 实现位置：`gui_main.py:_get_primary_physical_width()`、`gui_main.py:_calculate_effective_scale()`、`gui_main.py:BossFilterGUI.__init__()`
 - macOS 不受影响：`winfo_screenwidth()` 返回物理像素，Retina 缩放由窗口系统处理
+
+### Gitee Release API 限制
+Gitee API 与 GitHub 有两处关键差异，覆盖发布时容易踩坑：
+1. **PATCH release 必须带 `tag_name` 和 `body`**：只传 `name` 会返回 400 `"body is missing"`。更新标题时必须同时传 `tag_name`（原值）和 `body`（`release.get("body", "")` 保留现有正文）
+2. **releases 列表不返回附件 ID**：`GET /repos/{owner}/{repo}/releases` 的 `assets` 数组只有 `browser_download_url` 和 `name`，没有 `id`。删除附件需要通过专门的 `GET /releases/{id}/attach_files` 接口获取附件 ID
+实现位置：`build.py:_gitee_find_or_create_release()`、`build.py:_gitee_delete_asset()`
