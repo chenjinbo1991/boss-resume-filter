@@ -320,21 +320,21 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 - 实现位置：`gui_main.py:_get_primary_physical_width()`、`gui_main.py:_calculate_effective_scale()`、`gui_main.py:BossFilterGUI.__init__()`
 - macOS 不受影响：`winfo_screenwidth()` 返回物理像素，Retina 缩放由窗口系统处理
 
-### macOS Tk 8.6 (Apple Silicon) 字体物理像素减半
-Tk 8.6 在 Apple Silicon Mac（M1/M2/M3/M4，Anaconda/Homebrew Python）上报告 DPI 72，未反映 Retina 2x 缩放，导致字体物理像素仅为视觉预期的一半。Intel Mac 的系统自带 Tk 8.5 报告 DPI 144，字体渲染正常，不受影响。
+### macOS Tk 8.6 字体物理像素减半
+Tk 8.6 在部分 Mac 环境下报告的 DPI 低于预期，导致字体物理像素偏小。Apple Silicon（M1/M2/M3/M4，Anaconda/Homebrew Python）报告 DPI 72；Intel Mac 的 venv 环境报告 DPI 约 96（系统 Tk 8.5 报告 DPI 144，不受影响）。阈值 `< 80` 可区分这两类需补偿的环境与正常环境。
 
 检测逻辑（`gui_main.py:BossFilterGUI.__init__()`）：
 ```python
 if sys.platform == 'darwin':
     _tk_dpi_raw = self.root.winfo_fpixels('1i')
-    self.font_boost = 1.65 if _tk_dpi_raw < 100 else 1.0
+    self.font_boost = 1.65 if _tk_dpi_raw < 80 else 1.0
 else:
     self.font_boost = 1.0
 self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost
 ```
 
 - `font_scale` 仅用于字体大小，布局/间距/图标/窗口/rowheight 仍用 `dpi_scale × zoom_factor`
-- 阈值 `< 100`：DPI 72（Apple Silicon）触发补偿，DPI 144（Intel Mac）不触发
+- 阈值 `< 80`：DPI 72（Apple Silicon）和 DPI 96（Intel Mac venv）触发补偿，DPI 144（Intel Mac 系统 Tk 8.5）不触发
 - 实现位置：`gui_main.py:BossFilterGUI.__init__()`、`gui_main.py:setup_styles()`
 
 ### 字体常量与 Combobox 规范
