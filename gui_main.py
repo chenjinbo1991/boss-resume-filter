@@ -710,6 +710,8 @@ class BossFilterGUI:
 
         # 启动时自动检查更新（延迟 3 秒，避免启动卡顿）
         updater.auto_check_on_startup(self.root, delay_ms=3000)
+        if sys.platform == 'win32':
+            self.root.after(10000, updater.cleanup_windows_update_backup)
 
     def _setup_macos_reopen_handler(self):
         """点击 macOS Dock 图标时恢复主窗口。"""

@@ -10,6 +10,7 @@ BOSS 简历筛选器 - 打包脚本
 """
 import argparse
 import ast
+import hashlib
 import json
 import os
 import re
@@ -545,6 +546,35 @@ def _check_version_consistency():
         return version, exe_path, size_mb
 
 
+def _sha256_file(path):
+    """Return SHA256 hex digest for a release artifact."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _release_asset_metadata():
+    """Build update metadata for the current platform artifact."""
+    if IS_WIN:
+        assets = {"windows": DIST_DIR / "BOSS_ResumeFilter.exe"}
+    elif IS_MAC:
+        assets = {"macos": DIST_DIR / "BOSS_ResumeFilter_mac.zip"}
+    else:
+        assets = {}
+
+    metadata = {}
+    for key, path in assets.items():
+        if not path.exists() or not path.is_file():
+            continue
+        metadata[key] = {
+            "size": path.stat().st_size,
+            "sha256": _sha256_file(path),
+        }
+    return metadata
+
+
 def _extract_changelog_release(version):
     """从 CHANGELOG.md 提取当前版本的 Release 标题和正文。"""
     changelog_path = BASE_DIR / "CHANGELOG.md"
@@ -732,6 +762,7 @@ def update_latest_json(version, release_notes, downloads_cn=None):
             "job_config": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/job_config.json",
             "readme": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/README.md"
         },
+        "assets": _release_asset_metadata(),
         "release_notes": release_notes
     }
 
@@ -1394,7 +1425,12 @@ def main():
     if IS_MAC:
         cmd += ["--onedir", "--windowed", "--osx-bundle-identifier", "com.boss.resume-filter"]
     else:
-        cmd += ["--onefile", "--noconsole"]
+        cmd += [
+            "--onefile",
+            "--noconsole",
+            "--runtime-tmpdir",
+            r"%LOCALAPPDATA%",
+        ]
 
     cmd += [
         '--name', 'BOSS_ResumeFilter',

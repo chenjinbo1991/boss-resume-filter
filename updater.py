@@ -13,6 +13,7 @@ import requests
 import shlex
 import tempfile
 import plistlib
+import hashlib
 from pathlib import Path
 from tkinter import messagebox
 import tkinter as tk
@@ -167,12 +168,14 @@ def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
             for asset in release.get('assets', []):
                 if asset.get('name', '').endswith('.exe'):
                     result['download_url'] = asset.get('browser_download_url')
+                    result['asset_info'] = {'size': asset.get('size')}
                     break
         elif sys.platform == 'darwin':
             # macOS: 查找 _mac.zip
             for asset in release.get('assets', []):
                 if asset.get('name', '').endswith('_mac.zip'):
                     result['download_url'] = asset.get('browser_download_url')
+                    result['asset_info'] = {'size': asset.get('size')}
                     break
 
     except requests.exceptions.Timeout:
@@ -233,12 +236,15 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
         # 获取下载链接：优先使用 Gitee 国内下载链接，回退到 GitHub 链接
         downloads = data.get('downloads', {})
         downloads_cn = data.get('downloads_cn', {})
+        assets = data.get('assets', {})
         if sys.platform == 'win32':
             result['download_url'] = downloads_cn.get('windows') or downloads.get('windows')
             result['download_url_fallback'] = downloads.get('windows')
+            result['asset_info'] = assets.get('windows', {})
         elif sys.platform == 'darwin':
             result['download_url'] = downloads_cn.get('macos') or downloads.get('macos')
             result['download_url_fallback'] = downloads.get('macos')
+            result['asset_info'] = assets.get('macos', {})
 
     except requests.exceptions.Timeout:
         result['error'] = "Gitee 连接超时"
@@ -248,6 +254,41 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
         result['error'] = f"检查更新失败: {e}"
 
     return result
+
+
+def _file_sha256(path):
+    """计算文件 SHA256，用于更新包完整性校验。"""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_downloaded_file(path, asset_info=None):
+    """校验下载文件的大小和 SHA256。asset_info 为空时视为无校验元数据。"""
+    asset_info = asset_info or {}
+    expected_size = asset_info.get('size')
+    expected_sha256 = asset_info.get('sha256')
+
+    if expected_size is not None:
+        try:
+            expected_size = int(expected_size)
+        except (TypeError, ValueError):
+            return False, f"更新源文件大小元数据无效: {expected_size}"
+        actual_size = Path(path).stat().st_size
+        if actual_size != expected_size:
+            return False, f"文件大小不匹配: 期望 {expected_size} bytes，实际 {actual_size} bytes"
+
+    if expected_sha256:
+        actual_sha256 = _file_sha256(path)
+        if actual_sha256.lower() != str(expected_sha256).lower():
+            return False, (
+                "SHA256 不匹配: "
+                f"期望 {expected_sha256}，实际 {actual_sha256}"
+            )
+
+    return True, None
 
 
 def download_file(url, dest_path, progress_callback=None):
@@ -279,6 +320,38 @@ def download_file(url, dest_path, progress_callback=None):
         return False, str(e)
 
 
+def download_and_verify_file(url, dest_path, asset_info=None, progress_callback=None):
+    """下载文件，并在有元数据时校验大小和 SHA256。"""
+    success, error = download_file(url, dest_path, progress_callback)
+    if not success:
+        return False, error
+
+    verified, verify_error = verify_downloaded_file(dest_path, asset_info)
+    if not verified:
+        try:
+            Path(dest_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, verify_error
+
+    return True, None
+
+
+def cleanup_windows_update_backup():
+    """新版本成功启动后清理 Windows 自动更新留下的旧 EXE 备份。"""
+    if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+        return
+
+    try:
+        for suffix in (".old", ".old.previous"):
+            old_exe = Path(sys.executable + suffix)
+            if old_exe.exists():
+                old_exe.unlink()
+                print(f"[更新] 已清理旧版本备份: {old_exe}")
+    except OSError as e:
+        print(f"[更新] 清理旧版本备份失败: {e}")
+
+
 def update_windows(new_exe_path, current_exe_path):
     """
     Windows EXE 更新逻辑
@@ -290,7 +363,7 @@ def update_windows(new_exe_path, current_exe_path):
     2. 重命名当前 EXE 为 .old
     3. 复制新 EXE 到原位置
     4. 启动新 EXE
-    5. 清理临时文件、旧 EXE 和脚本自身
+    5. 清理临时下载文件和脚本自身，旧 EXE 留到新版本成功启动后清理
     """
     try:
         # 生成 update.bat
@@ -324,7 +397,7 @@ exit /b 1
 echo [%date% %time%] Old process exited >> "%LOG_FILE%"
 
 echo 备份旧版本...
-if exist "%OLD_EXE%.old" del /f /q "%OLD_EXE%.old"
+if exist "%OLD_EXE%.old" move /y "%OLD_EXE%.old" "%OLD_EXE%.old.previous" >> "%LOG_FILE%" 2>&1
 move /y "%OLD_EXE%" "%OLD_EXE%.old" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo [%date% %time%] Failed to backup old executable >> "%LOG_FILE%"
@@ -345,8 +418,8 @@ del /f /q "%NEW_EXE%" >> "%LOG_FILE%" 2>&1
 echo 启动新版本...
 start "" "%OLD_EXE%"
 
-echo 删除旧版本...
-del /f /q "%OLD_EXE%.old" >> "%LOG_FILE%" 2>&1
+echo 旧版本备份保留到新版本成功启动后清理...
+echo [%date% %time%] Old executable backup kept: %OLD_EXE%.old >> "%LOG_FILE%"
 if exist "%TEMP_DIR%" rmdir /s /q "%TEMP_DIR%" >> "%LOG_FILE%" 2>&1
 
 echo 更新完成！
@@ -659,14 +732,17 @@ def show_update_dialog(root, result):
                             text=f"下载中... {percent}%"
                         ))
 
-                success, error = download_file(str(download_url), temp_exe, progress_callback)
+                asset_info = result.get('asset_info', {})
+                success, error = download_and_verify_file(
+                    str(download_url), temp_exe, asset_info, progress_callback)
 
                 if not success:
                     # Gitee 下载失败，尝试 GitHub fallback
                     fallback_url = result.get('download_url_fallback')
                     if fallback_url and str(fallback_url) != str(download_url):
                         root.after(0, lambda: progress_label.config(text="Gitee 下载失败，尝试 GitHub..."))
-                        success, error = download_file(str(fallback_url), temp_exe, progress_callback)
+                        success, error = download_and_verify_file(
+                            str(fallback_url), temp_exe, asset_info, progress_callback)
                     if not success:
                         root.after(0, lambda: messagebox.showerror(
                             "下载失败",
@@ -719,14 +795,17 @@ def show_update_dialog(root, result):
                                 text=f"下载中... {percent}%"
                             ))
 
-                    success, error = download_file(str(download_url), temp_zip, progress_callback)
+                    asset_info = result.get('asset_info', {})
+                    success, error = download_and_verify_file(
+                        str(download_url), temp_zip, asset_info, progress_callback)
 
                     if not success:
                         # Gitee 下载失败，尝试 GitHub fallback
                         fallback_url = result.get('download_url_fallback')
                         if fallback_url and str(fallback_url) != str(download_url):
                             root.after(0, lambda: progress_label.config(text="Gitee 下载失败，尝试 GitHub..."))
-                            success, error = download_file(str(fallback_url), temp_zip, progress_callback)
+                            success, error = download_and_verify_file(
+                                str(fallback_url), temp_zip, asset_info, progress_callback)
                         if not success:
                             root.after(0, lambda: messagebox.showerror(
                                 "下载失败",

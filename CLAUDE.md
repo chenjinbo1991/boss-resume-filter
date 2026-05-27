@@ -8,7 +8,7 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
 ├── gui_main.py           # 图形界面主程序（v2.8.10）
-├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、启动时自动检查）
+├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
@@ -67,7 +67,7 @@ boss-resume-filter/
 - **Windows**：dist 目录输出 `BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
 - **macOS**：dist 目录输出 `BOSS_ResumeFilter.app`（应用包）+ `BOSS_ResumeFilter_mac.zip`（自动更新用）+ `BOSS_ResumeFilter.dmg`（用户安装用）
 - `build.py` 自动检测平台（`IS_MAC`/`IS_WIN`），无需额外参数
-- macOS 打包使用 `--onedir --windowed` 生成 .app，Windows 使用 `--onefile --noconsole` 生成 EXE
+- macOS 打包使用 `--onedir --windowed` 生成 .app，Windows 使用 `--onefile --noconsole --runtime-tmpdir %LOCALAPPDATA%` 生成 EXE（`%LOCALAPPDATA%` 替代默认 `%TEMP%`，规避企业电脑临时目录策略限制导致的 PyInstaller 解压失败）
 - macOS DMG 使用系统自带 `hdiutil` 生成，ZIP 使用 Python `zipfile` 模块
 - **GitHub Actions 自动补齐打包**：推送 tag 后 CI 检查 Release 已有产物，只构建缺失的平台（`.github/workflows/release.yml`）；本地 Mac 发布时上传 DMG+ZIP → CI 构建 EXE；本地 Windows 发布时上传 EXE → CI 构建 DMG+ZIP；CI 只负责构建和上传 GitHub Release，不上传 Gitee；CI 模式使用 `--ci --release` 跳过虚拟环境切换和 git 操作
 - **覆盖发布自动触发对端重建**：`build.py --release` 上传当前平台产物后，自动删除对端旧产物并触发 `gh workflow run release.yml`，CI 检测缺失产物并重建（Windows 发布删旧 DMG/ZIP，macOS 发布删旧 EXE）
@@ -260,12 +260,12 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - **GitHub 源**（fallback，10s 超时）：`https://api.github.com/repos/yaoyouzhong/boss-resume-filter/releases/latest`
 - **下载链接**：`latest.json` 中 `downloads_cn` 字段存储 Gitee 国内下载链接，优先使用；无则回退到 GitHub
 - 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」
-- **Windows**：下载新 EXE → 生成 `update.bat` 脚本 → 启动脚本 → 退出当前程序 → 脚本替换 EXE 并重启
+- **Windows**：下载新 EXE（有元数据时校验文件大小和 SHA256，不匹配则报错）→ 生成 `update.bat` 脚本 → 启动脚本 → 退出当前程序 → 脚本替换 EXE 并重启；旧 EXE 保留为 `.old` 备份，新版本成功启动后自动清理（`cleanup_windows_update_backup()`，`gui_main.py` 启动后 10 秒触发）
 - **macOS**：
   - 从 .app 运行：下载 ZIP → 解压 → 生成 shell 脚本替换 .app → 重启应用
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
-- `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测
+- `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 新增 `assets` 字段（`size`、`sha256`），供客户端校验下载完整性
 - **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，分两步同步 Gitee：(1) `_gitee_upload_local()` 上传本地平台产物（EXE/DMG+config+readme）；(2) `_sync_gitee_from_github()` 轮询等待 CI 完成 → 并行下载对端产物到本地 → 并行上传全部产物到 Gitee（`ThreadPoolExecutor` 3 路并发）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
 - **Gitee 覆盖发布**：重新发布同一版本时，先删除旧附件再重新上传（与 GitHub 行为一致）；同时同步 Release 标题（以 CHANGELOG 为准，正文保留手动修改不覆盖）；附件 ID 通过 `attach_files` API 获取（releases 列表 API 不返回 ID）
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
