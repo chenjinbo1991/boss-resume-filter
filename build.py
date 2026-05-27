@@ -1129,8 +1129,8 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
         if release.get("name") != new_name:
             patch_resp = requests.patch(
                 f"{api_base}/releases/{release_id}",
-                data={
-                    "access_token": token,
+                params={"access_token": token},
+                json={
                     "tag_name": tag,
                     "name": new_name,
                     "body": release.get("body", ""),
