@@ -318,9 +318,27 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 - 实现位置：`gui_main.py:_get_primary_physical_width()`、`gui_main.py:_calculate_effective_scale()`、`gui_main.py:BossFilterGUI.__init__()`
 - macOS 不受影响：`winfo_screenwidth()` 返回物理像素，Retina 缩放由窗口系统处理
 
+### macOS Tk 8.6 (Apple Silicon) 字体物理像素减半
+Tk 8.6 在 Apple Silicon Mac（M1/M2/M3/M4，Anaconda/Homebrew Python）上报告 DPI 72，未反映 Retina 2x 缩放，导致字体物理像素仅为视觉预期的一半。Intel Mac 的系统自带 Tk 8.5 报告 DPI 144，字体渲染正常，不受影响。
+
+检测逻辑（`gui_main.py:BossFilterGUI.__init__()`）：
+```python
+if sys.platform == 'darwin':
+    _tk_dpi_raw = self.root.winfo_fpixels('1i')
+    self.font_boost = 1.65 if _tk_dpi_raw < 100 else 1.0
+else:
+    self.font_boost = 1.0
+self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost
+```
+
+- `font_scale` 仅用于字体大小，布局/间距/图标/窗口/rowheight 仍用 `dpi_scale × zoom_factor`
+- 阈值 `< 100`：DPI 72（Apple Silicon）触发补偿，DPI 144（Intel Mac）不触发
+- 实现位置：`gui_main.py:BossFilterGUI.__init__()`、`gui_main.py:setup_styles()`
+
 ### 字体常量与 Combobox 规范
 - `FONT_FAMILY` 和 `FONT_FAMILY_SEMIBOLD` 是跨平台字体常量（Windows: Microsoft YaHei UI, macOS: PingFang SC, Linux: Helvetica），所有 UI 字体定义统一引用这两个常量，不硬编码字体名
 - 字体变量 7 个（2026-05-27 精简后）：`font_title`(28pt) / `font_section`(16pt) / `font_label`(13pt，通用：表单标签、按钮、下拉框) / `font_stat`(36pt) / `font_stat_label`(15pt) / `font_log`(11pt) / `font_table`(12pt)
+- 字体缩放使用 `self.font_scale`（含 macOS font_boost），布局/间距/图标/rowheight 使用 `self.dpi_scale * self.zoom_factor`（不含 font_boost）
 - Combobox 下拉列表字体通过 `option_add('*TCombobox*Listbox.font', font, 80)` 设置，优先级 80 确保覆盖默认样式
 - 所有 Combobox 禁用鼠标滚轮：`bind_class('TCombobox', '<MouseWheel>', lambda e: 'break')`（同时绑定 Button-4/Button-5 兼容 Linux）
 
