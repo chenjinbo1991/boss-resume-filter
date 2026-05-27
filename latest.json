@@ -8,17 +8,10 @@
     "job_config": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.10/job_config.json",
     "readme": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.10/README.md"
   },
-  "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.10/BOSS_ResumeFilter.exe",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.10/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.10/BOSS_ResumeFilter.dmg",
-    "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.10/job_config.json",
-    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.10/README.md"
-  },
   "assets": {
     "windows": {
-      "size": 50965640,
-      "sha256": "b753037144c7f2e57621df12491b3bc67d5306fa921ab30e594240b94324d395"
+      "size": 50963972,
+      "sha256": "a4b8dac32e15fc70fca153149b3722aecf61f78eb21f8b0cbfc0b19f46ad2b93"
     }
   },
   "release_notes": "### 体验优化\n- **界面字体更统一**：表单标签、按钮、下拉框等常用控件统一使用同一套字体，减少不同区域字体大小不一致的情况\n- **候选人明细弹窗优化**：点击统计数字弹出的明细窗口高度增加，方便查看更多候选人；\"已打招呼\"人数用绿色醒目显示，一眼区分\n- **筛选进度条更美观**：运行时进度条高度与右侧百分比文字对齐，不再高低不齐\n- **AI 评估勾选框加大**：运行控制页\"启用 AI 辅助评估\"勾选框加大，鼠标更容易点中\n- **表格表头统一加粗**：岗位配置的技能关键词列表、筛选结果列表、数据统计的岗位明细表，三处表头统一为加粗样式\n- **侧边栏更紧凑**：左侧导航栏字体缩小，同屏可显示更多导航项，减少滚动\n- **需求输入框更醒目**：岗位配置页\"粘贴招聘需求文档\"输入框使用深蓝色文字，与其他输入框区分更明显\n- **高分屏窗口居中修复**：修复 4K 等高缩放显示器上主窗口启动时位置偏上或偏左的问题\n\n### 问题修复\n- **Mac 字体大小修复**：修复部分 Mac 环境下界面字体大小异常的问题，包括 M1/M2/M3/M4 芯片字体偏小和 Intel Mac 部分环境字体偏大；Windows 不受影响\n- **Mac 界面背景色统一**：修复 macOS 上多处卡片内容区域、表单标签、下拉框和输入框背景色显示为灰色的问题；Windows 不受影响\n- **侧边栏标题显示修复**：修复侧边栏 BOSS 标题字号过大导致文字显示不完整的问题\n- **Windows 自动更新更稳**：更新包下载后会校验文件大小和完整性，避免下载不完整时继续安装；更新后会保留旧版本备份，新版本成功启动后再清理，便于异常时回退\n- **Windows 启动兼容性优化**：调整单文件程序的运行时解包位置，减少企业电脑临时目录策略导致启动失败的概率"
