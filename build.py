@@ -788,7 +788,7 @@ def _git_tag(version):
         print(f"  [OK] 已创建本地 tag: {tag}")
 
 
-def _git_push(version):
+def _git_push(version, auto=False):
     """推送 master 和 tag 到远程"""
     tag = f"v{version}"
 
@@ -804,10 +804,13 @@ def _git_push(version):
     print(cmd2)
     print(f"{'='*60}")
 
-    resp = input("\n  确认推送？[y/N] ").strip().lower()
-    if resp != 'y':
-        print("  已取消推送。tag 和提交保留在本地，可稍后手动推送。")
-        sys.exit(0)
+    if auto:
+        print("  [--auto] 跳过确认，直接推送")
+    else:
+        resp = input("\n  确认推送？[y/N] ").strip().lower()
+        if resp != 'y':
+            print("  已取消推送。tag 和提交保留在本地，可稍后手动推送。")
+            sys.exit(0)
 
     subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
     print(f"  [OK] master 已推送")
@@ -893,14 +896,23 @@ def _gh_release(version, release_title, release_notes):
     need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
 
     # 上传本地平台产物到 Gitee Release（国内下载源）
-    downloads_cn = _gitee_upload_local(version, release_title, release_notes)
+    downloads_cn = None
+    try:
+        downloads_cn = _gitee_upload_local(version, release_title, release_notes)
+    except Exception as e:
+        print(f"  [警告] Gitee 本地产物上传失败: {e}")
+        print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
 
     # 等待 CI 完成，从 GitHub 下载对端产物并上传到 Gitee
-    gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
-                                          need_wait=need_ci, old_assets_info=old_assets_info)
-    if gitee_sync:
-        downloads_cn = downloads_cn or {}
-        downloads_cn.update(gitee_sync)
+    try:
+        gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
+                                              need_wait=need_ci)
+        if gitee_sync:
+            downloads_cn = downloads_cn or {}
+            downloads_cn.update(gitee_sync)
+    except Exception as e:
+        print(f"  [警告] Gitee 对端产物同步失败: {e}")
+        print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
 
     return downloads_cn
 
@@ -1143,8 +1155,8 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
 
     resp = requests.post(
         f"{api_base}/releases",
-        data={
-            "access_token": token,
+        params={"access_token": token},
+        json={
             "tag_name": tag,
             "name": release_title or tag,
             "body": release_notes or "",
@@ -1496,6 +1508,8 @@ def main():
                         help="CI 模式：跳过虚拟环境切换和 git 操作，用于 GitHub Actions")
     parser.add_argument("--gitee-upload", type=str, default=None, metavar="X.Y.Z",
                         help="手动补传产物到 Gitee Release（需要 GITEE_TOKEN）")
+    parser.add_argument("--auto", action="store_true",
+                        help="全自动模式：跳过推送确认，用于 Claude Code 等非交互环境")
     args = parser.parse_args()
 
     version_changed = False
@@ -1651,7 +1665,7 @@ def main():
         allowed.append("latest.json")
         _git_commit(version, allowed_paths=allowed)
         _git_tag(version)
-        _git_push(version)
+        _git_push(version, auto=args.auto)
         downloads_cn = _gh_release(version, release_title, release_notes)
 
         # Gitee 上传成功后，更新 latest.json 加入国内下载链接

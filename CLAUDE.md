@@ -62,6 +62,7 @@ boss-resume-filter/
 - `python build.py --check`：仅执行发布前检查，不打包、不提交、不推送
 - `python build.py`：自动使用 pack_venv 打包（Windows 生成单文件 EXE，macOS 生成 .app + ZIP + DMG）
 - `python build.py --release`：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传（一键发布）
+- `python build.py --release --auto`：全自动模式，跳过推送确认，用于 Claude Code 等非交互环境
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
 - **Windows**：dist 目录输出 `BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
@@ -79,7 +80,7 @@ boss-resume-filter/
 - CHANGELOG 面向用户，避免技术细节：描述"做了什么"和"对用户的好处"，不描述实现原理、内部模块、函数名、技术栈；Bug 修复只写现象和结果，不写根因和修复方案；分类用用户视角（"体验优化"而非"行为优化/构建改进"）；功能归类要准确反映适用范围；只记录原始需求和原始 bug，不记录开发过程中自己引入又修掉的问题
 - **CHANGELOG 和 README 必须同步**：修改 CHANGELOG.md 的任何版本条目时，必须同步更新 README.md 中对应版本的条目。README 版本历史的条目数量、分类（新增功能/体验优化/问题修复）必须与 CHANGELOG 完全一致，不允许遗漏。build.py --release 的发布前检查会自动核对
 - Release 模式不再 `git add -A`；只允许自动提交 `--version` 引起的 `gui_main.py` 版本号变化，其他变更必须先手工提交
-- 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；tag 冲突时自动 `--force`（master 除外）
+- 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；`--auto` 模式跳过确认直接推送；tag 冲突时自动 `--force`（master 除外）
 
 ## 代码规范
 - 使用 type hints
