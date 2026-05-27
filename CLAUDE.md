@@ -223,7 +223,7 @@ boss-resume-filter/
 - 右键菜单：查看详情（结构化详情窗口）、打招呼（仅未招呼候选人，智能滚动定位后后台线程执行）、移除此人（从列表和 JSON 删除并刷新，弹窗保持打开并更新统计）
 - 详情弹窗：`_format_candidate_detail()` 输出结构化文本，核心信息速览（年龄/工作年限/薪资/求职状态，`extract_summary_info()` 解析）、教育信息（学校·专业·学历，正则 `(.+(?:大学|学院))(.+?)(学历等级)$` 匹配无分隔符格式）、评分信息、AI 评估（评估理由/调整值/原始分/模型）、技能匹配详情（含匹配数/总数）、候选人摘要
 - 弹窗模态化：`transient(self.root)` + `grab_set()` 确保弹窗打开期间主窗口不可操作
-- 弹窗相对主窗口居中（`_center_window()`），字体与主界面统一（`self.font_table` / `self.font_button`）
+- 弹窗相对主窗口居中（`_center_window()`），字体与主界面统一（`self.font_table` / `self.font_label`）
 - 实现位置：`gui_main.py:_format_candidate_detail()`、`gui_main.py:_greet_single_candidate()`、`gui_main.py:show_result_stat_detail()`、`gui_main.py:show_stat_detail()`
 
 ### 筛选结果列表
@@ -320,6 +320,7 @@ DMG 只包含 .app + Applications 快捷方式，`job_config.json`/`selectors.js
 
 ### 字体常量与 Combobox 规范
 - `FONT_FAMILY` 和 `FONT_FAMILY_SEMIBOLD` 是跨平台字体常量（Windows: Microsoft YaHei UI, macOS: PingFang SC, Linux: Helvetica），所有 UI 字体定义统一引用这两个常量，不硬编码字体名
+- 字体变量 7 个（2026-05-27 精简后）：`font_title`(28pt) / `font_section`(16pt) / `font_label`(13pt，通用：表单标签、按钮、下拉框) / `font_stat`(36pt) / `font_stat_label`(15pt) / `font_log`(11pt) / `font_table`(12pt)
 - Combobox 下拉列表字体通过 `option_add('*TCombobox*Listbox.font', font, 80)` 设置，优先级 80 确保覆盖默认样式
 - 所有 Combobox 禁用鼠标滚轮：`bind_class('TCombobox', '<MouseWheel>', lambda e: 'break')`（同时绑定 Button-4/Button-5 兼容 Linux）
 

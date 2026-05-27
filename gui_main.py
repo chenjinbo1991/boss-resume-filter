@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.8.9"
+__version__ = "2.8.10"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -765,20 +765,16 @@ class BossFilterGUI:
         fs = self.dpi_scale * self.zoom_factor
         page_fs = fs * 0.92
         self.font_title = (FONT_FAMILY, int(28 * page_fs))
-        self.font_subtitle = (FONT_FAMILY, int(14 * page_fs))
         self.font_section = (FONT_FAMILY, int(16 * page_fs))
-        self.font_label = (FONT_FAMILY, int(14 * page_fs))
-        self.font_button = (FONT_FAMILY, int(13 * page_fs))  # 按钮字体
+        self.font_label = (FONT_FAMILY, int(13 * page_fs))  # 通用 UI 字体（表单标签、按钮、下拉框、副标题）
         self.font_stat = (FONT_FAMILY, int(36 * page_fs))
         self.font_stat_label = (FONT_FAMILY, int(15 * page_fs))
         self.font_log = (FONT_FAMILY, int(11 * page_fs))
         self.font_table = (FONT_FAMILY, int(12 * page_fs))  # 表格字体
-        self.font_combo = (FONT_FAMILY, int(14 * page_fs))  # 下拉菜单显示字体
-        self.font_combo_list = (FONT_FAMILY, int(14 * page_fs))  # 下拉菜单列表字体
 
-        # 设置 Combobox 下拉列表字体（与 font_combo 保持一致）
+        # 设置 Combobox 下拉列表字体（与 font_label 保持一致）
         # 必须用元组格式 + priority 80，确保 Tk option database 正确解析并覆盖默认值
-        self.root.option_add('*TCombobox*Listbox.font', self.font_combo, 80)
+        self.root.option_add('*TCombobox*Listbox.font', self.font_label, 80)
 
         # 禁用所有 Combobox 的鼠标滚轮（防止误触改变选中值）
         self.root.bind_class('TCombobox', '<MouseWheel>', lambda e: 'break')
@@ -788,11 +784,11 @@ class BossFilterGUI:
         # 配置样式
         style.configure('TFrame', background=self.colors['bg_main'])
         style.configure('TLabel', font=self.font_label, foreground=self.colors['text_primary'])
-        style.configure('TButton', font=self.font_button, padding=(15, 8))
+        style.configure('TButton', font=self.font_label, padding=(15, 8))
         style.configure('Accent.TButton', font=(FONT_FAMILY_SEMIBOLD, int(13 * page_fs)), padding=(20, 8))
         style.configure('Card.TFrame', background=self.colors['bg_card'], relief='solid', borderwidth=1)
         style.configure('Sidebar.TFrame', background=self.colors['bg_sidebar'])
-        sidebar_font_size = int(13 * self.dpi_scale * self.zoom_factor)
+        sidebar_font_size = int(11 * self.dpi_scale * self.zoom_factor)
         style.configure('Sidebar.TLabel', font=(FONT_FAMILY, sidebar_font_size),
                        foreground=self.colors['text_sidebar'], background=self.colors['bg_sidebar'])
         style.configure('SidebarSelected.TLabel', font=(FONT_FAMILY, sidebar_font_size, 'bold'),
@@ -806,7 +802,7 @@ class BossFilterGUI:
         style.configure('Warning.TLabel', font=self.font_label, foreground=self.colors['warning'])
         # 下拉菜单样式 - 设置行高确保文字垂直居中
         combo_font_size = int(15 * self.dpi_scale * self.zoom_factor)
-        style.configure('TCombobox', font=self.font_combo)
+        style.configure('TCombobox', font=self.font_label)
         style.configure('TCombobox', rowheight=int(combo_font_size * 1.8))
         style.configure('Custom.TLabelframe', font=self.font_label, background=self.colors['bg_card'])
         style.configure('Custom.TLabelframe.Label', font=self.font_label, background=self.colors['bg_card'])
@@ -991,7 +987,7 @@ class BossFilterGUI:
         title_label.pack(anchor="w")
 
         subtitle_label = ttk.Label(header_frame, text="基于 DrissionPage 的智能候选人筛选工具，智能解析、智能匹配、自动滚动、自动打招呼",
-                                   font=self.font_subtitle, foreground=self.colors['text_secondary'])
+                                   font=self.font_label, foreground=self.colors['text_secondary'])
         subtitle_label.pack(anchor="w", pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
         # 岗位过滤
@@ -1002,7 +998,7 @@ class BossFilterGUI:
         self.home_job_var = tk.StringVar(value="全部岗位")
         self.home_job_combo = ttk.Combobox(home_filter_frame, textvariable=self.home_job_var,
                                             values=["全部岗位"], width=28, state="readonly",
-                                            font=self.font_combo)
+                                            font=self.font_label)
         self.home_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.home_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_home_stats())
 
@@ -1118,7 +1114,7 @@ class BossFilterGUI:
         btn_add._icon_ref = icon_plus_small
         btn_add.pack(side="right", padx=int(8 * self.dpi_scale * self.zoom_factor))
         # 下拉框填充剩余空间
-        self.config_job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=UI_CONFIG['combobox_width_job'], font=self.font_combo)
+        self.config_job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=UI_CONFIG['combobox_width_job'], font=self.font_label)
         self.config_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.config_job_combo.bind("<<ComboboxSelected>>", self.on_job_selected)
 
@@ -1141,8 +1137,9 @@ class BossFilterGUI:
         text_container = ttk.Frame(parse_frame, style='TFrame')
         text_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        self.requirement_text = tk.Text(text_container, height=UI_CONFIG['text_height_large'], font=self.font_button,
-                                        bg=self.colors['bg_input'], borderwidth=1, highlightthickness=0)
+        self.requirement_text = tk.Text(text_container, height=UI_CONFIG['text_height_large'],
+                                        font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor * 0.92)),
+                                        bg=self.colors['bg_input'], fg='#1e3a5f', borderwidth=1, highlightthickness=0)
         self.requirement_text.pack(side="left", fill="both", expand=True)
 
         req_scroll = ttk.Scrollbar(text_container, orient="vertical", command=self.requirement_text.yview)
@@ -1182,7 +1179,7 @@ class BossFilterGUI:
         ttk.Label(row1, text="岗位名称:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
                  background=self.colors['bg_card']).pack(side="left")
         self.job_name_var = tk.StringVar()
-        self.job_name_entry = ttk.Entry(row1, textvariable=self.job_name_var, width=50, font=self.font_button)
+        self.job_name_entry = ttk.Entry(row1, textvariable=self.job_name_var, width=50, font=self.font_label)
         self.job_name_entry.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(self.job_name_entry)
 
@@ -1194,7 +1191,7 @@ class BossFilterGUI:
         self.edu_var = tk.StringVar(value="本科")
         edu_combo = ttk.Combobox(row2, textvariable=self.edu_var,
                                  values=["不限", "高中", "中专", "大专", "本科", "硕士", "博士"],
-                                 width=UI_CONFIG['combobox_width_edu'], font=self.font_combo)
+                                 width=UI_CONFIG['combobox_width_edu'], font=self.font_label)
         edu_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         # 禁用滚轮切换，防止误操作
         edu_combo.bind('<Enter>', lambda e: edu_combo.bind('<MouseWheel>', lambda ev: 'break'))
@@ -1203,7 +1200,7 @@ class BossFilterGUI:
         ttk.Label(row2, text="最低经验:", font=self.font_label, width=UI_CONFIG['entry_width_label'],
                  background=self.colors['bg_card']).pack(side="left", padx=(int(30 * self.dpi_scale * self.zoom_factor), 0))
         self.min_exp_var = tk.StringVar(value="3")
-        min_exp_spin = ttk.Spinbox(row2, from_=UI_CONFIG['spinbox_exp_min'], to=UI_CONFIG['spinbox_exp_max'], textvariable=self.min_exp_var, width=15, font=self.font_button)
+        min_exp_spin = ttk.Spinbox(row2, from_=UI_CONFIG['spinbox_exp_min'], to=UI_CONFIG['spinbox_exp_max'], textvariable=self.min_exp_var, width=15, font=self.font_label)
         min_exp_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         # 禁用滚轮切换，防止误操作
         min_exp_spin.bind('<Enter>', lambda e: min_exp_spin.bind('<MouseWheel>', lambda ev: 'break'))
@@ -1216,7 +1213,7 @@ class BossFilterGUI:
         row_age.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_age, text="最大年龄:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
                  background=self.colors['bg_card']).pack(side="left")
-        max_age_spin = ttk.Spinbox(row_age, from_=0, to=99, textvariable=self.max_age_var, width=15, font=self.font_button)
+        max_age_spin = ttk.Spinbox(row_age, from_=0, to=99, textvariable=self.max_age_var, width=15, font=self.font_label)
         max_age_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         max_age_spin.bind('<Enter>', lambda e: max_age_spin.bind('<MouseWheel>', lambda ev: 'break'))
         max_age_spin.bind('<Leave>', lambda e: max_age_spin.unbind('<MouseWheel>'))
@@ -1235,13 +1232,13 @@ class BossFilterGUI:
         row_salary.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_salary, text="薪资范围:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
                  background=self.colors['bg_card']).pack(side="left")
-        salary_min_entry = ttk.Entry(row_salary, textvariable=self.salary_min_var, width=8, font=self.font_button)
-        salary_min_entry.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        salary_min_entry = ttk.Entry(row_salary, textvariable=self.salary_min_var, width=8, font=self.font_label)
+        salary_min_entry.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(salary_min_entry)
         self.salary_min_entry = salary_min_entry
         ttk.Label(row_salary, text="K  ~", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
-        salary_max_entry = ttk.Entry(row_salary, textvariable=self.salary_max_var, width=8, font=self.font_button)
+        salary_max_entry = ttk.Entry(row_salary, textvariable=self.salary_max_var, width=8, font=self.font_label)
         salary_max_entry.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(salary_max_entry)
         self.salary_max_entry = salary_max_entry
@@ -1258,7 +1255,7 @@ class BossFilterGUI:
         ttk.Label(row3, text="工作地点:", font=self.font_label, width=UI_CONFIG['entry_width_job'],
                  background=self.colors['bg_card']).pack(side="left")
         self.work_location_var = tk.StringVar()
-        work_location_entry = ttk.Entry(row3, textvariable=self.work_location_var, width=25, font=self.font_button)
+        work_location_entry = ttk.Entry(row3, textvariable=self.work_location_var, width=25, font=self.font_label)
         work_location_entry.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.bind_entry_context_menu(work_location_entry)
         ttk.Label(row3, text="留空表示不限   多地点用 / 分隔，如：南京/上海",
@@ -1306,7 +1303,7 @@ class BossFilterGUI:
         # 设置 Treeview 默认字体和行高
         _style = ttk.Style()
         _style.configure('Treeview', font=tree_font, rowheight=int(30 * self.dpi_scale * self.zoom_factor))
-        _style.configure('Treeview.Heading', font=(FONT_FAMILY, int(13 * self.dpi_scale * self.zoom_factor), 'bold'))
+        _style.configure('Treeview.Heading', font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor), 'bold'))
 
         skills_scroll = ttk.Scrollbar(list_container, orient="vertical", command=self.skills_tree.yview)
         self.skills_tree.configure(yscrollcommand=skills_scroll.set)
@@ -1334,7 +1331,7 @@ class BossFilterGUI:
                  background=self.colors['bg_card'], width=UI_CONFIG['entry_width_label']).pack(side="left")
         self.new_skill_weight_var = tk.StringVar(value="1")
         weight_entry = ttk.Entry(weight_row, textvariable=self.new_skill_weight_var,
-                                font=self.font_button, width=5, justify='center')
+                                font=self.font_label, width=5, justify='center')
         weight_entry.pack(side="left")
         self.bind_entry_context_menu(weight_entry)
 
@@ -1355,7 +1352,7 @@ class BossFilterGUI:
         ttk.Label(add_card, text="技能名称:", font=self.font_label,
                  background=self.colors['bg_card']).pack(anchor="w", pady=(0, int(5 * self.dpi_scale * self.zoom_factor)))
         self.new_skill_var = tk.StringVar()
-        skill_entry = ttk.Entry(add_card, textvariable=self.new_skill_var, font=self.font_button)
+        skill_entry = ttk.Entry(add_card, textvariable=self.new_skill_var, font=self.font_label)
         skill_entry.pack(fill="x", pady=(0, int(8 * self.dpi_scale * self.zoom_factor)))
         self.bind_entry_context_menu(skill_entry)
 
@@ -1366,7 +1363,7 @@ class BossFilterGUI:
                  background=self.colors['bg_card'], width=UI_CONFIG['entry_width_label']).pack(side="left")
         self.new_skill_add_weight_var = tk.StringVar(value="1")
         add_weight_entry = ttk.Entry(weight_row, textvariable=self.new_skill_add_weight_var,
-                                    font=self.font_button, width=5, justify='center')
+                                    font=self.font_label, width=5, justify='center')
         add_weight_entry.pack(side="left")
         self.bind_entry_context_menu(add_weight_entry)
 
@@ -1384,7 +1381,7 @@ class BossFilterGUI:
 
         # 必要条件列表显示
         self.required_listbox = tk.Listbox(required_frame, height=UI_CONFIG['listbox_height'],
-                                          font=self.font_button,
+                                          font=self.font_label,
                                           borderwidth=1, highlightthickness=0)
         self.required_listbox.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
@@ -1396,12 +1393,12 @@ class BossFilterGUI:
         self.required_cond_type_var = tk.StringVar(value="简单匹配")
         cond_type_combo = ttk.Combobox(required_edit_frame, textvariable=self.required_cond_type_var,
                                         values=["简单匹配", "OR（满足任一）", "AND（全部满足）"],
-                                        width=12, state="readonly", font=self.font_combo)
+                                        width=12, state="readonly", font=self.font_label)
         cond_type_combo.pack(side="left", padx=int(3 * self.dpi_scale * self.zoom_factor))
         ttk.Label(required_edit_frame, text="关键词:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), 0))
         self.new_required_var = tk.StringVar()
-        required_edit = ttk.Entry(required_edit_frame, textvariable=self.new_required_var, font=self.font_button)
+        required_edit = ttk.Entry(required_edit_frame, textvariable=self.new_required_var, font=self.font_label)
         required_edit.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor), fill="x", expand=True)
         self.bind_entry_context_menu(required_edit)
         ttk.Button(required_edit_frame, text="添加", command=self.add_required_condition).pack(side="left", padx=(int(8 * self.dpi_scale * self.zoom_factor), int(3 * self.dpi_scale * self.zoom_factor)))
@@ -1854,7 +1851,7 @@ class BossFilterGUI:
         self.api_provider_var = tk.StringVar(value="qwen")
         self.api_provider_combo = ttk.Combobox(row1, textvariable=self.api_provider_var,
                                                values=["qwen", "deepseek", "kimi", "zhipu", "minimax", "xiaomi", "stepfun", "openai", "anthropic", "custom"],
-                                               width=15, font=self.font_combo)
+                                               width=15, font=self.font_label)
         self.api_provider_combo.pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
         self.api_provider_combo.bind("<<ComboboxSelected>>", self.on_api_provider_changed)
 
@@ -1864,7 +1861,7 @@ class BossFilterGUI:
 
         ttk.Label(row2, text="模型名称:", font=self.font_label, width=UI_CONFIG['label_width_model']).pack(side="left")
         self.api_model_var = tk.StringVar()
-        model_entry = ttk.Entry(row2, textvariable=self.api_model_var, width=30, font=self.font_combo)
+        model_entry = ttk.Entry(row2, textvariable=self.api_model_var, width=30, font=self.font_label)
         model_entry.pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
         self.bind_entry_context_menu(model_entry)
 
@@ -1880,7 +1877,7 @@ class BossFilterGUI:
 
         ttk.Label(row3, text="API Key:", font=self.font_label, width=UI_CONFIG['label_width_api_key']).pack(side="left")
         self.api_key_var = tk.StringVar()
-        self.api_key_entry = ttk.Entry(row3, textvariable=self.api_key_var, width=55, font=self.font_button, show="*")
+        self.api_key_entry = ttk.Entry(row3, textvariable=self.api_key_var, width=55, font=self.font_label, show="*")
         self.api_key_entry.pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), 0))
         self.bind_entry_context_menu(self.api_key_entry)
 
@@ -1901,7 +1898,7 @@ class BossFilterGUI:
 
         ttk.Label(row4, text="Base URL:", font=self.font_label, width=UI_CONFIG['label_width_url']).pack(side="left")
         self.api_base_url_var = tk.StringVar()
-        url_entry = ttk.Entry(row4, textvariable=self.api_base_url_var, width=55, font=self.font_button)
+        url_entry = ttk.Entry(row4, textvariable=self.api_base_url_var, width=55, font=self.font_label)
         url_entry.pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), 0))
         self.bind_entry_context_menu(url_entry)
 
@@ -2083,7 +2080,7 @@ class BossFilterGUI:
 
         # 状态指示灯
         self.browser_status_indicator = ttk.Label(browser_status_row, text="🔴 未连接",
-                                                  font=(FONT_FAMILY, int(14 * self.dpi_scale * self.zoom_factor)),
+                                                  font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
                                                   foreground=self.colors['danger'])
         self.browser_status_indicator.pack(side="left")
 
@@ -2112,7 +2109,7 @@ class BossFilterGUI:
         self.rounds_spin = ttk.Spinbox(row1, from_=UI_CONFIG['spinbox_rounds_min'],
                                        to=UI_CONFIG['spinbox_rounds_max'],
                                        increment=10, textvariable=self.rounds_var,
-                                       width=15, font=self.font_button)
+                                       width=15, font=self.font_label)
         self.rounds_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         # 鼠标滚轮绑定
         self.rounds_spin.bind('<Enter>',
@@ -2130,7 +2127,7 @@ class BossFilterGUI:
         self.job_select_var = tk.StringVar(value="全部岗位")
         self.job_combo = ttk.Combobox(row_job, textvariable=self.job_select_var,
                                        values=["全部岗位"], width=28, state="readonly",
-                                       font=self.font_combo)
+                                       font=self.font_label)
         self.job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.job_combo.bind("<<ComboboxSelected>>", self.on_run_job_selected)
         ttk.Label(row_job, text="(选择要处理的岗位，\"全部岗位\"依次处理)",
@@ -2146,7 +2143,7 @@ class BossFilterGUI:
         self.greet_level_var = tk.StringVar(value="仅强烈推荐")
         greet_combo = ttk.Combobox(row2, textvariable=self.greet_level_var,
                                     values=["不打招呼（仅筛选）", "仅强烈推荐", "强烈推荐 + 推荐"],
-                                    width=20, state="readonly", font=self.font_combo)
+                                    width=20, state="readonly", font=self.font_label)
         greet_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row2, text="(自动打招呼的推荐等级)", font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
                  foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
@@ -2159,9 +2156,9 @@ class BossFilterGUI:
         self.ai_eval_var = tk.BooleanVar(value=False)
         # 自定义 ttk 样式：显式设置 indicator 大小，不依赖字体缩放
         _cb_style = ttk.Style()
-        _indicator_size = int(20 * self.dpi_scale * self.zoom_factor)
+        _indicator_size = int(26 * self.dpi_scale * self.zoom_factor)
         _cb_style.configure('AIEval.TCheckbutton',
-                            font=self.font_combo,
+                            font=self.font_label,
                             background=self.colors['bg_card'],
                             indicatordiameter=_indicator_size)
         _cb_style.map('AIEval.TCheckbutton',
@@ -2182,13 +2179,22 @@ class BossFilterGUI:
         ttk.Label(progress_frame, text="筛选进度:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
 
+        # 自定义 Progressbar 样式：高度与文字对齐
+        _progress_height = int(20 * self.dpi_scale * self.zoom_factor)
+        _progress_style = ttk.Style()
+        _progress_style.configure('Run.Horizontal.TProgressbar',
+                                  thickness=_progress_height,
+                                  troughcolor=self.colors['bg_input'],
+                                  background=self.colors['primary'])
+
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var,
-                                            maximum=100, mode='determinate', length=400)
+                                            maximum=100, mode='determinate', length=400,
+                                            style='Run.Horizontal.TProgressbar')
         self.progress_bar.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor), fill="x", expand=True)
 
         self.progress_label = ttk.Label(progress_frame, text="0%",
-                                       font=(FONT_FAMILY, int(11 * self.dpi_scale * self.zoom_factor)),
+                                       font=self.font_label,
                                        foreground=self.colors['primary'], width=45)
         self.progress_label.pack(side="left")
 
@@ -2224,9 +2230,8 @@ class BossFilterGUI:
         log_container.pack(fill="x")
 
         # 日志文本框 - 等宽字体
-        log_font = font.Font(family=FONT_FAMILY, size=int(13 * self.dpi_scale * self.zoom_factor))
         self.log_text = tk.Text(log_container, wrap="word", state="disabled",
-                               font=log_font, bg=self.colors['bg_input'], borderwidth=0,
+                               font=self.font_log, bg=self.colors['bg_input'], borderwidth=0,
                                highlightthickness=0, height=20)
         self.log_text.pack(side="left", fill="both", expand=True)
         self.bind_text_context_menu(self.log_text, editable=False)
@@ -2273,7 +2278,7 @@ class BossFilterGUI:
         self.result_job_var = tk.StringVar(value="全部岗位")
         self.result_job_combo = ttk.Combobox(filter_frame, textvariable=self.result_job_var,
                                               values=["全部岗位"], width=28, state="readonly",
-                                              font=self.font_combo)
+                                              font=self.font_label)
         self.result_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.result_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_results())
 
@@ -2320,7 +2325,7 @@ class BossFilterGUI:
             self.result_stats_greeted[var_name] = greeted_var
             greeted_label = ttk.Label(card_frame, textvariable=greeted_var,
                                      font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
-                                     foreground=self.colors['text_muted'], background=self.colors['bg_card'])
+                                     foreground=self.colors['success'], background=self.colors['bg_card'])
             greeted_label.pack(anchor="center", pady=(0, int(2 * self.dpi_scale * self.zoom_factor)))
 
             # 标签
@@ -2363,7 +2368,7 @@ class BossFilterGUI:
         # 设置表格字体和样式
         style = ttk.Style()
         style.configure("Result.Treeview", font=self.font_table, rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
-        style.configure("Result.Treeview.Heading", font=(FONT_FAMILY, int(13 * self.dpi_scale * self.zoom_factor), 'bold'))
+        style.configure("Result.Treeview.Heading", font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor), 'bold'))
         self.result_tree.configure(style="Result.Treeview")
 
         tree_scroll = ttk.Scrollbar(table_container, orient="vertical", command=self.result_tree.yview)
@@ -2417,7 +2422,7 @@ class BossFilterGUI:
         self.stats_job_var = tk.StringVar(value="全部岗位")
         self.stats_job_combo = ttk.Combobox(filter_frame, textvariable=self.stats_job_var,
                                              values=["全部岗位"], width=28, state="readonly",
-                                             font=self.font_combo)
+                                             font=self.font_label)
         self.stats_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.stats_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_stats())
 
@@ -2427,7 +2432,7 @@ class BossFilterGUI:
         self.stats_time_var = tk.StringVar(value="全部")
         time_combo = ttk.Combobox(filter_frame, textvariable=self.stats_time_var,
                                    values=["今天", "本周", "全部"], width=12, state="readonly",
-                                   font=self.font_combo)
+                                   font=self.font_label)
         time_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         time_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_stats())
 
@@ -2517,7 +2522,7 @@ class BossFilterGUI:
         style = ttk.Style()
         style.configure("Stats.Treeview", font=self.font_table,
                        rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
-        style.configure("Stats.Treeview.Heading", font=(FONT_FAMILY, int(13 * self.dpi_scale * self.zoom_factor), 'bold'))
+        style.configure("Stats.Treeview.Heading", font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor), 'bold'))
         self.stats_tree.configure(style="Stats.Treeview")
 
         # 垂直和水平滚动条
@@ -2923,22 +2928,26 @@ class BossFilterGUI:
 
             # 设置固定大小并相对主窗口居中
             window_width = 1000
-            window_height = 650
+            window_height = 900
             self._center_window(detail_window, window_width, window_height)
 
             # 标题 - 加大加粗
             title_label = ttk.Label(detail_window, text=title,
-                                   font=(FONT_FAMILY, int(18 * self.dpi_scale * self.zoom_factor)),
+                                   font=(FONT_FAMILY, int(15 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['primary'])
             title_label.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
             # 统计信息 - 显示总数和已打招呼数
             greeted_count = len([c for c in filtered if c.get('greet_sent', False)])
-            count_label = ttk.Label(detail_window, text=f"共 {len(filtered)} 人，已打招呼 {greeted_count} 人",
-                                   font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor)),
-                                   foreground=self.colors['text_secondary'])
-            count_label.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
-            count_label_ref = [count_label]
+            count_frame = ttk.Frame(detail_window)
+            count_frame.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
+            count_font = (FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor))
+            ttk.Label(count_frame, text=f"共 {len(filtered)} 人", font=count_font,
+                      foreground=self.colors['text_secondary']).pack(side="left")
+            greeted_label = ttk.Label(count_frame, text=f"，已打招呼 {greeted_count} 人",
+                                      font=count_font, foreground=self.colors['success'])
+            greeted_label.pack(side="left")
+            count_label_ref = [greeted_label]
 
             # 表格容器
             table_frame = ttk.Frame(detail_window, style='Card.TFrame')
@@ -2972,7 +2981,7 @@ class BossFilterGUI:
             tree_style.configure("Detail.Treeview",
                                 font=self.font_table,
                                 rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
-            tree_style.configure("Detail.Treeview.Heading", font=self.font_button)
+            tree_style.configure("Detail.Treeview.Heading", font=self.font_label)
             tree.configure(style="Detail.Treeview")
 
             # 添加滚动条
@@ -3044,7 +3053,7 @@ class BossFilterGUI:
                     # 更新弹窗内统计标签
                     new_total = len(filtered_ref[0])
                     new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
-                    count_label_ref[0].config(text=f"共 {new_total} 人，已打招呼 {new_greeted} 人")
+                    count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
                     # 刷新主界面统计
                     self.refresh_home_stats()
                     self.refresh_results()
@@ -3165,21 +3174,25 @@ class BossFilterGUI:
 
             # 设置固定大小并相对主窗口居中
             window_width = 1000
-            window_height = 650
+            window_height = 900
             self._center_window(detail_window, window_width, window_height)
 
             # 标题
             title_label = ttk.Label(detail_window, text=title,
-                                   font=(FONT_FAMILY, int(18 * self.dpi_scale * self.zoom_factor)),
+                                   font=(FONT_FAMILY, int(15 * self.dpi_scale * self.zoom_factor)),
                                    foreground=self.colors['primary'])
             title_label.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
             # 统计信息
-            count_label = ttk.Label(detail_window, text=f"共 {total} 人，已打招呼 {greeted_count} 人",
-                                   font=(FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor)),
-                                   foreground=self.colors['text_secondary'])
-            count_label.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
-            count_label_ref = [count_label]
+            count_frame = ttk.Frame(detail_window)
+            count_frame.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
+            count_font = (FONT_FAMILY, int(12 * self.dpi_scale * self.zoom_factor))
+            ttk.Label(count_frame, text=f"共 {total} 人", font=count_font,
+                      foreground=self.colors['text_secondary']).pack(side="left")
+            greeted_label = ttk.Label(count_frame, text=f"，已打招呼 {greeted_count} 人",
+                                      font=count_font, foreground=self.colors['success'])
+            greeted_label.pack(side="left")
+            count_label_ref = [greeted_label]
 
             # 表格容器
             table_frame = ttk.Frame(detail_window, style='Card.TFrame')
@@ -3214,7 +3227,7 @@ class BossFilterGUI:
                                 font=self.font_table,
                                 rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
             tree_style.configure("Detail.Treeview.Heading",
-                                font=self.font_button)
+                                font=self.font_label)
             tree.configure(style="Detail.Treeview")
 
             # 添加滚动条
@@ -3305,7 +3318,7 @@ class BossFilterGUI:
                     # 更新弹窗内统计标签
                     new_total = len(filtered_ref[0])
                     new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
-                    count_label_ref[0].config(text=f"共 {new_total} 人，已打招呼 {new_greeted} 人")
+                    count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
                     # 刷新主界面
                     self.refresh_results()
                     # 保持弹窗焦点
@@ -3816,7 +3829,7 @@ class BossFilterGUI:
                             listbox_frame = ttk.Frame(dialog)
                             listbox_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-                            listbox = tk.Listbox(listbox_frame, font=self.font_button, height=10)
+                            listbox = tk.Listbox(listbox_frame, font=self.font_label, height=10)
                             scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=listbox.yview)
                             listbox.configure(yscrollcommand=scrollbar.set)
 
