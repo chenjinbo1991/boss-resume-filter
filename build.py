@@ -632,6 +632,42 @@ def _check_readme_release(version):
 
     print(f"  [OK] README.md 已同步 v{version} 项目主页说明")
 
+    # 核对 CHANGELOG 和 README 的条目数量和分类一致
+    changelog_path = BASE_DIR / "CHANGELOG.md"
+    if changelog_path.exists():
+        changelog_text = changelog_path.read_text(encoding="utf-8")
+        readme_text = content  # already read above
+
+        # 提取 CHANGELOG 中该版本的段落
+        cl_match = re.search(
+            rf"^## v{re.escape(version)}.*?\n(.*?)(?=^## v|\Z)",
+            changelog_text, re.MULTILINE | re.DOTALL,
+        )
+        # 提取 README 中该版本的段落
+        rm_match = re.search(
+            rf"^### v{re.escape(version)}.*?\n(.*?)(?=^### v|^### 筛选规则|\Z)",
+            readme_text, re.MULTILINE | re.DOTALL,
+        )
+        if cl_match and rm_match:
+            cl_section = cl_match.group(1)
+            rm_section = rm_match.group(1)
+
+            for category in ["新增功能", "体验优化", "问题修复"]:
+                cl_items = len(re.findall(rf"(?:^### {category}\n)?^- \*\*", cl_section, re.MULTILINE))
+                rm_items = len(re.findall(rf"(?:^\*\*{category}\*\*\n)?^- \*\*", rm_section, re.MULTILINE))
+                # 更精确：按分类提取条目数
+                cl_cat_match = re.search(rf"^### {category}\n(.*?)(?=^### |\Z)", cl_section, re.MULTILINE | re.DOTALL)
+                rm_cat_match = re.search(rf"^\*\*{category}\*\*\n(.*?)(?=^\*\*|\Z)", rm_section, re.MULTILINE | re.DOTALL)
+                cl_count = len(re.findall(r"^- \*\*", cl_cat_match.group(1), re.MULTILINE)) if cl_cat_match else 0
+                rm_count = len(re.findall(r"^- \*\*", rm_cat_match.group(1), re.MULTILINE)) if rm_cat_match else 0
+
+                if cl_count != rm_count:
+                    print(f"[错误] README.md v{version} {category} 条目数（{rm_count}）与 CHANGELOG（{cl_count}）不一致")
+                    print(f"请同步 CHANGELOG.md 中 v{version} {category} 的全部条目到 README.md")
+                    sys.exit(1)
+
+            print(f"  [OK] README.md v{version} 条目数与 CHANGELOG 一致")
+
 
 # ---------------------------------------------------------------------------
 #  Release 子步骤（仅 --release 模式调用）

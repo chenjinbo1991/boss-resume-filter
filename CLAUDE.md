@@ -77,6 +77,7 @@ boss-resume-filter/
 - `build.py` 会显式收集 Anaconda Python 的 Tcl/Tk 运行库，防止 EXE 启动时报 `No module named 'tkinter'`
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 体验优化 / 问题修复"顺序分类时直接中断
 - CHANGELOG 面向用户，避免技术细节：描述"做了什么"和"对用户的好处"，不描述实现原理、内部模块、函数名、技术栈；Bug 修复只写现象和结果，不写根因和修复方案；分类用用户视角（"体验优化"而非"行为优化/构建改进"）；功能归类要准确反映适用范围；只记录原始需求和原始 bug，不记录开发过程中自己引入又修掉的问题
+- **CHANGELOG 和 README 必须同步**：修改 CHANGELOG.md 的任何版本条目时，必须同步更新 README.md 中对应版本的条目。README 版本历史的条目数量、分类（新增功能/体验优化/问题修复）必须与 CHANGELOG 完全一致，不允许遗漏。build.py --release 的发布前检查会自动核对
 - Release 模式不再 `git add -A`；只允许自动提交 `--version` 引起的 `gui_main.py` 版本号变化，其他变更必须先手工提交
 - 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；tag 冲突时自动 `--force`（master 除外）
 
