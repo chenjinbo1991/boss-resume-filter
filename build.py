@@ -1390,7 +1390,7 @@ def main():
         sys.exit(1)
 
     print("\n  更新辅助文件...")
-    for file in ["README.md", "job_config.json", "selectors.json"]:
+    for file in ["README.md", "job_config.json"]:
         src = BASE_DIR / file
         dst = DIST_DIR / file
         if src.exists():
