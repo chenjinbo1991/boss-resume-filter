@@ -413,8 +413,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo 清理临时文件...
-del /f /q "%NEW_EXE%" >> "%LOG_FILE%" 2>&1
+echo 验证新版本...
+for %%A in ("%NEW_EXE%") do set "NEW_SIZE=%%~zA"
+for %%A in ("%OLD_EXE%") do set "OLD_SIZE=%%~zA"
+if not "%NEW_SIZE%"=="%OLD_SIZE%" (
+    echo [%date% %time%] File size mismatch: new=%NEW_SIZE%, old=%OLD_SIZE% >> "%LOG_FILE%"
+    if exist "%OLD_EXE%.old" move /y "%OLD_EXE%.old" "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
+    exit /b 1
+)
+
+echo 等待文件系统刷盘...
+timeout /t 2 /nobreak >nul
 
 echo 启动新版本...
 start "" "%OLD_EXE%"
