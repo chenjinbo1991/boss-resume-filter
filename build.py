@@ -1216,7 +1216,7 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
 
 
 def _gitee_fetch_assets(api_base, token, release_id, retry_fn=None):
-    """获取 Release 附件列表，返回 {文件名: {"id": int, "size": int}}。
+    """获取 Release 附件列表，返回 {文件名: {"id": int, "size": int, "created_at": str}}。
 
     retry_fn: 可选的重试请求函数。未提供时使用普通 requests。
     """
@@ -1229,9 +1229,35 @@ def _gitee_fetch_assets(api_base, token, release_id, retry_fn=None):
         resp = session.get(url, params=params, timeout=30)
         resp.raise_for_status()
     return {
-        a["name"]: {"id": a["id"], "size": a.get("size", 0)}
+        a["name"]: {
+            "id": a["id"],
+            "size": a.get("size", 0),
+            "created_at": a.get("created_at", ""),
+        }
         for a in resp.json()
     }
+
+
+def _local_file_newer(local_path: Path, remote_created_at: str, tolerance_seconds: int = 300) -> bool:
+    """判断本地文件是否比远端附件"显著"更新。
+
+    remote_created_at: Gitee 返回的 ISO 8601 时间戳（如 "2026-05-27T10:30:00+08:00"）。
+    tolerance_seconds: 容忍窗口（默认 300s = 5 分钟）。
+    本地 mtime 比远端创建时间新但在容忍窗口内 → 视为同一次构建产物，返回 False。
+    解析失败时保守返回 True（触发重传）。
+    """
+    if not remote_created_at:
+        return True  # 无时间戳，保守重传
+    try:
+        from datetime import datetime, timezone
+        remote_dt = datetime.fromisoformat(remote_created_at.replace("Z", "+00:00"))
+        local_mtime = local_path.stat().st_mtime
+        local_dt = datetime.fromtimestamp(local_mtime, tz=timezone.utc)
+        delta = (local_dt - remote_dt).total_seconds()
+        # 本地比远端新超过容忍窗口 → 显著更新
+        return delta > tolerance_seconds
+    except (ValueError, OSError):
+        return True  # 解析失败，保守重传
 
 
 def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
@@ -1342,22 +1368,26 @@ def _gitee_upload_local(version, release_title, release_notes):
         failed = []
 
         def _process_and_upload(files, label):
-            """增量上传：大小一致的跳过，大小不同的删旧后上传。"""
+            """增量上传：大小一致且本地未更新的跳过，其余删旧后上传。"""
             if not files:
                 return
             to_upload = []
             for f in files:
                 if f.name in existing:
-                    remote_size = existing[f.name]["size"]
+                    remote = existing[f.name]
+                    remote_size = remote["size"]
                     local_size = f.stat().st_size
-                    if remote_size == local_size:
+                    if remote_size == local_size and not _local_file_newer(f, remote.get("created_at", "")):
                         url = _gitee_asset_url(owner, repo, tag, f.name)
                         downloads_cn[_downloads_cn_key(f.name)] = url
-                        print(f"  [跳过] Gitee 已有且大小一致: {f.name} ({local_size} bytes)")
+                        print(f"  [跳过] Gitee 已有且一致: {f.name} ({local_size} bytes)")
                         continue
-                    print(f"  [更新] Gitee 大小不一致: {f.name} (本地 {local_size} vs 远端 {remote_size})")
-                    _gitee_delete_asset(api_base, token, release_id,
-                                        existing[f.name]["id"], f.name)
+                    if remote_size != local_size:
+                        reason = f"大小不一致 (本地 {local_size} vs 远端 {remote_size})"
+                    else:
+                        reason = f"本地更新 (远端 {remote.get('created_at', '?')})"
+                    print(f"  [更新] Gitee {reason}: {f.name}")
+                    _gitee_delete_asset(api_base, token, release_id, remote["id"], f.name)
                 to_upload.append(f)
             if not to_upload:
                 return
@@ -1532,22 +1562,26 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         failed = []
 
         def _upload_batch(files, label):
-            """增量上传：大小一致的跳过，大小不同的删旧后上传。"""
+            """增量上传：大小一致且本地未更新的跳过，其余删旧后上传。"""
             if not files:
                 return
             to_upload = []
             for f in files:
                 if f.name in existing:
-                    remote_size = existing[f.name]["size"]
+                    remote = existing[f.name]
+                    remote_size = remote["size"]
                     local_size = f.stat().st_size
-                    if remote_size == local_size:
+                    if remote_size == local_size and not _local_file_newer(f, remote.get("created_at", "")):
                         url = _gitee_asset_url(owner, repo, tag, f.name)
                         downloads_cn[_downloads_cn_key(f.name)] = url
-                        print(f"  [跳过] Gitee 已有且大小一致: {f.name} ({local_size} bytes)")
+                        print(f"  [跳过] Gitee 已有且一致: {f.name} ({local_size} bytes)")
                         continue
-                    print(f"  [更新] Gitee 大小不一致: {f.name} (本地 {local_size} vs 远端 {remote_size})")
-                    _gitee_delete_asset(api_base, token, release_id,
-                                        existing[f.name]["id"], f.name)
+                    if remote_size != local_size:
+                        reason = f"大小不一致 (本地 {local_size} vs 远端 {remote_size})"
+                    else:
+                        reason = f"本地更新 (远端 {remote.get('created_at', '?')})"
+                    print(f"  [更新] Gitee {reason}: {f.name}")
+                    _gitee_delete_asset(api_base, token, release_id, remote["id"], f.name)
                 to_upload.append(f)
             if not to_upload:
                 return
