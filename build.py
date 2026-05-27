@@ -890,18 +890,143 @@ def _gh_release(version, release_title, release_notes):
             print(f"  [跳过] 文件不存在: {f.name}")
 
     # 覆盖发布：删除对端产物 + 触发 CI 重建
-    need_ci = _trigger_cross_platform_ci(tag)
+    need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
 
     # 上传本地平台产物到 Gitee Release（国内下载源）
     downloads_cn = _gitee_upload_local(version, release_title, release_notes)
 
     # 等待 CI 完成，从 GitHub 下载对端产物并上传到 Gitee
-    gitee_sync = _sync_gitee_from_github(version, release_title, release_notes, need_wait=need_ci)
+    gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
+                                          need_wait=need_ci, old_assets_info=old_assets_info)
     if gitee_sync:
         downloads_cn = downloads_cn or {}
         downloads_cn.update(gitee_sync)
 
     return downloads_cn
+
+
+def _get_changed_files_since_tag():
+    """获取上次 tag 到当前 HEAD 之间变更的文件列表。"""
+    # 获取最近的 tag
+    r = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0", "HEAD^"],
+        capture_output=True, text=True, cwd=BASE_DIR,
+    )
+    if r.returncode != 0:
+        print("  [警告] 无法获取上次 tag，默认需要重建")
+        return None  # 无法获取，保守起见重建
+
+    last_tag = r.stdout.strip()
+
+    # 获取变更文件列表
+    r = subprocess.run(
+        ["git", "diff", "--name-only", f"{last_tag}..HEAD"],
+        capture_output=True, text=True, cwd=BASE_DIR,
+    )
+    if r.returncode != 0:
+        print("  [警告] 无法获取变更文件列表，默认需要重建")
+        return None
+
+    return r.stdout.strip().split('\n') if r.stdout.strip() else []
+
+
+def _needs_cross_platform_rebuild(changed_files):
+    """判断变更是否需要重建对端产物。
+
+    跨平台共享文件（改了需要重建）：
+    - 核心模块：gui_main.py, bossmaster.py, filtering.py, llm_eval.py, storage.py, doc_parser.py
+    - 基础设施：security.py, constants.py, paths.py, icons.py, updater.py
+    - 配置文件：selectors.json, job_config.json, api_config.json, requirements.txt
+
+    平台专属文件（改了只影响当前平台，不重建对端）：
+    - build.py（虽然有平台分支，但改动通常影响两个平台）
+
+    纯文档（不需要重建）：
+    - *.md 文件, latest.json
+    """
+    if changed_files is None:
+        return True  # 无法判断，保守起见重建
+
+    # 跨平台共享文件
+    shared_files = {
+        'gui_main.py', 'bossmaster.py', 'filtering.py', 'llm_eval.py', 'storage.py',
+        'doc_parser.py', 'security.py', 'constants.py', 'paths.py', 'icons.py',
+        'updater.py', 'selectors.json', 'job_config.json', 'api_config.json',
+        'requirements.txt', 'build.py',
+    }
+
+    for f in changed_files:
+        # 跳过空字符串
+        if not f.strip():
+            continue
+
+        # 纯文档文件，不需要重建
+        if f.endswith('.md') or f == 'latest.json':
+            continue
+
+        # 测试文件，不需要重建
+        if f.startswith('tests/'):
+            continue
+
+        # 跨平台共享文件，需要重建
+        if f in shared_files:
+            return True
+
+        # 其他文件（如 .github/workflows/ 等），保守起见重建
+        print(f"  [信息] 发现未分类文件: {f}，默认重建")
+        return True
+
+    return False
+
+
+def _get_github_release_assets(tag):
+    """获取 GitHub Release 上的产物列表。返回 {文件名: {size, updatedAt}} 字典。"""
+    r = subprocess.run(
+        ["gh", "release", "view", tag, "--json", "assets"],
+        capture_output=True, text=True, cwd=BASE_DIR,
+    )
+    if r.returncode != 0:
+        return {}
+    try:
+        assets = json.loads(r.stdout).get("assets", [])
+    except (json.JSONDecodeError, KeyError):
+        return {}
+    return {
+        a["name"]: {"size": a.get("size", 0), "updatedAt": a.get("updatedAt", "")}
+        for a in assets
+    }
+
+
+def _delete_github_release_assets(tag, asset_names):
+    """从 GitHub Release 删除指定产物。返回成功删除的文件名列表。"""
+    deleted = []
+    for name in asset_names:
+        r = subprocess.run(
+            ["gh", "release", "delete-asset", tag, name, "-y"],
+            capture_output=True, text=True, cwd=BASE_DIR,
+        )
+        if r.returncode == 0:
+            print(f"  [OK] 已删除旧产物: {name}")
+            deleted.append(name)
+    return deleted
+
+
+def _verify_assets_deleted(tag, asset_names, retries=3, delay=5):
+    """验证产物已从 GitHub Release 删除。
+
+    GitHub API 删除后可能有短暂延迟，轮询确认。
+    返回 True 表示全部已删除。
+    """
+    for attempt in range(1, retries + 1):
+        current = _get_github_release_assets(tag)
+        still_present = [n for n in asset_names if n in current]
+        if not still_present:
+            return True
+        if attempt < retries:
+            print(f"  等待删除生效... ({attempt}/{retries})，仍存在: {', '.join(still_present)}")
+            time.sleep(delay)
+    print(f"  [警告] 删除未生效，仍存在: {', '.join(still_present)}")
+    return False
 
 
 def _trigger_cross_platform_ci(tag):
@@ -910,32 +1035,62 @@ def _trigger_cross_platform_ci(tag):
     Windows 发布 → 删旧 DMG/ZIP → CI 自动构建 macOS
     macOS 发布 → 删旧 EXE → CI 自动构建 Windows
 
-    返回 True 表示需要等待 CI 构建对端产物。
+    流程：
+    1. 判断变更是否需要重建对端（按需重建，避免无效构建）
+    2. 检查对端产物是否存在，不存在则跳过
+    3. 记录旧产物的 size 和 updatedAt，用于 CI 后对比
+    4. 删除对端旧产物
+    5. 验证删除已生效（轮询，防止 GitHub API 延迟导致 CI 看到旧产物）
+    6. 触发 CI workflow
+    7. 返回 (need_ci, old_assets_info)
+
+    Returns:
+        tuple: (need_ci: bool, old_assets_info: dict)
+            need_ci: 是否需要等待 CI 构建对端产物
+            old_assets_info: 旧产物的 {文件名: {size, updatedAt}}，用于后续校验
     """
     if IS_MAC:
         opposite_assets = ["BOSS_ResumeFilter.exe"]
     else:
         opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
 
-    # 删除对端旧产物
-    deleted = False
-    for asset_name in opposite_assets:
-        r = subprocess.run(
-            ["gh", "release", "delete-asset", tag, asset_name, "-y"],
-            capture_output=True, text=True, cwd=BASE_DIR
-        )
-        if r.returncode == 0:
-            print(f"  [OK] 已删除旧产物: {asset_name}")
-            deleted = True
+    # 1. 判断是否需要重建对端（按需重建）
+    changed_files = _get_changed_files_since_tag()
+    if not _needs_cross_platform_rebuild(changed_files):
+        print("  [跳过] 变更仅影响当前平台或纯文档，无需重建对端产物")
+        if changed_files:
+            print(f"  变更文件: {', '.join(changed_files[:5])}{'...' if len(changed_files) > 5 else ''}")
+        return False, {}
 
-    if not deleted:
+    print("  [信息] 检测到跨平台变更，需要重建对端产物")
+    if changed_files:
+        print(f"  变更文件: {', '.join(changed_files[:5])}{'...' if len(changed_files) > 5 else ''}")
+
+    # 2. 检查对端产物是否存在
+    current_assets = _get_github_release_assets(tag)
+    present = {n: current_assets[n] for n in opposite_assets if n in current_assets}
+
+    if not present:
         print("  [跳过] 对端产物不存在，无需触发 CI")
-        return False
+        return False, {}
 
-    # 手动触发 CI workflow
+    print(f"  发现对端旧产物: {', '.join(present.keys())}")
+    old_assets_info = dict(present)
+
+    # 3. 删除对端旧产物
+    deleted = _delete_github_release_assets(tag, list(present.keys()))
+    if not deleted:
+        print("  [跳过] 删除失败，不触发 CI")
+        return False, {}
+
+    # 4. 验证删除已生效（防止 GitHub API 延迟导致 CI 看到旧产物而跳过构建）
+    if not _verify_assets_deleted(tag, deleted):
+        print("  [警告] 对端产物删除未生效，CI 可能跳过构建")
+
+    # 5. 触发 CI workflow
     r = subprocess.run(
         ["gh", "workflow", "run", "release.yml", "--ref", tag],
-        capture_output=True, text=True, cwd=BASE_DIR
+        capture_output=True, text=True, cwd=BASE_DIR,
     )
     if r.returncode == 0:
         print(f"  [OK] 已触发 CI 构建对端产物 ({tag})")
@@ -943,7 +1098,7 @@ def _trigger_cross_platform_ci(tag):
         print(f"  [警告] CI 触发失败: {r.stderr.strip()}")
         print("  可手动执行: gh workflow run release.yml --ref " + tag)
 
-    return True
+    return True, old_assets_info
 
 
 def _gitee_find_or_create_release(api_base, token, tag, release_title, release_notes):
