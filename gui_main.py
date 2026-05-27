@@ -795,11 +795,19 @@ class BossFilterGUI:
         self.root.bind_class('TCombobox', '<Button-5>', lambda e: 'break')
 
         # 配置样式
-        style.configure('TFrame', background=self.colors['bg_main'])
-        style.configure('TLabel', font=self.font_label, foreground=self.colors['text_primary'])
+        style.configure('TFrame', background=self.colors['bg_card'])
+        style.configure('Page.TFrame', background=self.colors['bg_main'])
+        style.configure('TLabel', font=self.font_label, foreground=self.colors['text_primary'],
+                        background=self.colors['bg_card'])
         style.configure('TButton', font=self.font_label, padding=(15, 8))
         style.configure('Accent.TButton', font=(FONT_FAMILY_SEMIBOLD, int(13 * page_fs)), padding=(20, 8))
         style.configure('Card.TFrame', background=self.colors['bg_card'], relief='solid', borderwidth=1)
+        style.configure('WelcomeCard.TFrame', background=self.colors['bg_card'],
+                        relief='flat', borderwidth=0)
+        style.configure('WelcomeInner.TFrame', background=self.colors['bg_card'])
+        style.configure('PageHeader.TFrame', background=self.colors['bg_card'],
+                        relief='flat', borderwidth=0)
+        style.configure('PageHeaderInner.TFrame', background=self.colors['bg_card'])
         style.configure('Sidebar.TFrame', background=self.colors['bg_sidebar'])
         sidebar_font_size = int(11 * self.font_scale)
         style.configure('Sidebar.TLabel', font=(FONT_FAMILY, sidebar_font_size),
@@ -817,6 +825,17 @@ class BossFilterGUI:
         combo_font_size = int(15 * self.font_scale)
         style.configure('TCombobox', font=self.font_label)
         style.configure('TCombobox', rowheight=int(combo_font_size * 1.8))
+        # macOS aqua 下 fieldbackground 只能通过 map 设置，configure 被原生渲染忽略
+        style.map('TCombobox',
+                  fieldbackground=[('readonly', self.colors['bg_card']),
+                                   ('disabled', self.colors['bg_input']),
+                                   ('!disabled', self.colors['bg_card'])])
+        style.map('TSpinbox',
+                  fieldbackground=[('!disabled', self.colors['bg_card']),
+                                   ('disabled', self.colors['bg_input'])])
+        style.map('TEntry',
+                  fieldbackground=[('!disabled', self.colors['bg_card']),
+                                   ('disabled', self.colors['bg_input'])])
         style.configure('Custom.TLabelframe', font=self.font_label, background=self.colors['bg_card'])
         style.configure('Custom.TLabelframe.Label', font=self.font_label, background=self.colors['bg_card'])
 
@@ -833,7 +852,7 @@ class BossFilterGUI:
         # 主标题 "BOSS" - 带彩色放大镜图标，大字体
         logo_icon = self.icons.logo('search_color', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
         logo_label = ttk.Label(logo_frame, image=logo_icon, text=" BOSS", compound=tk.LEFT,
-                               font=(FONT_FAMILY_SEMIBOLD, int(34 * self.font_scale)),
+                               font=(FONT_FAMILY_SEMIBOLD, int(26 * self.font_scale)),
                                foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
         logo_label._icon_ref = logo_icon
         logo_label.pack(anchor="w")
@@ -969,11 +988,11 @@ class BossFilterGUI:
     def create_main_content(self):
         """创建主内容区域"""
         # 主容器
-        main_frame = ttk.Frame(self.root, style='TFrame')
+        main_frame = ttk.Frame(self.root, style='Page.TFrame')
         main_frame.pack(side="left", fill="both", expand=True)
 
         # 创建页面容器
-        self.pages_frame = ttk.Frame(main_frame, style='TFrame')
+        self.pages_frame = ttk.Frame(main_frame, style='Page.TFrame')
         self.pages_frame.pack(fill="both", expand=True, padx=int(UI_CONFIG['page_padding_x'] * self.dpi_scale * self.zoom_factor), pady=int(UI_CONFIG['page_padding_y'] * self.dpi_scale * self.zoom_factor))
 
         # 创建各个页面
@@ -987,24 +1006,88 @@ class BossFilterGUI:
         # 默认显示首页（current_page_index 在 show_page_home 中已设置为 0）
         self.show_page_home()
 
+    def _create_page_header(self, parent, title, subtitle=None):
+        """创建页面标题区域：白色背景 + 左侧蓝色竖线，无灰色底色"""
+        _pad = int(16 * self.dpi_scale * self.zoom_factor)
+        _bar_w = int(4 * self.dpi_scale * self.zoom_factor)
+
+        card = ttk.Frame(parent, style='PageHeader.TFrame')
+        card.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
+
+        accent_bar = tk.Frame(card, width=_bar_w, bg=self.colors['primary'])
+        accent_bar.pack(side="left", fill="y")
+
+        inner = ttk.Frame(card, style='PageHeaderInner.TFrame')
+        inner.pack(fill="x", padx=(_pad, _pad), pady=(_pad, _pad))
+
+        title_label = ttk.Label(inner, text=title, font=self.font_section,
+                                foreground=self.colors['text_primary'],
+                                background=self.colors['bg_card'])
+        title_label.pack(anchor="w")
+
+        if subtitle:
+            sub = ttk.Label(inner, text=subtitle, font=self.font_label,
+                            foreground=self.colors['text_secondary'],
+                            background=self.colors['bg_card'])
+            sub.pack(anchor="w", pady=(int(8 * self.dpi_scale * self.zoom_factor), 0))
+
+        return inner
+
+    def _create_card(self, parent, title, padding=None, **pack_opts):
+        """创建带标题的白色卡片区域。
+
+        替代 ttk.LabelFrame，因为 macOS aqua 主题的 Labelframe.border 元素
+        强制使用 systemWindowBackgroundColor（灰色），无法通过 style 覆盖。
+
+        返回内部内容 Frame，调用方将子控件放入返回的 Frame 中。
+        """
+        if padding is None:
+            padding = int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor)
+
+        card = tk.Frame(parent, bg=self.colors['bg_card'],
+                        highlightbackground=self.colors['border'], highlightthickness=1)
+        card.pack(**pack_opts)
+
+        # 标题行
+        title_label = tk.Label(card, text=f"  {title}  ",
+                               font=(FONT_FAMILY_SEMIBOLD, int(13 * self.font_scale)),
+                               fg=self.colors['text_primary'], bg=self.colors['bg_card'])
+        title_label.pack(anchor="w", padx=padding, pady=(padding, 0))
+
+        # 内容区（带内边距）
+        content = ttk.Frame(card, style='TFrame')
+        content.pack(fill="both", expand=True, padx=padding, pady=padding)
+        return content
+
     def create_home_page(self):
         """创建首页"""
-        self.home_page = ttk.Frame(self.pages_frame, style='TFrame')
+        self.home_page = ttk.Frame(self.pages_frame, style='Page.TFrame')
 
-        # 页面标题
-        header_frame = ttk.Frame(self.home_page, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
+        # 页面标题 - 白色卡片 + 左侧蓝色竖线，避免文字直接浮在灰色背景上
+        _card_pad = int(20 * self.dpi_scale * self.zoom_factor)
+        header_card = ttk.Frame(self.home_page, style='WelcomeCard.TFrame')
+        header_card.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
+
+        # 左侧蓝色竖线
+        accent_bar = tk.Frame(header_card, width=int(4 * self.dpi_scale * self.zoom_factor),
+                              bg=self.colors['primary'])
+        accent_bar.pack(side="left", fill="y")
+
+        header_frame = ttk.Frame(header_card, style='WelcomeInner.TFrame')
+        header_frame.pack(fill="x", padx=(_card_pad, _card_pad), pady=(_card_pad, _card_pad))
 
         title_label = ttk.Label(header_frame, text="欢迎使用 BOSS 简历筛选器",
-                               font=self.font_title, foreground=self.colors['text_primary'])
+                               font=self.font_title, foreground=self.colors['text_primary'],
+                               background=self.colors['bg_card'])
         title_label.pack(anchor="w")
 
         subtitle_label = ttk.Label(header_frame, text="基于 DrissionPage 的智能候选人筛选工具，智能解析、智能匹配、自动滚动、自动打招呼",
-                                   font=self.font_label, foreground=self.colors['text_secondary'])
-        subtitle_label.pack(anchor="w", pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
+                                   font=self.font_label, foreground=self.colors['text_secondary'],
+                                   background=self.colors['bg_card'])
+        subtitle_label.pack(anchor="w", pady=(int(10 * self.dpi_scale * self.zoom_factor), 0))
 
         # 岗位过滤
-        home_filter_frame = ttk.Frame(self.home_page, style='TFrame')
+        home_filter_frame = ttk.Frame(self.home_page, style='Page.TFrame')
         home_filter_frame.pack(fill="x", pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
         ttk.Label(home_filter_frame, text="岗位过滤:", font=self.font_label,
                  background=self.colors['bg_main']).pack(side="left")
@@ -1016,7 +1099,7 @@ class BossFilterGUI:
         self.home_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_home_stats())
 
         # 统计卡片区
-        stats_container = ttk.Frame(self.home_page, style='TFrame')
+        stats_container = ttk.Frame(self.home_page, style='Page.TFrame')
         stats_container.pack(fill="x", pady=int(30 * self.dpi_scale * self.zoom_factor))
 
         # 卡片数据
@@ -1070,8 +1153,9 @@ class BossFilterGUI:
             text_label.pack(anchor="center", pady=(0, int(20 * self.dpi_scale * self.zoom_factor)))
 
         # 快速操作区
-        quick_frame = ttk.LabelFrame(self.home_page, text="  快速操作  ", padding=int(UI_CONFIG['card_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        quick_frame.pack(fill="x", pady=int(30 * self.dpi_scale * self.zoom_factor))
+        quick_frame = self._create_card(self.home_page, "快速操作",
+            padding=int(UI_CONFIG['card_padding'] * self.dpi_scale * self.zoom_factor),
+            fill="x", pady=int(30 * self.dpi_scale * self.zoom_factor))
 
         quick_buttons = ttk.Frame(quick_frame, style='TFrame')
         quick_buttons.pack(fill="x")
@@ -1091,22 +1175,17 @@ class BossFilterGUI:
 
     def create_config_page(self):
         """创建岗位配置页面"""
-        self.config_page = ttk.Frame(self.pages_frame, style='TFrame')
+        self.config_page = ttk.Frame(self.pages_frame, style='Page.TFrame')
 
         # 页面标题
-        header_frame = ttk.Frame(self.config_page, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
-
-        title_label = ttk.Label(header_frame, text="岗位配置",
-                               font=self.font_section, foreground=self.colors['text_primary'])
-        title_label.pack(anchor="w")
+        self._create_page_header(self.config_page, "岗位配置")
 
         # 配置容器 - 支持垂直滚动（macOS Tk 9.0+ 用 Text，其他用 Canvas）
         scroll_frame = ttk.Frame(self.config_page, style='Card.TFrame')
         scroll_frame.pack(fill="both", expand=True)
 
         self.config_canvas, self.config_scrollable_frame = self._create_scroll_container(
-            scroll_frame, self.colors['bg_main'])
+            scroll_frame, self.colors['bg_card'])
 
         # 使用 scrollable_frame 作为实际容器
         config_container = self.config_scrollable_frame
@@ -1132,8 +1211,8 @@ class BossFilterGUI:
         self.config_job_combo.bind("<<ComboboxSelected>>", self.on_job_selected)
 
         # ===== 需求文档解析区域 =====
-        parse_frame = ttk.LabelFrame(config_container, text="  需求文档解析（可选）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        parse_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
+        parse_frame = self._create_card(config_container, "需求文档解析（可选）",
+            fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 需求输入框
         req_header = ttk.Frame(parse_frame, style='TFrame')
@@ -1183,8 +1262,8 @@ class BossFilterGUI:
         # 先隐藏，等 show_page_config 或 on_job_selected 时再显示
 
         # 基本信息区
-        basic_frame = ttk.LabelFrame(self.result_detail_frame, text="  基本信息  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        basic_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+        basic_frame = self._create_card(self.result_detail_frame, "基本信息",
+            fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 岗位名称
         row1 = ttk.Frame(basic_frame, style='TFrame')
@@ -1276,8 +1355,8 @@ class BossFilterGUI:
                  foreground=self.colors['text_secondary'], background=self.colors['bg_card']).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), 0))
 
         # 技能关键词区域（带权重显示）- 左右分栏布局
-        skills_frame = ttk.LabelFrame(self.result_detail_frame, text="  技能关键词（可编辑权重）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        skills_frame.pack(fill="both", side="top", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+        skills_frame = self._create_card(self.result_detail_frame, "技能关键词（可编辑权重）",
+            fill="both", side="top", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 左右分栏容器
         skills_container = ttk.Frame(skills_frame, style='TFrame')
@@ -1324,8 +1403,9 @@ class BossFilterGUI:
         skills_scroll.pack(side="right", fill="y")
 
         # 选中技能编辑区
-        edit_card = ttk.LabelFrame(skills_right, text="  编辑选中技能  ", padding=int(12 * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        edit_card.pack(fill="x", padx=int(10 * self.dpi_scale * self.zoom_factor), pady=(int(10 * self.dpi_scale * self.zoom_factor), int(15 * self.dpi_scale * self.zoom_factor)))
+        edit_card = self._create_card(skills_right, "编辑选中技能",
+            padding=int(12 * self.dpi_scale * self.zoom_factor),
+            fill="x", padx=int(10 * self.dpi_scale * self.zoom_factor), pady=(int(10 * self.dpi_scale * self.zoom_factor), int(15 * self.dpi_scale * self.zoom_factor)))
 
         # 选中技能名称
         ttk.Label(edit_card, text="当前选中:", font=self.font_label,
@@ -1359,8 +1439,9 @@ class BossFilterGUI:
         btn_del_skill.pack(fill="x")
 
         # 添加新技能区
-        add_card = ttk.LabelFrame(skills_right, text="  添加新技能  ", padding=int(12 * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        add_card.pack(fill="x", padx=int(10 * self.dpi_scale * self.zoom_factor), pady=int(10 * self.dpi_scale * self.zoom_factor))
+        add_card = self._create_card(skills_right, "添加新技能",
+            padding=int(12 * self.dpi_scale * self.zoom_factor),
+            fill="x", padx=int(10 * self.dpi_scale * self.zoom_factor), pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         ttk.Label(add_card, text="技能名称:", font=self.font_label,
                  background=self.colors['bg_card']).pack(anchor="w", pady=(0, int(5 * self.dpi_scale * self.zoom_factor)))
@@ -1389,8 +1470,8 @@ class BossFilterGUI:
         self.skills_tree.bind("<<TreeviewSelect>>", self.on_skill_selected)
 
         # 必要条件区域
-        required_frame = ttk.LabelFrame(self.result_detail_frame, text="  必要条件（硬性约束）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        required_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+        required_frame = self._create_card(self.result_detail_frame, "必要条件（硬性约束）",
+            fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 必要条件列表显示
         self.required_listbox = tk.Listbox(required_frame, height=UI_CONFIG['listbox_height'],
@@ -1418,8 +1499,8 @@ class BossFilterGUI:
         ttk.Button(required_edit_frame, text="删除选中", command=self.delete_required_condition).pack(side="left", padx=(int(3 * self.dpi_scale * self.zoom_factor), 0))
 
         # 按钮行（居中布局，固定在页面底部，不随 Canvas 滚动）
-        self.btn_frame = ttk.Frame(self.config_page, style='TFrame')
-        btn_inner = ttk.Frame(self.btn_frame, style='TFrame')
+        self.btn_frame = ttk.Frame(self.config_page, style='Page.TFrame')
+        btn_inner = ttk.Frame(self.btn_frame, style='Page.TFrame')
         btn_inner.pack(anchor="center")
 
         icon_save_cfg = self.icons.button('save', self.colors['text_primary'])
@@ -1464,11 +1545,11 @@ class BossFilterGUI:
     def create_api_config_page(self):
         """创建 API 配置页面"""
         # 创建带滚动条的页面
-        self.api_config_page = ttk.Frame(self.pages_frame, style='TFrame')
+        self.api_config_page = ttk.Frame(self.pages_frame, style='Page.TFrame')
 
         # 创建可滚动容器（macOS Tk 9.0+ 用 Text，其他用 Canvas）
         self.api_canvas, self.api_scrollable_frame = self._create_scroll_container(
-            self.api_config_page, self.colors['bg_main'])
+            self.api_config_page, self.colors['bg_card'])
 
         # 在可滚动框架中创建内容
         self._create_api_config_content()
@@ -1497,7 +1578,7 @@ class BossFilterGUI:
         """
         canvas = tk.Canvas(parent, bg=bg_color, highlightthickness=0)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        container = ttk.Frame(canvas)
+        container = ttk.Frame(canvas, style='TFrame')
 
         container.bind(
             "<Configure>",
@@ -1816,28 +1897,30 @@ class BossFilterGUI:
         api_container = self.api_scrollable_frame
 
         # 系统设置页面标题
-        api_header_frame = ttk.Frame(api_container, style='TFrame')
-        api_header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
-
-        api_title_label = ttk.Label(api_header_frame, text="系统设置",
-                                   font=self.font_section, foreground=self.colors['text_primary'])
-        api_title_label.pack(anchor="w")
+        self._create_page_header(api_container, "系统设置")
 
         # 新电脑提示：检测到已保存配置但 API Key 丢失
         self.reconfig_card = None
         if hasattr(self, 'api_config') and self.api_config.get("needs_reconfigure"):
-            self.reconfig_card = ttk.LabelFrame(api_container, text="  ⚠️  提示  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
+            _pad = int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor)
+            self.reconfig_card = tk.Frame(api_container, bg=self.colors['bg_card'],
+                                          highlightbackground=self.colors['border'], highlightthickness=1)
             self.reconfig_card.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
-            ttk.Label(self.reconfig_card, text="检测到已保存的模型配置，但 API Key 未配置（可能是新电脑）",
+            tk.Label(self.reconfig_card, text="  ⚠️  提示  ",
+                     font=(FONT_FAMILY_SEMIBOLD, int(13 * self.font_scale)),
+                     fg=self.colors['text_primary'], bg=self.colors['bg_card']).pack(anchor="w", padx=_pad, pady=(_pad, 0))
+            _inner = ttk.Frame(self.reconfig_card, style='TFrame')
+            _inner.pack(fill="both", expand=True, padx=_pad, pady=_pad)
+            ttk.Label(_inner, text="检测到已保存的模型配置，但 API Key 未配置（可能是新电脑）",
                      font=self.font_label, foreground=self.colors['warning'],
                      background=self.colors['bg_card']).pack(anchor="w")
-            ttk.Label(self.reconfig_card, text="请在下方重新输入 API Key 并点击「保存并添加到列表」",
+            ttk.Label(_inner, text="请在下方重新输入 API Key 并点击「保存并添加到列表」",
                      font=self.font_label, foreground=self.colors['text_secondary'],
                      background=self.colors['bg_card']).pack(anchor="w", pady=(5, 0))
 
         # API 配置卡片
-        config_card = ttk.LabelFrame(api_container, text="  API 配置  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        config_card.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
+        config_card = self._create_card(api_container, "API 配置",
+            fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 1. 当前使用模型显示
         current_model_frame = ttk.Frame(config_card, style='TFrame')
@@ -1935,8 +2018,8 @@ class BossFilterGUI:
         self.api_status_label.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
 
         # 3. 已保存模型列表
-        model_list_card = ttk.LabelFrame(api_container, text="  已保存模型（双击切换）  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        model_list_card.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+        model_list_card = self._create_card(api_container, "已保存模型（双击切换）",
+            fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 模型列表 Treeview
         model_columns = ("name", "provider", "base_url")
@@ -2058,14 +2141,14 @@ class BossFilterGUI:
 
     def create_run_page(self):
         """创建运行控制页面 - 增强版：浏览器状态检测 + 进度条 + 滚动支持"""
-        self.run_page = ttk.Frame(self.pages_frame, style='TFrame')
+        self.run_page = ttk.Frame(self.pages_frame, style='Page.TFrame')
 
         # 可滚动容器（macOS Tk 9.0+ 用 Text，其他用 Canvas）
-        scroll_frame = ttk.Frame(self.run_page, style='TFrame')
+        scroll_frame = ttk.Frame(self.run_page, style='Page.TFrame')
         scroll_frame.pack(fill="both", expand=True)
 
         self.run_canvas, scrollable_frame = self._create_scroll_container(
-            scroll_frame, self.colors['bg_main'])
+            scroll_frame, self.colors['bg_card'])
 
         self.run_scrollable_frame = scrollable_frame  # 保存引用，供 mousewheel 绑定使用
 
@@ -2073,20 +2156,15 @@ class BossFilterGUI:
         content = scrollable_frame
 
         # 页面标题
-        header_frame = ttk.Frame(content, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
-
-        title_label = ttk.Label(header_frame, text="运行控制",
-                               font=self.font_section, foreground=self.colors['text_primary'])
-        title_label.pack(anchor="w")
+        self._create_page_header(content, "运行控制")
 
         # 控制卡片
         control_container = ttk.Frame(content, style='Card.TFrame')
         control_container.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # === 浏览器连接状态检测 ===
-        browser_frame = ttk.LabelFrame(control_container, text="  浏览器状态  ", padding=int(UI_CONFIG['label_frame_padding'] * self.dpi_scale * self.zoom_factor), style='Custom.TLabelframe')
-        browser_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
+        browser_frame = self._create_card(control_container, "浏览器状态",
+            fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         browser_status_row = ttk.Frame(browser_frame, style='TFrame')
         browser_status_row.pack(fill="x")
@@ -2273,18 +2351,13 @@ class BossFilterGUI:
 
     def create_result_page(self):
         """创建筛选结果页面"""
-        self.result_page = ttk.Frame(self.pages_frame, style='TFrame')
+        self.result_page = ttk.Frame(self.pages_frame, style='Page.TFrame')
 
         # 页面标题
-        header_frame = ttk.Frame(self.result_page, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
-
-        title_label = ttk.Label(header_frame, text="筛选结果",
-                               font=self.font_section, foreground=self.colors['text_primary'])
-        title_label.pack(anchor="w")
+        self._create_page_header(self.result_page, "筛选结果")
 
         # 岗位过滤
-        filter_frame = ttk.Frame(self.result_page, style='TFrame')
+        filter_frame = ttk.Frame(self.result_page, style='Page.TFrame')
         filter_frame.pack(fill="x", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
         ttk.Label(filter_frame, text="岗位过滤:", font=self.font_label,
                  background=self.colors['bg_main']).pack(side="left")
@@ -2296,7 +2369,7 @@ class BossFilterGUI:
         self.result_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_results())
 
         # 统计卡片区（纵向卡片布局）
-        stats_container = ttk.Frame(self.result_page, style='TFrame')
+        stats_container = ttk.Frame(self.result_page, style='Page.TFrame')
         stats_container.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         self.result_stats_vars = {}
@@ -2391,9 +2464,9 @@ class BossFilterGUI:
         tree_scroll.pack(side="right", fill="y", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         # 操作按钮 - 放在表格下方
-        btn_frame = ttk.Frame(self.result_page, style='TFrame')
+        btn_frame = ttk.Frame(self.result_page, style='Page.TFrame')
         btn_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(8 * self.dpi_scale * self.zoom_factor), int(12 * self.dpi_scale * self.zoom_factor)))
-        btn_inner = ttk.Frame(btn_frame, style='TFrame')
+        btn_inner = ttk.Frame(btn_frame, style='Page.TFrame')
         btn_inner.pack(anchor="center")
 
         icon_refresh_result = self.icons.button('refresh', self.colors['text_primary'])
@@ -2416,18 +2489,13 @@ class BossFilterGUI:
 
     def create_stats_page(self):
         """创建数据统计页面 - 按岗位维度展示筛选和打招呼统计"""
-        self.stats_page = ttk.Frame(self.pages_frame, style='TFrame')
+        self.stats_page = ttk.Frame(self.pages_frame, style='Page.TFrame')
 
         # 页面标题
-        header_frame = ttk.Frame(self.stats_page, style='TFrame')
-        header_frame.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
-
-        title_label = ttk.Label(header_frame, text="数据统计",
-                               font=self.font_section, foreground=self.colors['text_primary'])
-        title_label.pack(anchor="w")
+        self._create_page_header(self.stats_page, "数据统计")
 
         # 过滤条件行
-        filter_frame = ttk.Frame(self.stats_page, style='TFrame')
+        filter_frame = ttk.Frame(self.stats_page, style='Page.TFrame')
         filter_frame.pack(fill="x", pady=(0, int(15 * self.dpi_scale * self.zoom_factor)))
 
         ttk.Label(filter_frame, text="岗位过滤:", font=self.font_label,
@@ -2457,7 +2525,7 @@ class BossFilterGUI:
         btn_refresh.pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 汇总统计卡片
-        summary_container = ttk.Frame(self.stats_page, style='TFrame')
+        summary_container = ttk.Frame(self.stats_page, style='Page.TFrame')
         summary_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         self.stats_summary_vars = {}
@@ -2502,7 +2570,8 @@ class BossFilterGUI:
 
         # 岗位明细表格
         table_label = ttk.Label(self.stats_page, text="岗位明细",
-                               font=self.font_section, foreground=self.colors['text_primary'])
+                               font=self.font_section, foreground=self.colors['text_primary'],
+                               background=self.colors['bg_main'])
         table_label.pack(anchor="w", padx=int(5 * self.dpi_scale * self.zoom_factor),
                         pady=(int(20 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
 
