@@ -608,12 +608,13 @@ class BossFilterGUI:
         self.dpi_scale = _tk_dpi_scale
         self.zoom_factor = effective_scale / self.dpi_scale if self.dpi_scale else 1.0
 
-        # macOS Tk 8.6 (Apple Silicon / Anaconda / Homebrew) DPI 报告 72，
-        # 未反映 Retina 2x 缩放，导致字体物理像素减半。
-        # Intel Mac 系统 Tk 8.5 报告 DPI 144，字体渲染正常，不触发补偿。
+        # macOS Tk 8.6 (Apple Silicon + Anaconda/Homebrew) 报告 DPI=72，
+        # 未反映 Retina 2x 缩放，字体物理像素减半，需补偿。
+        # Tk 8.6 (Intel/venv) 报告 DPI≈96，Tk 8.5 (Intel/系统) 报告 DPI=144，
+        # 这两种字体渲染正常，不需要补偿。阈值 80 仅命中 DPI=72。
         if sys.platform == 'darwin':
             _tk_dpi_raw = self.root.winfo_fpixels('1i')
-            self.font_boost = 1.65 if _tk_dpi_raw < 100 else 1.0
+            self.font_boost = 1.65 if _tk_dpi_raw < 80 else 1.0
         else:
             self.font_boost = 1.0
         # font_scale 仅用于字体大小，布局/间距/图标/窗口/rowheight 仍用 dpi_scale × zoom_factor
