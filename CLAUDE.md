@@ -269,6 +269,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 新增 `assets` 字段（`size`、`sha256`），供客户端校验下载完整性
 - **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，分两步同步 Gitee：(1) `_gitee_upload_local()` 上传本地平台产物（EXE/DMG+config+readme）；(2) `_sync_gitee_from_github()` 轮询等待 CI 完成 → 并行下载对端产物到本地 → 并行上传全部产物到 Gitee（`ThreadPoolExecutor` 3 路并发）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
+- **Gitee 上传鲁棒性**：所有 Gitee API 调用使用 `requests.Session` + `HTTPAdapter` 自动重试（429/5xx，3 次指数退避）；`_gitee_find_or_create_release()` 和 `_gitee_delete_asset()` 额外包装手动重试（3 次，间隔 5/10/15s）；`_gitee_upload_single()` 5 次重试（间隔 5/10/20/40s，总等待 75s）+ 600s 超时；批量操作前 `_gitee_ping()` 预检 API 连通性（3 次 HEAD 请求）
 - **Gitee 覆盖发布**：重新发布同一版本时，先删除旧附件再重新上传（与 GitHub 行为一致）；同时同步 Release 标题（以 CHANGELOG 为准，正文保留手动修改不覆盖）；附件 ID 通过 `attach_files` API 获取（releases 列表 API 不返回 ID）
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
 - 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_upload_local()`、`build.py:_sync_gitee_from_github()`

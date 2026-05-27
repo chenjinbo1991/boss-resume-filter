@@ -22,6 +22,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 BASE_DIR = Path(__file__).parent.resolve()
 DIST_DIR = BASE_DIR / "dist"
@@ -1113,33 +1115,81 @@ def _trigger_cross_platform_ci(tag):
     return True, old_assets_info
 
 
+def _gitee_session():
+    """创建带自动重试的 requests Session，用于 Gitee API 调用。
+
+    自动重试 5xx/429/连接错误（3 次），减少 Gitee 服务不稳定导致的失败。
+    """
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=1,        # 1s, 2s, 4s
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST", "PATCH", "DELETE", "HEAD"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def _gitee_ping(token, timeout=15):
+    """预检 Gitee API 连通性，最多重试 3 次。返回 True/False。"""
+    session = _gitee_session()
+    for attempt in range(3):
+        try:
+            resp = session.head(
+                "https://gitee.com/api/v5/user",
+                params={"access_token": token},
+                timeout=timeout,
+            )
+            if resp.status_code < 500:
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        if attempt < 2:
+            delay = 3 * (attempt + 1)
+            print(f"  [Gitee] API 预检失败，{delay}s 后重试 ({attempt+1}/3)")
+            time.sleep(delay)
+    return False
+
+
 def _gitee_find_or_create_release(api_base, token, tag, release_title, release_notes):
     """查找或创建 Gitee Release，返回 (release_id, existing_assets)。
 
-    existing_assets: {文件名: 附件ID}，用于删除旧附件后重新上传。
+    existing_assets: {文件名: {"id": 附件ID, "size": 文件大小}}，用于增量上传。
+    内置重试：每次 API 调用最多重试 3 次（间隔 5s），应对 Gitee 服务不稳定。
     """
-    resp = requests.get(
+    session = _gitee_session()
+    max_attempts = 3
+
+    def _retry_request(method, url, **kwargs):
+        """带手动重试的请求包装器，应对非 5xx 的瞬态失败。"""
+        for attempt in range(max_attempts):
+            try:
+                resp = getattr(session, method)(url, **kwargs)
+                resp.raise_for_status()
+                return resp
+            except requests.exceptions.RequestException as e:
+                if attempt < max_attempts - 1:
+                    delay = 5 * (attempt + 1)
+                    print(f"  [Gitee] API 请求失败 ({e})，{delay}s 后重试 ({attempt+1}/{max_attempts})")
+                    time.sleep(delay)
+                else:
+                    raise
+
+    resp = _retry_request("get",
         f"{api_base}/releases",
-        params={"access_token": token},
-        timeout=10,
-    )
-    resp.raise_for_status()
+        params={"access_token": token}, timeout=30)
     release = next((r for r in resp.json() if r.get("tag_name") == tag), None)
 
     if release:
         release_id = release["id"]
-        # 附件 ID 需要通过专门的 API 获取（releases 列表不返回 id）
-        assets_resp = requests.get(
-            f"{api_base}/releases/{release_id}/attach_files",
-            params={"access_token": token},
-            timeout=10,
-        )
-        assets_resp.raise_for_status()
-        existing_assets = {a["name"]: a["id"] for a in assets_resp.json()}
+        existing_assets = _gitee_fetch_assets(api_base, token, release_id, _retry_request)
         # 标题有变化时同步更新（以 CHANGELOG 为准），正文不覆盖（保留手动修改）
         new_name = release_title or tag
         if release.get("name") != new_name:
-            patch_resp = requests.patch(
+            _retry_request("patch",
                 f"{api_base}/releases/{release_id}",
                 params={"access_token": token},
                 json={
@@ -1147,13 +1197,11 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
                     "name": new_name,
                     "body": release.get("body", ""),
                 },
-                timeout=10,
-            )
-            patch_resp.raise_for_status()
+                timeout=30)
             print(f"  [OK] Gitee Release 标题已更新: {new_name}")
         return release_id, existing_assets
 
-    resp = requests.post(
+    resp = _retry_request("post",
         f"{api_base}/releases",
         params={"access_token": token},
         json={
@@ -1162,29 +1210,50 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
             "body": release_notes or "",
             "target_commitish": "master",
         },
-        timeout=10,
-    )
-    resp.raise_for_status()
+        timeout=30)
     print(f"  [OK] Gitee Release 已创建: {tag}")
-    return resp.json()["id"], set()
+    return resp.json()["id"], {}
 
 
-def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=3):
-    """上传单个文件到 Gitee Release，带重试。返回 (文件名, 响应JSON)。"""
+def _gitee_fetch_assets(api_base, token, release_id, retry_fn=None):
+    """获取 Release 附件列表，返回 {文件名: {"id": int, "size": int}}。
+
+    retry_fn: 可选的重试请求函数。未提供时使用普通 requests。
+    """
+    url = f"{api_base}/releases/{release_id}/attach_files"
+    params = {"access_token": token}
+    if retry_fn:
+        resp = retry_fn("get", url, params=params, timeout=30)
+    else:
+        session = _gitee_session()
+        resp = session.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+    return {
+        a["name"]: {"id": a["id"], "size": a.get("size", 0)}
+        for a in resp.json()
+    }
+
+
+def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
+    """上传单个文件到 Gitee Release，带重试。返回 (文件名, 响应JSON)。
+
+    使用 Session 复用 TCP 连接，5 次重试（间隔 5/10/20/40s），总等待 75s。
+    """
+    session = _gitee_session()
     for attempt in range(max_retries):
         try:
             with open(filepath, "rb") as fh:
-                resp = requests.post(
+                resp = session.post(
                     f"{api_base}/releases/{release_id}/attach_files",
                     files={"file": (filepath.name, fh)},
                     params={"access_token": token},
-                    timeout=300,
+                    timeout=600,
                 )
             resp.raise_for_status()
             return filepath.name, resp.json()
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
-                delay = 2 ** (attempt + 1)
+                delay = 5 * (2 ** attempt)  # 5, 10, 20, 40
                 print(f"  [Gitee] {filepath.name} 上传失败 ({e})，{delay}s 后重试 ({attempt+1}/{max_retries})")
                 time.sleep(delay)
             else:
@@ -1197,14 +1266,25 @@ def _gitee_asset_url(owner, repo, tag, filename):
 
 
 def _gitee_delete_asset(api_base, token, release_id, asset_id, filename):
-    """删除 Gitee Release 上的旧附件。"""
-    resp = requests.delete(
-        f"{api_base}/releases/{release_id}/attach_files/{asset_id}",
-        params={"access_token": token},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    print(f"  删除旧附件: {filename}")
+    """删除 Gitee Release 上的旧附件，带 3 次重试。"""
+    session = _gitee_session()
+    for attempt in range(3):
+        try:
+            resp = session.delete(
+                f"{api_base}/releases/{release_id}/attach_files/{asset_id}",
+                params={"access_token": token},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            print(f"  删除旧附件: {filename}")
+            return
+        except requests.exceptions.RequestException as e:
+            if attempt < 2:
+                delay = 5 * (attempt + 1)
+                print(f"  [Gitee] 删除附件 {filename} 失败 ({e})，{delay}s 后重试 ({attempt+1}/3)")
+                time.sleep(delay)
+            else:
+                raise
 
 
 def _gitee_upload_local(version, release_title, release_notes):
@@ -1218,6 +1298,14 @@ def _gitee_upload_local(version, release_title, release_notes):
     token = os.environ.get("GITEE_TOKEN")
     if not token:
         print("  [跳过] Gitee Release: 未设置 GITEE_TOKEN 环境变量")
+        return None
+
+    # 连通性预检：避免批量操作时才发现 API 不可达
+    if not _gitee_ping(token):
+        print(f"\n{'!'*60}")
+        print(f"  [!!]  Gitee API 不可达，跳过本地产物上传")
+        print(f"  手动补传: python build.py --gitee-upload {version}")
+        print(f"{'!'*60}\n")
         return None
 
     owner = "yaoyouzhong"
@@ -1253,53 +1341,46 @@ def _gitee_upload_local(version, release_title, release_notes):
         downloads_cn = {}
         failed = []
 
-        # 第一批：删除旧附件后并行上传
-        if batch1:
-            for f in batch1:
+        def _process_and_upload(files, label):
+            """增量上传：大小一致的跳过，大小不同的删旧后上传。"""
+            if not files:
+                return
+            to_upload = []
+            for f in files:
                 if f.name in existing:
-                    _gitee_delete_asset(api_base, token, release_id, existing[f.name], f.name)
-            to_upload = batch1
-            if to_upload:
-                print(f"  并行上传 {len(to_upload)} 个本地产物到 Gitee Release...")
-                with ThreadPoolExecutor(max_workers=3) as pool:
-                    futures = {
-                        pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
-                        for f in to_upload
-                    }
-                    for future in as_completed(futures):
-                        f = futures[future]
-                        try:
-                            name, asset = future.result()
-                            url = asset.get("browser_download_url", _gitee_asset_url(owner, repo, tag, name))
-                            downloads_cn[_downloads_cn_key(name)] = url
-                            print(f"  [OK] Gitee 已上传: {name}")
-                        except Exception as e:
-                            print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
-                            failed.append(f.name)
+                    remote_size = existing[f.name]["size"]
+                    local_size = f.stat().st_size
+                    if remote_size == local_size:
+                        url = _gitee_asset_url(owner, repo, tag, f.name)
+                        downloads_cn[_downloads_cn_key(f.name)] = url
+                        print(f"  [跳过] Gitee 已有且大小一致: {f.name} ({local_size} bytes)")
+                        continue
+                    print(f"  [更新] Gitee 大小不一致: {f.name} (本地 {local_size} vs 远端 {remote_size})")
+                    _gitee_delete_asset(api_base, token, release_id,
+                                        existing[f.name]["id"], f.name)
+                to_upload.append(f)
+            if not to_upload:
+                return
+            print(f"  {label} ({len(to_upload)} 个)...")
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {
+                    pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
+                    for f in to_upload
+                }
+                for future in as_completed(futures):
+                    f = futures[future]
+                    try:
+                        name, asset = future.result()
+                        url = asset.get("browser_download_url",
+                                        _gitee_asset_url(owner, repo, tag, name))
+                        downloads_cn[_downloads_cn_key(name)] = url
+                        print(f"  [OK] Gitee 已上传: {name}")
+                    except Exception as e:
+                        print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
+                        failed.append(f.name)
 
-        # 第二批：ZIP（自动更新用，放最后）
-        if batch2:
-            for f in batch2:
-                if f.name in existing:
-                    _gitee_delete_asset(api_base, token, release_id, existing[f.name], f.name)
-            to_upload2 = batch2
-            if to_upload2:
-                print(f"  上传自动更新包...")
-                with ThreadPoolExecutor(max_workers=3) as pool:
-                    futures = {
-                        pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
-                        for f in to_upload2
-                    }
-                    for future in as_completed(futures):
-                        f = futures[future]
-                        try:
-                            name, asset = future.result()
-                            url = asset.get("browser_download_url", _gitee_asset_url(owner, repo, tag, name))
-                            downloads_cn[_downloads_cn_key(name)] = url
-                            print(f"  [OK] Gitee 已上传: {name}")
-                        except Exception as e:
-                            print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
-                            failed.append(f.name)
+        _process_and_upload(batch1, "并行上传本地产物到 Gitee")
+        _process_and_upload(batch2, "上传自动更新包")
 
         if failed:
             print(f"\n{'!'*60}")
@@ -1433,6 +1514,15 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     batch1 = [f for f in downloaded if not f.name.endswith(".dmg")]
     batch2 = [f for f in downloaded if f.name.endswith(".dmg")]
 
+    # 上传前预检 Gitee API 连通性
+    if not _gitee_ping(token):
+        print(f"\n{'!'*60}")
+        print(f"  [!!]  Gitee API 不可达，跳过对端产物同步")
+        print(f"  手动补传: python build.py --gitee-upload {version}")
+        print(f"{'!'*60}\n")
+        shutil.rmtree(download_dir, ignore_errors=True)
+        return None
+
     # 上传到 Gitee
     try:
         release_id, existing = _gitee_find_or_create_release(
@@ -1442,16 +1532,26 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         failed = []
 
         def _upload_batch(files, label):
+            """增量上传：大小一致的跳过，大小不同的删旧后上传。"""
             if not files:
                 return
-            # 删除旧附件后重新上传
+            to_upload = []
             for f in files:
                 if f.name in existing:
-                    _gitee_delete_asset(api_base, token, release_id, existing[f.name], f.name)
-            to_upload = files
+                    remote_size = existing[f.name]["size"]
+                    local_size = f.stat().st_size
+                    if remote_size == local_size:
+                        url = _gitee_asset_url(owner, repo, tag, f.name)
+                        downloads_cn[_downloads_cn_key(f.name)] = url
+                        print(f"  [跳过] Gitee 已有且大小一致: {f.name} ({local_size} bytes)")
+                        continue
+                    print(f"  [更新] Gitee 大小不一致: {f.name} (本地 {local_size} vs 远端 {remote_size})")
+                    _gitee_delete_asset(api_base, token, release_id,
+                                        existing[f.name]["id"], f.name)
+                to_upload.append(f)
             if not to_upload:
                 return
-            print(f"  {label}...")
+            print(f"  {label} ({len(to_upload)} 个)...")
             with ThreadPoolExecutor(max_workers=3) as pool:
                 futures = {
                     pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
