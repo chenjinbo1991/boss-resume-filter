@@ -343,6 +343,24 @@ self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost
 - Combobox 下拉列表字体通过 `option_add('*TCombobox*Listbox.font', font, 80)` 设置，优先级 80 确保覆盖默认样式
 - 所有 Combobox 禁用鼠标滚轮：`bind_class('TCombobox', '<MouseWheel>', lambda e: 'break')`（同时绑定 Button-4/Button-5 兼容 Linux）
 
+### macOS aqua 主题 ttk 控件灰色背景（2026-05-27）
+macOS aqua 主题的 ttk 控件默认背景是 `systemWindowBackgroundColor`（灰色），三层原因叠加导致大面积灰色残留：
+
+1. **`ttk.LabelFrame` 内容区灰色**：`Labelframe.border` 元素硬编码 `systemWindowBackgroundColor`，`style.configure` 设 `background` 只管 widget 级，border 元素不管。解决方案：用 `_create_card(parent, title, ...)` 替代所有 `LabelFrame`，内部用 `tk.Frame` 白底 + `highlightbackground` 边框 + `tk.Label` 标题行
+2. **`ttk.Label` 默认背景灰色**：`style.configure('TLabel')` 没设 `background` 时继承 aqua 默认灰。解决方案：`style.configure('TLabel', background=self.colors['bg_card'])`
+3. **`ttk.Combobox`/`TSpinbox`/`TEntry` 输入框灰色**：macOS aqua 原生渲染忽略 `style.configure` 设的 `fieldbackground`，只有 `style.map` 按状态映射有效。解决方案：
+```python
+style.map('TCombobox', fieldbackground=[('readonly', bg_card), ('!disabled', bg_card)])
+style.map('TSpinbox', fieldbackground=[('!disabled', bg_card)])
+style.map('TEntry', fieldbackground=[('!disabled', bg_card)])
+```
+
+架构约定：
+- `TFrame` 默认白底（`bg_card`），页面级灰底容器用 `Page.TFrame`（`bg_main`）
+- `_create_scroll_container` 的容器 frame 必须加 `style='TFrame'`，否则用 ttk 默认灰
+- `_create_page_header(parent, title, subtitle=None)` 统一创建页面标题（白底 + 左侧 4px 蓝色竖线）
+- 实现位置：`gui_main.py:setup_styles()`、`gui_main.py:_create_card()`、`gui_main.py:_create_page_header()`
+
 ### Gitee Release API 限制
 Gitee API 与 GitHub 有两处关键差异，覆盖发布时容易踩坑：
 1. **PATCH release 必须带 `tag_name` 和 `body`**：只传 `name` 会返回 400 `"body is missing"`。更新标题时必须同时传 `tag_name`（原值）和 `body`（`release.get("body", "")` 保留现有正文）
