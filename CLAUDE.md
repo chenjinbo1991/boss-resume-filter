@@ -211,6 +211,7 @@ boss-resume-filter/
 ### 数据统计看板
 - 侧边栏"数据统计"页（`create_stats_page()`），按岗位维度聚合筛选和打招呼数据
 - 过滤条件：岗位过滤下拉框 + 时间范围（今天/本周/全部）
+- **自动刷新**：切换到统计页时自动刷新；数据变更（筛选完成、打招呼、清空、删除候选人）时如果在统计页则同步刷新，无需手动刷新按钮
 - 4 张汇总卡片：总候选人、强烈推荐、推荐、已打招呼（带彩色圆形图标）
 - 岗位明细 Treeview：岗位名称、总人数、强烈推荐、推荐、待定、已打招呼、优质率、打招呼率、平均分
 - 统计口径统一：首页统计卡片、首页明细弹窗、数据统计页汇总卡片、岗位明细表均只统计 ≥55 分的候选人
@@ -254,9 +255,9 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - 新电脑部署：首次启动检测 API Key 缺失并引导重新配置
 
 ## 自动更新（v2.8）
-- 启动时延迟 3 秒自动检查最新版本
+- 启动时延迟 3 秒自动检查最新版本，**4 小时冷却**（`.last_update_check` 文件记录时间戳，避免频繁启动时重复网络请求）
 - **检查顺序**：Gitee 优先 → Gitee 失败回退 GitHub → Gitee 返回"无更新"时 GitHub 复核（防止镜像同步延迟漏报新版本）
-- **Gitee 源**（国内快，5s 超时）：`https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/latest.json`
+- **Gitee 源**（国内快，8s 超时）：`https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/latest.json`
 - **GitHub 源**（fallback，10s 超时）：`https://api.github.com/repos/yaoyouzhong/boss-resume-filter/releases/latest`
 - **下载链接**：`latest.json` 中 `downloads_cn` 字段存储 Gitee 国内下载链接，优先使用；无则回退到 GitHub
 - 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」
@@ -346,7 +347,7 @@ self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost
 ### macOS aqua 主题 ttk 控件灰色背景（2026-05-27）
 macOS aqua 主题的 ttk 控件默认背景是 `systemWindowBackgroundColor`（灰色），三层原因叠加导致大面积灰色残留：
 
-1. **`ttk.LabelFrame` 内容区灰色**：`Labelframe.border` 元素硬编码 `systemWindowBackgroundColor`，`style.configure` 设 `background` 只管 widget 级，border 元素不管。解决方案：用 `_create_card(parent, title, ...)` 替代所有 `LabelFrame`，内部用 `tk.Frame` 白底 + `highlightbackground` 边框 + `tk.Label` 标题行
+1. **`ttk.LabelFrame` 内容区灰色**：`Labelframe.border` 元素硬编码 `systemWindowBackgroundColor`，`style.configure` 设 `background` 只管 widget 级，border 元素不管。解决方案：用 `_create_card(parent, title, ...)` 替代所有 `LabelFrame`，内部用 `tk.Frame` 白底 + `highlightbackground` 边框 + `tk.Label` 标题行（浅灰 `#F7F8FA` 背景 + 底部分隔线区分内容区）
 2. **`ttk.Label` 默认背景灰色**：`style.configure('TLabel')` 没设 `background` 时继承 aqua 默认灰。解决方案：`style.configure('TLabel', background=self.colors['bg_card'])`
 3. **`ttk.Combobox`/`TSpinbox`/`TEntry` 输入框灰色**：macOS aqua 原生渲染忽略 `style.configure` 设的 `fieldbackground`，只有 `style.map` 按状态映射有效。解决方案：
 ```python

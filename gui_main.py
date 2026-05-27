@@ -850,12 +850,17 @@ class BossFilterGUI:
         logo_frame.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(30 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
 
         # 主标题 "BOSS" - 带彩色放大镜图标，大字体
+        title_row = ttk.Frame(logo_frame, style='Sidebar.TFrame')
+        title_row.pack(anchor="center")
+        gap = int(4 * self.dpi_scale * self.zoom_factor)
         logo_icon = self.icons.logo('search_color', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
-        logo_label = ttk.Label(logo_frame, image=logo_icon, text=" BOSS", compound=tk.LEFT,
-                               font=(FONT_FAMILY_SEMIBOLD, int(26 * self.font_scale)),
-                               foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
-        logo_label._icon_ref = logo_icon
-        logo_label.pack(anchor="w")
+        logo_icon_label = ttk.Label(title_row, image=logo_icon, background=self.colors['bg_sidebar'])
+        logo_icon_label._icon_ref = logo_icon
+        logo_icon_label.pack(side="left")
+        logo_text = ttk.Label(title_row, text="BOSS",
+                              font=(FONT_FAMILY_SEMIBOLD, int(26 * self.font_scale)),
+                              foreground=self.colors['text_sidebar_active'], background=self.colors['bg_sidebar'])
+        logo_text.pack(side="left", padx=(gap, 0))
 
         # 副标题 "简历筛选器" - 调大字体，居中
         subtitle_label = ttk.Label(logo_frame, text="简历筛选器",
@@ -1048,11 +1053,17 @@ class BossFilterGUI:
                         highlightbackground=self.colors['border'], highlightthickness=1)
         card.pack(**pack_opts)
 
-        # 标题行
-        title_label = tk.Label(card, text=f"  {title}  ",
+        # 标题行 - 浅灰背景区分
+        title_bg = '#F7F8FA'
+        title_bar = tk.Frame(card, bg=title_bg)
+        title_bar.pack(fill="x")
+        title_label = tk.Label(title_bar, text=f"  {title}  ",
                                font=(FONT_FAMILY_SEMIBOLD, int(13 * self.font_scale)),
-                               fg=self.colors['text_primary'], bg=self.colors['bg_card'])
-        title_label.pack(anchor="w", padx=padding, pady=(padding, 0))
+                               fg=self.colors['text_primary'], bg=title_bg)
+        title_label.pack(anchor="w", padx=padding, pady=(int(padding * 0.7), int(padding * 0.7)))
+        # 标题下方分隔线
+        sep = tk.Frame(card, bg=self.colors['border'], height=1)
+        sep.pack(fill="x")
 
         # 内容区（带内边距）
         content = ttk.Frame(card, style='TFrame')
@@ -2517,13 +2528,6 @@ class BossFilterGUI:
         time_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         time_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_stats())
 
-        # 刷新按钮
-        icon_refresh_stats = self.icons.button('refresh', self.colors['text_primary'])
-        btn_refresh = ttk.Button(filter_frame, image=icon_refresh_stats, text=" 刷新",
-                                compound=tk.LEFT, command=self.refresh_stats)
-        btn_refresh._icon_ref = icon_refresh_stats
-        btn_refresh.pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
-
         # 汇总统计卡片
         summary_container = ttk.Frame(self.stats_page, style='Page.TFrame')
         summary_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
@@ -2950,6 +2954,10 @@ class BossFilterGUI:
                 self.home_stats_vars['strong_home'].set(str(strong))
         except Exception as e:
             print(f"刷新首页统计失败：{e}")
+
+        # 如果当前在数据统计页，同步刷新统计
+        if self.current_page_index == 4:
+            self.refresh_stats()
 
     def _center_window(self, window, width, height):
         """将子窗口相对于主窗口居中"""

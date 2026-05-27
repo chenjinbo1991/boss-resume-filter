@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageTk
 STROKE_WIDTH = 2.0           # 基础描边宽度（缩放前）
 ICON_SIZE_BUTTON = 20        # 按钮图标基础尺寸（px）
 ICON_SIZE_NAV = 22           # 侧边栏导航图标基础尺寸（px）
-ICON_SIZE_LOGO = 40          # Logo 图标基础尺寸（px）
+ICON_SIZE_LOGO = 35          # Logo 图标基础尺寸（px）
 ICON_SIZE_STAT = 40          # 统计卡片图标基础尺寸（px）
 
 # 24x24 逻辑坐标系中的关键参考点

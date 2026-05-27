@@ -38,6 +38,7 @@ debug_*.py
 debug_*.log
 build_log*.txt
 *.html
+.last_update_check
 
 # IDE
 .vscode/

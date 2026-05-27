@@ -215,6 +215,7 @@ boss-resume-filter/
 ### 数据统计看板
 - 侧边栏"数据统计"页（`create_stats_page()`），按岗位维度聚合筛选和打招呼数据
 - 过滤条件：岗位过滤下拉框 + 时间范围（今天/本周/全部）
+- **自动刷新**：切换到统计页时自动刷新；数据变更（筛选完成、打招呼、清空、删除候选人）时如果在统计页则同步刷新，无需手动刷新按钮
 - 4 张汇总卡片：总候选人、强烈推荐、推荐、已打招呼（带彩色圆形图标）
 - 岗位明细 Treeview：岗位名称、总人数、强烈推荐、推荐、待定、已打招呼、优质率、打招呼率、平均分
 - 统计口径统一：首页统计卡片、首页明细弹窗、数据统计页汇总卡片、岗位明细表均只统计 ≥55 分的候选人
@@ -258,9 +259,9 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - 新电脑部署：首次启动检测 API Key 缺失并引导重新配置
 
 ## 自动更新（v2.8）
-- 启动时延迟 3 秒自动检查最新版本
+- 启动时延迟 3 秒自动检查最新版本，**4 小时冷却**（`.last_update_check` 文件记录时间戳，避免频繁启动时重复网络请求）
 - **检查顺序**：Gitee 优先 → Gitee 失败回退 GitHub → Gitee 返回"无更新"时 GitHub 复核（防止镜像同步延迟漏报新版本）
-- **Gitee 源**（国内快，5s 超时）：`https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/latest.json`
+- **Gitee 源**（国内快，8s 超时）：`https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/latest.json`
 - **GitHub 源**（fallback，10s 超时）：`https://api.github.com/repos/yaoyouzhong/boss-resume-filter/releases/latest`
 - **下载链接**：`latest.json` 中 `downloads_cn` 字段存储 Gitee 国内下载链接，优先使用；无则回退到 GitHub
 - 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」

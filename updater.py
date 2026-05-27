@@ -9,6 +9,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 import requests
 import shlex
 import tempfile
@@ -208,7 +209,7 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
     }
 
     try:
-        response = requests.get(latest_json_url, timeout=5)  # 5秒超时，国内快
+        response = requests.get(latest_json_url, timeout=8)  # 8秒超时，国内一般够用
         response.raise_for_status()
 
         data = response.json()
@@ -892,13 +893,37 @@ def show_update_dialog(root, result):
 
 def auto_check_on_startup(root, delay_ms=3000):
     """
-    启动时自动检查更新（延迟执行）
+    启动时自动检查更新（延迟执行），带 24 小时冷却机制
 
     Args:
         root: tkinter 根窗口
         delay_ms: 延迟毫秒数（默认 3 秒，避免启动时卡顿）
     """
-    root.after(delay_ms, lambda: check_and_update_gui(root, silent=True))
+    # 检查冷却时间（24 小时内不重复检查）
+    base_dir = get_base_dir()
+    cooldown_file = base_dir / ".last_update_check"
+    cooldown_hours = 4
+
+    try:
+        if cooldown_file.exists():
+            last_check = float(cooldown_file.read_text().strip())
+            hours_since = (time.time() - last_check) / 3600
+            if hours_since < cooldown_hours:
+                print(f"[更新] 距离上次检查仅 {hours_since:.1f} 小时，跳过自动检查")
+                return
+    except (ValueError, OSError):
+        pass  # 文件损坏或读取失败，继续检查
+
+    def _do_check_and_record():
+        """执行检查并记录时间戳"""
+        # 先记录检查时间（即使检查失败也记录，避免频繁重试）
+        try:
+            cooldown_file.write_text(str(time.time()))
+        except OSError:
+            pass
+        check_and_update_gui(root, silent=True)
+
+    root.after(delay_ms, _do_check_and_record)
 
 
 if __name__ == "__main__":
