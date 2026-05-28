@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import tempfile
 from pathlib import Path
@@ -29,8 +31,8 @@ def _with_build_context(tmp_path, dist_dir, *, is_win, is_mac):
 
 def test_verify_downloaded_file_accepts_matching_size_and_sha256():
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "asset.bin"
-        path.write_bytes(b"boss-update")
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"MZboss-update")
 
         asset_info = {
             "size": path.stat().st_size,
@@ -45,10 +47,14 @@ def test_verify_downloaded_file_accepts_matching_size_and_sha256():
 
 def test_verify_downloaded_file_rejects_size_mismatch():
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "asset.bin"
-        path.write_bytes(b"boss-update")
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"MZboss-update")
 
-        ok, error = updater.verify_downloaded_file(path, {"size": path.stat().st_size + 1})
+        asset_info = {
+            "size": path.stat().st_size + 1,
+            "sha256": updater._file_sha256(path),
+        }
+        ok, error = updater.verify_downloaded_file(path, asset_info)
 
     assert ok is False
     assert "文件大小不匹配" in error
@@ -56,13 +62,57 @@ def test_verify_downloaded_file_rejects_size_mismatch():
 
 def test_verify_downloaded_file_rejects_sha256_mismatch():
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "asset.bin"
-        path.write_bytes(b"boss-update")
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"MZboss-update")
 
-        ok, error = updater.verify_downloaded_file(path, {"sha256": "0" * 64})
+        ok, error = updater.verify_downloaded_file(
+            path,
+            {"size": path.stat().st_size, "sha256": "0" * 64},
+        )
 
     assert ok is False
     assert "SHA256 不匹配" in error
+
+
+def test_verify_downloaded_file_rejects_missing_integrity_metadata():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"MZboss-update")
+
+        ok, error = updater.verify_downloaded_file(path, {"size": path.stat().st_size})
+
+    assert ok is False
+    assert "缺少文件大小或 SHA256" in error
+
+
+def test_verify_downloaded_file_rejects_invalid_exe_header():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"<html>not an exe</html>")
+
+        asset_info = {
+            "size": path.stat().st_size,
+            "sha256": updater._file_sha256(path),
+        }
+        ok, error = updater.verify_downloaded_file(path, asset_info)
+
+    assert ok is False
+    assert "EXE 文件头无效" in error
+
+
+def test_verify_downloaded_file_rejects_invalid_zip_header():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "asset.zip"
+        path.write_bytes(b"<html>not a zip</html>")
+
+        asset_info = {
+            "size": path.stat().st_size,
+            "sha256": updater._file_sha256(path),
+        }
+        ok, error = updater.verify_downloaded_file(path, asset_info)
+
+    assert ok is False
+    assert "ZIP 文件头无效" in error
 
 
 def test_update_latest_json_writes_asset_metadata():
@@ -128,3 +178,20 @@ def test_latest_json_manifest_keeps_download_and_asset_keys_consistent():
     assert set(data["downloads_cn"]) <= set(data["downloads"])
     assert set(data["assets"]) <= update_asset_keys
     assert set(data["assets"]) <= set(data["downloads"])
+
+
+def test_update_latest_json_requires_complete_auto_update_metadata():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (dist_dir / "BOSS_ResumeFilter.exe").write_bytes(b"exe")
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    build.update_latest_json("9.9.9", "notes", quiet=True, require_complete_assets=True)
+                except SystemExit as exc:
+                    assert exc.code == 1
+                else:
+                    raise AssertionError("missing macos metadata should block latest.json publication")

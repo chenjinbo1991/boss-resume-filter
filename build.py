@@ -557,8 +557,20 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def _release_asset_metadata():
-    """Build update metadata for the current platform artifact."""
+def _release_asset_key(path_or_name):
+    """Map release artifact filename to latest.json assets key."""
+    name = Path(path_or_name).name
+    if name == "BOSS_ResumeFilter.exe":
+        return "windows"
+    if name == "BOSS_ResumeFilter_mac.zip":
+        return "macos"
+    if name == "BOSS_ResumeFilter.dmg":
+        return "macos_dmg"
+    return None
+
+
+def _release_asset_metadata(extra_paths=None):
+    """Build update metadata for current-platform artifacts plus explicitly provided files."""
     if IS_WIN:
         assets = {"windows": DIST_DIR / "BOSS_ResumeFilter.exe"}
     elif IS_MAC:
@@ -569,6 +581,11 @@ def _release_asset_metadata():
     else:
         assets = {}
 
+    for path in extra_paths or []:
+        key = _release_asset_key(path)
+        if key:
+            assets[key] = Path(path)
+
     metadata = {}
     for key, path in assets.items():
         if not path.exists() or not path.is_file():
@@ -578,6 +595,23 @@ def _release_asset_metadata():
             "sha256": _sha256_file(path),
         }
     return metadata
+
+
+def _required_update_asset_keys():
+    """Assets used by automatic/manual update manifests."""
+    return {"windows", "macos"}
+
+
+def _assert_update_asset_metadata_complete(asset_metadata):
+    missing = [
+        key for key in sorted(_required_update_asset_keys())
+        if not asset_metadata.get(key, {}).get("size")
+        or not asset_metadata.get(key, {}).get("sha256")
+    ]
+    if missing:
+        print(f"[错误] latest.json 缺少更新包完整性元数据: {', '.join(missing)}")
+        print("请先确保 Windows EXE 和 macOS ZIP 均已构建并可从 GitHub Release 下载。")
+        sys.exit(1)
 
 
 def _extract_changelog_release(version):
@@ -749,7 +783,8 @@ def _git_commit(version, allowed_paths=None):
     print(f"  [OK] 已提交：{msg}")
 
 
-def update_latest_json(version, release_notes, downloads_cn=None, quiet=False):
+def update_latest_json(version, release_notes, downloads_cn=None, quiet=False,
+                       asset_metadata=None, require_complete_assets=False):
     """更新 latest.json 文件（供 Gitee 镜像使用）
 
     Args:
@@ -767,9 +802,12 @@ def update_latest_json(version, release_notes, downloads_cn=None, quiet=False):
             "job_config": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/job_config.json",
             "readme": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/README.md"
         },
-        "assets": _release_asset_metadata(),
+        "assets": asset_metadata or _release_asset_metadata(),
         "release_notes": release_notes
     }
+
+    if require_complete_assets:
+        _assert_update_asset_metadata_complete(latest_data["assets"])
 
     if downloads_cn:
         latest_data["downloads_cn"] = downloads_cn
@@ -1465,6 +1503,56 @@ def _download_from_github_release(tag, asset_name, dest_dir):
     return dest
 
 
+def _wait_for_github_release_assets(tag, asset_names, max_wait=600, poll_interval=30):
+    """Wait until all requested assets appear in GitHub Release."""
+    elapsed = 0
+    while elapsed <= max_wait:
+        current = _get_github_release_assets(tag)
+        missing = [name for name in asset_names if name not in current]
+        if not missing:
+            return True
+        if elapsed >= max_wait:
+            break
+        print(f"  等待 GitHub Release 产物... {elapsed}s / {max_wait}s，缺少: {', '.join(missing)}")
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+    print(f"  [警告] 等待 GitHub Release 产物超时，缺少: {', '.join(missing)}")
+    return False
+
+
+def _collect_github_release_asset_metadata(version, existing_metadata=None):
+    """Download missing update artifacts from GitHub Release and compute full metadata."""
+    tag = f"v{version}"
+    metadata = dict(existing_metadata or _release_asset_metadata())
+    required_assets = {
+        "windows": "BOSS_ResumeFilter.exe",
+        "macos": "BOSS_ResumeFilter_mac.zip",
+        "macos_dmg": "BOSS_ResumeFilter.dmg",
+    }
+
+    missing = [
+        name for key, name in required_assets.items()
+        if key not in metadata
+    ]
+    if not missing:
+        return metadata
+
+    if not _wait_for_github_release_assets(tag, missing):
+        return metadata
+
+    download_dir = DIST_DIR / "_metadata_download"
+    download_dir.mkdir(exist_ok=True)
+    downloaded = []
+    try:
+        for name in missing:
+            path = _download_from_github_release(tag, name, download_dir)
+            downloaded.append(path)
+        metadata.update(_release_asset_metadata(downloaded))
+        return metadata
+    finally:
+        shutil.rmtree(download_dir, ignore_errors=True)
+
+
 def _sync_gitee_from_github(version, release_title, release_notes, need_wait=False):
     """从 GitHub Release 下载对端产物，并行上传到 Gitee Release。
 
@@ -1698,7 +1786,15 @@ def main():
             downloads_cn.update(gitee_sync)
 
         if downloads_cn:
-            update_latest_json(version, release_notes, downloads_cn)
+            asset_metadata = _collect_github_release_asset_metadata(
+                version, existing_metadata=_release_asset_metadata())
+            update_latest_json(
+                version,
+                release_notes,
+                downloads_cn,
+                asset_metadata=asset_metadata,
+                require_complete_assets=True,
+            )
             print(f"\n  [OK] downloads_cn 已更新，请手动提交推送：")
             print(f"  git add latest.json && git commit -m \"chore: 更新 Gitee 下载链接\" && git push")
         else:
@@ -1795,25 +1891,28 @@ def main():
         print(f"  Release 模式：v{version}")
         print(f"{'='*60}")
 
-        # 更新 latest.json（供 Gitee 镜像使用）
-        update_latest_json(version, release_notes)
-
-        # 提交变更（允许 gui_main.py 和 latest.json）
+        # 先提交源码/版本变更，latest.json 等 Release 资产齐全后再发布，避免自动更新读到半成品清单。
         allowed = ["gui_main.py"] if args.version else []
-        allowed.append("latest.json")
         _git_commit(version, allowed_paths=allowed)
         _git_tag(version)
         _git_push(version, auto=args.auto)
         downloads_cn = _gh_release(version, release_title, release_notes)
 
-        # Gitee 上传成功后，更新 latest.json 加入国内下载链接
-        if downloads_cn:
-            update_latest_json(version, release_notes, downloads_cn)
-            subprocess.run(["git", "add", "latest.json"], cwd=BASE_DIR, check=True)
-            subprocess.run(["git", "commit", "-m", "chore: 更新 Gitee 下载链接"],
-                           cwd=BASE_DIR, check=True)
-            subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
-            print("  [OK] latest.json 已自动提交并推送（含 Gitee 下载链接）")
+        # Release 资产齐全后再发布 latest.json，确保自动更新拿到完整 size + SHA256。
+        asset_metadata = _collect_github_release_asset_metadata(
+            version, existing_metadata=_release_asset_metadata())
+        update_latest_json(
+            version,
+            release_notes,
+            downloads_cn,
+            asset_metadata=asset_metadata,
+            require_complete_assets=True,
+        )
+        subprocess.run(["git", "add", "latest.json"], cwd=BASE_DIR, check=True)
+        subprocess.run(["git", "commit", "-m", "chore: 更新自动更新清单"],
+                       cwd=BASE_DIR, check=True)
+        subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
+        print("  [OK] latest.json 已自动提交并推送（含完整校验信息）")
 
         print(f"\n{'='*60}")
         print(f"  v{version} 发布完成！")

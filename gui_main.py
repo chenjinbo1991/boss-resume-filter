@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.8.10"
+__version__ = "2.8.11"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -675,6 +675,16 @@ class BossFilterGUI:
         self.api_config = {}
         self.load_api_config()
 
+        # 缓存：job_config 读取（mtime 未变则跳过磁盘 IO）
+        self._job_rules_cache = None
+        self._job_rules_mtime = 0
+        # 缓存：Treeview 刷新（数据未变则跳过重建）
+        self._result_tree_fingerprint = None
+        self._result_last_job = None
+        self._stats_tree_fingerprint = None
+        self._stats_last_job = None
+        self._stats_last_time = None
+
         # 设置样式
         self.setup_styles()
 
@@ -711,8 +721,8 @@ class BossFilterGUI:
 
         # 启动时自动检查更新（延迟 3 秒，避免启动卡顿）
         updater.auto_check_on_startup(self.root, delay_ms=3000)
-        if sys.platform == 'win32':
-            self.root.after(10000, updater.cleanup_windows_update_backup)
+        if getattr(sys, 'frozen', False):
+            self.root.after(1000, updater.mark_update_success_and_cleanup)
 
     def _setup_macos_reopen_handler(self):
         """点击 macOS Dock 图标时恢复主窗口。"""
@@ -1045,6 +1055,8 @@ class BossFilterGUI:
         替代 ttk.LabelFrame，因为 macOS aqua 主题的 Labelframe.border 元素
         强制使用 systemWindowBackgroundColor（灰色），无法通过 style 覆盖。
 
+        标题行：左侧 3px 蓝色竖线 + 浅灰背景，与页面标题风格统一。
+
         返回内部内容 Frame，调用方将子控件放入返回的 Frame 中。
         """
         if padding is None:
@@ -1054,12 +1066,18 @@ class BossFilterGUI:
                         highlightbackground=self.colors['border'], highlightthickness=1)
         card.pack(**pack_opts)
 
-        # 标题行 - 浅灰背景区分
+        # 标题行 - 左侧蓝色竖线 + 浅灰背景，与页面标题风格一致
         title_bg = '#F7F8FA'
         title_bar = tk.Frame(card, bg=title_bg)
         title_bar.pack(fill="x")
-        title_label = tk.Label(title_bar, text=f"  {title}  ",
-                               font=(FONT_FAMILY_SEMIBOLD, int(13 * self.font_scale)),
+
+        # 左侧蓝色竖线（2px，与页面标题的 4px 竖线呼应但更细）
+        accent = tk.Frame(title_bar, width=int(2 * self.dpi_scale * self.zoom_factor),
+                          bg=self.colors['primary'])
+        accent.pack(side="left", fill="y")
+
+        title_label = tk.Label(title_bar, text=f" {title} ",
+                               font=self.font_label,
                                fg=self.colors['text_primary'], bg=title_bg)
         title_label.pack(anchor="w", padx=padding, pady=(int(padding * 0.7), int(padding * 0.7)))
         # 标题下方分隔线
@@ -1237,18 +1255,44 @@ class BossFilterGUI:
         self.requirement_template_btn.pack(side="right")
         self.requirement_template_btn.state(['disabled'])
 
-        # 需求输入框 - 带滚动条（嵌套在容器内避免布局冲突）
+        # 需求输入框 - 白底 + focus蓝边框 + 占位提示
         text_container = ttk.Frame(parse_frame, style='TFrame')
         text_container.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         self.requirement_text = tk.Text(text_container, height=UI_CONFIG['text_height_large'],
-                                        font=(FONT_FAMILY, int(12 * self.font_scale * 0.92)),
-                                        bg=self.colors['bg_input'], fg='#1e3a5f', borderwidth=1, highlightthickness=0)
+                                        font=(FONT_FAMILY, int(10 * self.font_scale)),
+                                        bg='#FFFFFF', fg=self.colors['text_primary'],
+                                        borderwidth=0, highlightthickness=2,
+                                        highlightbackground=self.colors['border'],
+                                        highlightcolor=self.colors['primary'])
         self.requirement_text.pack(side="left", fill="both", expand=True)
 
         req_scroll = ttk.Scrollbar(text_container, orient="vertical", command=self.requirement_text.yview)
         req_scroll.pack(side="right", fill="y")
         self.requirement_text.config(yscrollcommand=req_scroll.set)
+
+        # 占位提示文字
+        self._req_placeholder_text = "在此粘贴招聘需求文档..."
+        _placeholder_color = self.colors['text_muted']
+        self.requirement_text.tag_configure("placeholder", foreground=_placeholder_color)
+        self.requirement_text.insert("1.0", self._req_placeholder_text, "placeholder")
+        self._req_placeholder_active = True
+
+        def _req_focus_in(event):
+            if self._req_placeholder_active:
+                self.requirement_text.delete("1.0", tk.END)
+                self.requirement_text.tag_remove("placeholder", "1.0", tk.END)
+                self._req_placeholder_active = False
+
+        def _req_focus_out(event):
+            content = self.requirement_text.get("1.0", tk.END).strip()
+            if not content:
+                self.requirement_text.delete("1.0", tk.END)
+                self.requirement_text.insert("1.0", self._req_placeholder_text, "placeholder")
+                self._req_placeholder_active = True
+
+        self.requirement_text.bind('<FocusIn>', _req_focus_in)
+        self.requirement_text.bind('<FocusOut>', _req_focus_out)
 
         # Text 控件 Enter/Leave 绑定，防止页面滚动干扰 Text 自身滚动
         self.requirement_text.bind('<Enter>', lambda e: setattr(self, '_over_text_widget', True))
@@ -1424,7 +1468,7 @@ class BossFilterGUI:
                  background=self.colors['bg_card']).pack(anchor="w", pady=(0, int(5 * self.dpi_scale * self.zoom_factor)))
         self.selected_skill_var = tk.StringVar(value="未选择")
         self.selected_skill_label = ttk.Label(edit_card, textvariable=self.selected_skill_var,
-                                              font=(FONT_FAMILY_SEMIBOLD, int(14 * self.font_scale)),
+                                              font=self.font_label,
                                               foreground=self.colors['primary'], background=self.colors['bg_card'],
                                               wraplength=int(240 * self.dpi_scale * self.zoom_factor), justify='left')
         self.selected_skill_label.pack(fill="x", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
@@ -1619,7 +1663,13 @@ class BossFilterGUI:
 
         macOS 触控板可能生成 <MouseWheel>（delta=±1）或 <Button-4>/<Button-5> 事件，
         需要同时绑定三种事件类型。
+
+        首次绑定后标记 canvas._mousewheel_bound，后续调用直接跳过，避免页面切换时
+        递归遍历所有子控件重复绑定导致卡顿。
         """
+        if getattr(canvas, '_mousewheel_bound', False):
+            return
+
         def _on_wheel(event):
             """处理滚轮/触控板滚动事件"""
             # 优先使用 delta（MouseWheel 事件）
@@ -1663,6 +1713,7 @@ class BossFilterGUI:
             canvas.bind("<Button-5>", _on_wheel)
         # 递归绑定所有子控件
         _bind_recursive(parent_frame)
+        canvas._mousewheel_bound = True
 
     # ── macOS Tk 9.0+ Cocoa 触控板滚动 hook ──────────────────────────────
     # Tk 9.0 的 Cocoa 后端在 NSView.scrollWheel: 中消费触控板事件，
@@ -2257,9 +2308,9 @@ class BossFilterGUI:
         ttk.Label(row_ai, text="AI 评估:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
         self.ai_eval_var = tk.BooleanVar(value=False)
-        # 自定义 ttk 样式：显式设置 indicator 大小，不依赖字体缩放
+        # 大 indicator + 文字一体，用父容器 anchor 做垂直居中
         _cb_style = ttk.Style()
-        _indicator_size = int(26 * self.dpi_scale * self.zoom_factor)
+        _indicator_size = int(32 * self.dpi_scale * self.zoom_factor)
         _cb_style.configure('AIEval.TCheckbutton',
                             font=self.font_label,
                             background=self.colors['bg_card'],
@@ -2269,7 +2320,7 @@ class BossFilterGUI:
         ai_check = ttk.Checkbutton(row_ai, text="启用 AI 辅助评估",
                                    variable=self.ai_eval_var,
                                    style='AIEval.TCheckbutton')
-        ai_check.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
+        ai_check.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_ai, text="(对通过筛选的候选人进行 LLM 二次评分，+-10分调整)",
                  font=(FONT_FAMILY, int(11 * self.font_scale)),
                  foreground=self.colors['text_muted'],
@@ -2321,15 +2372,11 @@ class BossFilterGUI:
                                       font=(FONT_FAMILY, int(13 * self.font_scale)), foreground=self.colors['success'])
         self.status_label.pack(side="left", padx=int(50 * self.dpi_scale * self.zoom_factor))
 
-        # 日志区域 — 独立于控制卡片，撑满剩余高度
-        log_label = ttk.Label(content, text="运行日志",
-                             font=self.font_label, foreground=self.colors['text_primary'])
-        log_label.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
+        # 日志区域 — 与浏览器状态卡片一致的卡片式设计
+        log_card = self._create_card(content, "运行日志",
+            fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-        log_wrapper = ttk.Frame(content, style='TFrame')
-        log_wrapper.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(0, int(15 * self.dpi_scale * self.zoom_factor)))
-
-        log_container = ttk.Frame(log_wrapper, style='Card.TFrame')
+        log_container = ttk.Frame(log_card, style='TFrame')
         log_container.pack(fill="x")
 
         # 日志文本框 - 等宽字体
@@ -2346,8 +2393,8 @@ class BossFilterGUI:
         self.log_text.bind('<Enter>', lambda e: setattr(self, '_over_text_widget', True))
         self.log_text.bind('<Leave>', lambda e: setattr(self, '_over_text_widget', False))
 
-        # 日志工具栏 — 独立于 log_container，避免撑出空白
-        log_toolbar = ttk.Frame(log_wrapper, style='TFrame')
+        # 日志工具栏 — 放在卡片内容区底部
+        log_toolbar = ttk.Frame(log_card, style='TFrame')
         log_toolbar.pack(fill="x", pady=(int(8 * self.dpi_scale * self.zoom_factor), 0))
 
         icon_trash_log = self.icons.button('trash', self.colors['text_primary'])
@@ -2627,6 +2674,22 @@ class BossFilterGUI:
 
     def refresh_stats(self):
         """刷新数据统计页面 - 按岗位维度聚合"""
+        # 数据未变 + 过滤条件未变 → 跳过 Treeview 重建，避免页面切换卡顿
+        current_job = self.stats_job_var.get() if hasattr(self, 'stats_job_var') else ""
+        current_time = self.stats_time_var.get() if hasattr(self, 'stats_time_var') else ""
+        if CANDIDATES_PATH.exists():
+            stat = CANDIDATES_PATH.stat()
+            fingerprint = (stat.st_mtime, stat.st_size)
+            if (fingerprint == self._stats_tree_fingerprint
+                    and current_job == self._stats_last_job
+                    and current_time == self._stats_last_time):
+                return
+            self._stats_tree_fingerprint = fingerprint
+            self._stats_last_job = current_job
+            self._stats_last_time = current_time
+        elif self._stats_tree_fingerprint is not None:
+            self._stats_tree_fingerprint = None
+
         try:
             if not CANDIDATES_PATH.exists():
                 return
@@ -2724,8 +2787,7 @@ class BossFilterGUI:
         self.update_nav_highlight()
         # 刷新岗位过滤列表
         try:
-            from bossmaster import load_job_config
-            job_rules, _ = load_job_config()
+            job_rules = self._get_job_rules_cached()
             jobs = ["全部岗位"] + list(job_rules.keys())
             self.home_job_combo['values'] = jobs
         except Exception:
@@ -2757,8 +2819,7 @@ class BossFilterGUI:
         self._start_browser_auto_check()
         # 刷新岗位选择列表
         try:
-            from bossmaster import load_job_config
-            job_rules, _ = load_job_config()
+            job_rules = self._get_job_rules_cached()
             jobs = ["全部岗位"] + list(job_rules.keys())
             self.job_combo['values'] = jobs
         except Exception:
@@ -2774,8 +2835,7 @@ class BossFilterGUI:
         self.update_nav_highlight()
         # 刷新岗位过滤列表
         try:
-            from bossmaster import load_job_config
-            job_rules, _ = load_job_config()
+            job_rules = self._get_job_rules_cached()
             jobs = ["全部岗位"] + list(job_rules.keys())
             self.result_job_combo['values'] = jobs
         except Exception:
@@ -2790,8 +2850,7 @@ class BossFilterGUI:
         self.update_nav_highlight()
         # 刷新岗位过滤列表
         try:
-            from bossmaster import load_job_config
-            job_rules, _ = load_job_config()
+            job_rules = self._get_job_rules_cached()
             jobs = ["全部岗位"] + list(job_rules.keys())
             self.stats_job_combo['values'] = jobs
         except Exception:
@@ -3016,27 +3075,31 @@ class BossFilterGUI:
             detail_window.transient(self.root)
             detail_window.grab_set()
             detail_window.title(title)
+            detail_window.configure(bg=self.colors['bg_main'])
 
             # 设置固定大小并相对主窗口居中
             window_width = 1000
             window_height = 900
             self._center_window(detail_window, window_width, window_height)
 
-            # 标题 - 加大加粗
+            # 标题
             title_label = ttk.Label(detail_window, text=title,
-                                   font=(FONT_FAMILY, int(15 * self.font_scale)),
-                                   foreground=self.colors['primary'])
+                                   font=(FONT_FAMILY, int(13 * self.font_scale)),
+                                   foreground=self.colors['primary'],
+                                   background=self.colors['bg_main'])
             title_label.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
-            # 统计信息 - 显示总数和已打招呼数
+            # 统计信息
             greeted_count = len([c for c in filtered if c.get('greet_sent', False)])
-            count_frame = ttk.Frame(detail_window)
+            count_frame = ttk.Frame(detail_window, style='Page.TFrame')
             count_frame.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
-            count_font = (FONT_FAMILY, int(12 * self.font_scale))
+            count_font = (FONT_FAMILY, int(11 * self.font_scale))
             ttk.Label(count_frame, text=f"共 {len(filtered)} 人", font=count_font,
-                      foreground=self.colors['text_secondary']).pack(side="left")
+                      foreground=self.colors['text_secondary'],
+                      background=self.colors['bg_main']).pack(side="left")
             greeted_label = ttk.Label(count_frame, text=f"，已打招呼 {greeted_count} 人",
-                                      font=count_font, foreground=self.colors['success'])
+                                      font=count_font, foreground=self.colors['success'],
+                                      background=self.colors['bg_main'])
             greeted_label.pack(side="left")
             count_label_ref = [greeted_label]
 
@@ -3067,12 +3130,14 @@ class BossFilterGUI:
             tree.column("level", width=120, minwidth=100, anchor='center')
             tree.column("status", width=70, minwidth=60, anchor='center')
 
-            # 设置表格字体和样式 - 与筛选结果页Treeview一致
+            # 设置表格字体和样式 - 明细窗口使用较小字体
+            detail_font = (FONT_FAMILY, int(11 * self.font_scale))
             tree_style = ttk.Style()
             tree_style.configure("Detail.Treeview",
-                                font=self.font_table,
+                                font=detail_font,
                                 rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
-            tree_style.configure("Detail.Treeview.Heading", font=self.font_label)
+            tree_style.configure("Detail.Treeview.Heading",
+                                font=(FONT_FAMILY, int(11 * self.font_scale), 'bold'))
             tree.configure(style="Detail.Treeview")
 
             # 添加滚动条
@@ -3091,7 +3156,7 @@ class BossFilterGUI:
                     return
                 tree.selection_set(clicked_item)
 
-                context_menu_font = (FONT_FAMILY, int(16 * self.font_scale))
+                context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
                 menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
                 icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
                 icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
@@ -3113,7 +3178,7 @@ class BossFilterGUI:
                                 tw.pack(fill='both', expand=True, padx=20, pady=10)
                                 tw.insert('1.0', self._format_candidate_detail(c))
                                 self.bind_text_context_menu(tw, editable=False)
-                                _place_window_centered(d_win, 700, 580, parent=self.root)
+                                _place_window_centered(d_win, 1000, 880, parent=self.root)
                                 d_win.deiconify()
                                 break
 
@@ -3262,6 +3327,7 @@ class BossFilterGUI:
             detail_window.transient(self.root)
             detail_window.grab_set()
             detail_window.title(title)
+            detail_window.configure(bg=self.colors['bg_main'])
 
             # 设置固定大小并相对主窗口居中
             window_width = 1000
@@ -3270,18 +3336,21 @@ class BossFilterGUI:
 
             # 标题
             title_label = ttk.Label(detail_window, text=title,
-                                   font=(FONT_FAMILY, int(15 * self.font_scale)),
-                                   foreground=self.colors['primary'])
+                                   font=(FONT_FAMILY, int(13 * self.font_scale)),
+                                   foreground=self.colors['primary'],
+                                   background=self.colors['bg_main'])
             title_label.pack(fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(15 * self.dpi_scale * self.zoom_factor), 0))
 
             # 统计信息
-            count_frame = ttk.Frame(detail_window)
+            count_frame = ttk.Frame(detail_window, style='Page.TFrame')
             count_frame.pack(anchor="w", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=(int(5 * self.dpi_scale * self.zoom_factor), 0))
-            count_font = (FONT_FAMILY, int(12 * self.font_scale))
+            count_font = (FONT_FAMILY, int(11 * self.font_scale))
             ttk.Label(count_frame, text=f"共 {total} 人", font=count_font,
-                      foreground=self.colors['text_secondary']).pack(side="left")
+                      foreground=self.colors['text_secondary'],
+                      background=self.colors['bg_main']).pack(side="left")
             greeted_label = ttk.Label(count_frame, text=f"，已打招呼 {greeted_count} 人",
-                                      font=count_font, foreground=self.colors['success'])
+                                      font=count_font, foreground=self.colors['success'],
+                                      background=self.colors['bg_main'])
             greeted_label.pack(side="left")
             count_label_ref = [greeted_label]
 
@@ -3312,10 +3381,11 @@ class BossFilterGUI:
             tree.column("level", width=120, anchor='center')
             tree.column("status", width=70, anchor='center')
 
-            # 设置表格字体和样式（与主界面一致）
+            # 设置表格字体和样式 - 明细窗口使用较小字体
+            detail_font = (FONT_FAMILY, int(11 * self.font_scale))
             tree_style = ttk.Style()
             tree_style.configure("Detail.Treeview",
-                                font=self.font_table,
+                                font=detail_font,
                                 rowheight=int(UI_CONFIG['treeview_rowheight'] * self.dpi_scale * self.zoom_factor))
             tree_style.configure("Detail.Treeview.Heading",
                                 font=self.font_label)
@@ -3360,7 +3430,7 @@ class BossFilterGUI:
                     return
                 tree.selection_set(clicked_item)
 
-                context_menu_font = (FONT_FAMILY, int(16 * self.font_scale))
+                context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
                 menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
                 icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
                 icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
@@ -3382,7 +3452,7 @@ class BossFilterGUI:
                                 tw.pack(fill='both', expand=True, padx=20, pady=10)
                                 tw.insert('1.0', self._format_candidate_detail(c))
                                 self.bind_text_context_menu(tw, editable=False)
-                                _place_window_centered(d_win, 700, 580, parent=self.root)
+                                _place_window_centered(d_win, 1000, 880, parent=self.root)
                                 d_win.deiconify()
                                 break
 
@@ -3449,6 +3519,21 @@ class BossFilterGUI:
 
         except Exception as e:
             messagebox.showerror("错误", f"显示详情失败：{e}")
+
+    def _get_job_rules_cached(self):
+        """缓存读取 job_config.json，文件 mtime 未变则跳过磁盘 IO。
+
+        页面切换时调用，避免每次切页面都读一遍配置文件。
+        """
+        mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else 0
+        if mtime != self._job_rules_mtime:
+            try:
+                from bossmaster import load_job_config
+                self._job_rules_cache, _ = load_job_config()
+            except Exception:
+                pass
+            self._job_rules_mtime = mtime
+        return self._job_rules_cache or {}
 
     def load_config(self):
         """加载岗位配置"""
@@ -4367,9 +4452,14 @@ class BossFilterGUI:
 
         # 加载原始招聘需求到需求文档解析框
         self.requirement_text.delete("1.0", tk.END)
+        self.requirement_text.tag_remove("placeholder", "1.0", tk.END)
         original_req = rule.get("original_requirement", "")
         if original_req:
             self.requirement_text.insert("1.0", original_req)
+            self._req_placeholder_active = False
+        else:
+            self.requirement_text.insert("1.0", self._req_placeholder_text, "placeholder")
+            self._req_placeholder_active = True
 
     def refresh_skills_tree(self):
         """刷新技能树显示（带颜色标记）"""
@@ -4536,11 +4626,19 @@ class BossFilterGUI:
             messagebox.showwarning("警告", "配置文件中未找到 requirement_template 模板")
             return
         self.requirement_text.delete("1.0", tk.END)
+        self.requirement_text.tag_remove("placeholder", "1.0", tk.END)
+        self._req_placeholder_active = False
         self.requirement_text.insert("1.0", template)
+
+    def _get_requirement_text(self):
+        """获取需求输入框内容，占位提示视为空。"""
+        if getattr(self, '_req_placeholder_active', False):
+            return ""
+        return self.requirement_text.get("1.0", tk.END).strip()
 
     def parse_requirement(self):
         """解析需求文档"""
-        requirement_text = self.requirement_text.get("1.0", tk.END).strip()
+        requirement_text = self._get_requirement_text()
         if not requirement_text:
             messagebox.showwarning("警告", "请输入招聘需求文档内容")
             return
@@ -4712,7 +4810,7 @@ class BossFilterGUI:
         required_conditions = list(self.required_conditions_data)  # 已是正确格式（str 或 dict）
 
         # 获取原始招聘需求（从需求文档解析框）
-        original_requirement = self.requirement_text.get("1.0", tk.END).strip()
+        original_requirement = self._get_requirement_text()
 
         # 验证薪资输入格式（非空则必须为数字）
         salary_min = None
@@ -4763,6 +4861,9 @@ class BossFilterGUI:
         self.required_conditions_data = []
         self.refresh_required_listbox()
         self.requirement_text.delete("1.0", tk.END)
+        self.requirement_text.tag_remove("placeholder", "1.0", tk.END)
+        self.requirement_text.insert("1.0", self._req_placeholder_text, "placeholder")
+        self._req_placeholder_active = True
         self.parse_result_label.config(text="")
 
     def load_config_dialog(self):
@@ -5662,6 +5763,18 @@ class BossFilterGUI:
 
     def refresh_results(self):
         """刷新结果 - 增强版：支持表头排序、颜色标记和岗位过滤"""
+        # 数据未变 + 岗位过滤未变 → 跳过 Treeview 重建，避免页面切换卡顿
+        current_job = self.result_job_var.get() if hasattr(self, 'result_job_var') else ""
+        if CANDIDATES_PATH.exists():
+            stat = CANDIDATES_PATH.stat()
+            fingerprint = (stat.st_mtime, stat.st_size)
+            if fingerprint == self._result_tree_fingerprint and current_job == self._result_last_job:
+                return
+            self._result_tree_fingerprint = fingerprint
+            self._result_last_job = current_job
+        elif self._result_tree_fingerprint is not None:
+            self._result_tree_fingerprint = None
+
         try:
             if CANDIDATES_PATH.exists():
                 with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
@@ -5820,7 +5933,7 @@ class BossFilterGUI:
             self.result_tree.selection_set(item)
 
             # 创建菜单
-            context_menu_font = (FONT_FAMILY, int(16 * self.font_scale))
+            context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
             menu = tk.Menu(self.root, tearoff=0, font=context_menu_font)
             icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
             icon_greet = self.icons.button('play', self.colors['success'])

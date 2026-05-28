@@ -7,7 +7,7 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.8.10）
+├── gui_main.py           # 图形界面主程序（v2.8.11）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -212,6 +212,7 @@ boss-resume-filter/
 - `job_config.json` 顶层 `requirement_template` 字段存储模板文本
 - GUI「招聘需求示例」按钮默认禁用，仅"新建岗位"模式下可点击
 - 点击后一键填充模板到需求输入框
+- **需求输入框样式**：白底 + 聚焦蓝色边框 + 灰色占位提示文字；通过 `_get_requirement_text()` 读取（自动过滤占位文字）
 
 ### 数据统计看板
 - 侧边栏"数据统计"页（`create_stats_page()`），按岗位维度聚合筛选和打招呼数据
@@ -223,6 +224,12 @@ boss-resume-filter/
 - 数据来源：`candidates_all.json`
 - 优质率 = (强烈推荐 + 推荐) / 总人数
 - 时间过滤基于 `batch_timestamp` 字段（`%Y%m%d_%H%M%S` 格式字符串比较）
+
+### 页面切换性能优化
+三个缓存机制避免每次切页触发耗时操作：
+- **滚轮绑定缓存**：`_bind_mousewheel()` 首次绑定后标记 `_mousewheel_bound`，后续跳过
+- **job_config 缓存**：`_get_job_rules_cached()` 用文件 mtime 做指纹，供四个页面复用
+- **Treeview 刷新缓存**：`refresh_results()` / `refresh_stats()` 用 `(mtime, size)` + 过滤条件做指纹，未变跳过全量重建
 
 ### 候选人明细弹窗
 - 点击统计指标数字（筛选结果页的"通过/强烈推荐/推荐"人数、首页统计卡片的数字）弹出明细窗口
@@ -271,7 +278,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
   - 从 .app 运行：下载 ZIP → 解压 → 生成 shell 脚本替换 .app → 重启应用
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
-- `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 新增 `assets` 字段（`size`、`sha256`），供客户端校验下载完整性
+- `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 的 `assets` 字段记录产物元数据（`size`、`sha256`），Windows 记录 EXE，macOS 同时记录 ZIP 和 DMG
 - **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；增量上传：比较远端 size + created_at 与本地文件，大小一致且时间差 ≤5 分钟则跳过；同时同步标题；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
 - 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_upload_local()`、`build.py:_gitee_delete_asset()`、`build.py:_sync_gitee_from_github()`

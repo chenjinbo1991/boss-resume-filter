@@ -7,7 +7,7 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.8.10）
+├── gui_main.py           # 图形界面主程序（v2.8.11）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -208,6 +208,7 @@ boss-resume-filter/
 - `job_config.json` 顶层 `requirement_template` 字段存储模板文本
 - GUI「招聘需求示例」按钮默认禁用，仅"新建岗位"模式下可点击
 - 点击后一键填充模板到需求输入框
+- **需求输入框样式**：白底（`#FFFFFF`）+ 聚焦时 2px 蓝色边框（`highlightcolor=primary`），未聚焦时浅灰边框（`highlightbackground=border`）；空时显示灰色占位提示文字"在此粘贴招聘需求文档..."，获焦自动消失、清空自动恢复；通过 `_get_requirement_text()` 读取内容（自动过滤占位文字）
 
 ### 数据统计看板
 - 侧边栏"数据统计"页（`create_stats_page()`），按岗位维度聚合筛选和打招呼数据
@@ -219,6 +220,12 @@ boss-resume-filter/
 - 数据来源：`candidates_all.json`
 - 优质率 = (强烈推荐 + 推荐) / 总人数
 - 时间过滤基于 `batch_timestamp` 字段（`%Y%m%d_%H%M%S` 格式字符串比较）
+
+### 页面切换性能优化
+切换页面时的三个缓存机制，避免每次切页都触发耗时操作：
+- **滚轮绑定缓存**：`_bind_mousewheel()` 首次绑定后给 Canvas 加 `_mousewheel_bound` 标记，后续调用直接跳过，避免递归遍历所有子控件重复 `bind()`
+- **job_config 读取缓存**：`_get_job_rules_cached()` 用文件 mtime 做指纹，mtime 未变则跳过磁盘 IO，供 `show_page_home/run/result/stats` 四个页面复用
+- **Treeview 刷新缓存**：`refresh_results()` 和 `refresh_stats()` 用 `(mtime, size)` + 当前过滤条件做指纹，数据未变且过滤条件未变则跳过 Treeview 全量重建（删全行再逐行插入 100 行 × 8 列 = 800+ 次 Treeview 操作）
 
 ### 候选人明细弹窗
 - 点击统计指标数字（筛选结果页的"通过/强烈推荐/推荐"人数、首页统计卡片的数字）弹出明细窗口
@@ -267,7 +274,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
   - 从 .app 运行：下载 ZIP → 解压 → 生成 shell 脚本替换 .app → 重启应用
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
-- `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 新增 `assets` 字段（`size`、`sha256`），供客户端校验下载完整性
+- `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 的 `assets` 字段记录产物元数据（`size`、`sha256`），Windows 记录 EXE，macOS 同时记录 ZIP 和 DMG，供客户端校验下载完整性
 - **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，分两步同步 Gitee：(1) `_gitee_upload_local()` 上传本地平台产物（EXE/DMG+config+readme）；(2) `_sync_gitee_from_github()` 轮询等待 CI 完成 → 并行下载对端产物到本地 → 并行上传全部产物到 Gitee（`ThreadPoolExecutor` 3 路并发）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
 - **Gitee 上传鲁棒性**：所有 Gitee API 调用使用 `requests.Session` + `HTTPAdapter` 自动重试（429/5xx，3 次指数退避）；`_gitee_find_or_create_release()` 和 `_gitee_delete_asset()` 额外包装手动重试（3 次，间隔 5/10/15s）；`_gitee_upload_single()` 5 次重试（间隔 5/10/20/40s，总等待 75s）+ 600s 超时；批量操作前 `_gitee_ping()` 预检 API 连通性（3 次 HEAD 请求）
 - **Gitee 增量上传**：上传前获取远端附件的 size 和 created_at，与本地文件比对：大小一致且本地 mtime 不超过远端创建时间 5 分钟 → 跳过；否则删旧重传。避免重复上传和单文件失败后全量重传
@@ -350,7 +357,7 @@ self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost
 ### macOS aqua 主题 ttk 控件灰色背景（2026-05-27）
 macOS aqua 主题的 ttk 控件默认背景是 `systemWindowBackgroundColor`（灰色），三层原因叠加导致大面积灰色残留：
 
-1. **`ttk.LabelFrame` 内容区灰色**：`Labelframe.border` 元素硬编码 `systemWindowBackgroundColor`，`style.configure` 设 `background` 只管 widget 级，border 元素不管。解决方案：用 `_create_card(parent, title, ...)` 替代所有 `LabelFrame`，内部用 `tk.Frame` 白底 + `highlightbackground` 边框 + `tk.Label` 标题行（浅灰 `#F7F8FA` 背景 + 底部分隔线区分内容区）
+1. **`ttk.LabelFrame` 内容区灰色**：`Labelframe.border` 元素硬编码 `systemWindowBackgroundColor`，`style.configure` 设 `background` 只管 widget 级，border 元素不管。解决方案：用 `_create_card(parent, title, ...)` 替代所有 `LabelFrame`，内部用 `tk.Frame` 白底 + `highlightbackground` 边框 + 标题行（浅灰 `#F7F8FA` 背景 + 左侧 2px 蓝色竖线 + 底部分隔线区分内容区），标题用 `self.font_label` 与页面统一
 2. **`ttk.Label` 默认背景灰色**：`style.configure('TLabel')` 没设 `background` 时继承 aqua 默认灰。解决方案：`style.configure('TLabel', background=self.colors['bg_card'])`
 3. **`ttk.Combobox`/`TSpinbox`/`TEntry` 输入框灰色**：macOS aqua 原生渲染忽略 `style.configure` 设的 `fieldbackground`，只有 `style.map` 按状态映射有效。解决方案：
 ```python
