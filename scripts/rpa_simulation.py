@@ -80,7 +80,7 @@ def create_manual_extraction_guide():
     """
     生成详细的职位信息手动提取指南
     """
-    guide = """
+    guide = r"""
     /*
      * BOSS直聘职位信息手动提取代码
      * 请在职位管理页面的控制台中执行此代码

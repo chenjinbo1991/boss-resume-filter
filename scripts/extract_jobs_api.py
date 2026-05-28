@@ -113,7 +113,7 @@ def extract_jobs_via_api():
             print(f"捕获到 {len(api_urls)} 个潜在API请求")
 
             # 现在尝试直接从页面执行JavaScript获取可能的API端点或数据
-            js_data_extraction = """
+            js_data_extraction = r"""
             (function() {
                 // 查找页面中可能存储职位数据的全局变量
                 const dataSources = [];

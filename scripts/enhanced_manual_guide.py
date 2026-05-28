@@ -4,13 +4,12 @@
 如果自动提取失败，使用此脚本快速获取职位信息。
 """
 
-import json
-import re
 from datetime import datetime
 
 def generate_manual_extration_guide():
-    guide = f"""=== BOSS直聘职位信息手动提取指南 ===
-{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    guide = """=== BOSS直聘职位信息手动提取指南 ===
+__GENERATED_AT__
 
 如果自动提取功能无法正常工作，您可以使用以下方法手动获取职位信息：
 
@@ -151,7 +150,7 @@ def generate_manual_extration_guide():
 - 如仍有问题，请联系技术支持
 """
 
-    print(guide)
+    print(guide.replace("__GENERATED_AT__", generated_at))
 
 if __name__ == "__main__":
     generate_manual_extration_guide()

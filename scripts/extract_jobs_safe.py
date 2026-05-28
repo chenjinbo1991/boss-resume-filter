@@ -84,7 +84,7 @@ def extract_jobs_safe():
 
         try:
             # 定义一个在页面上下文中的提取函数
-            js_code = """
+            js_code = r"""
             (function() {
                 // 定义要查找的职位关键词
                 const jobKeywords = [

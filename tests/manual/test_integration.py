@@ -8,17 +8,22 @@ import json
 import os
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_DIR = ROOT / "scripts"
+
+
 def test_manual_login_step():
     """Test step 1: Open browser with manual login"""
     print("=== Testing Step 1: Opening browser for manual login ===")
 
-    script_path = Path("fetch_jobs_sync.py")
+    script_path = SCRIPTS_DIR / "fetch_jobs_sync.py"
     try:
         result = subprocess.run(
             ["python", str(script_path)],
             capture_output=True,
             text=True,
             timeout=30,
+            cwd=ROOT,
         )
 
         print("STDOUT:", result.stdout[:500])
@@ -46,7 +51,7 @@ def test_extract_jobs_step():
     """Test step 2: Extract job information"""
     print("\n=== Testing Step 2: Extracting job information ===")
 
-    script_path = Path("extract_jobs.py")
+    script_path = SCRIPTS_DIR / "extract_jobs.py"
     try:
         result = subprocess.run(
             ["python", str(script_path)],
@@ -54,6 +59,7 @@ def test_extract_jobs_step():
             text=True,
             timeout=10,
             env={**os.environ, "AUTOMATED_RUN": "1", "MANUAL_INPUT": "n"},
+            cwd=ROOT,
         )
 
         print("STDOUT:", result.stdout[:500])
