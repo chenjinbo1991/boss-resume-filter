@@ -62,6 +62,7 @@ boss-resume-filter/
 - `python build.py --check`：仅执行发布前检查，不打包、不提交、不推送
 - `python build.py`：自动使用 pack_venv 打包（Windows 生成单文件 EXE，macOS 生成 .app + ZIP + DMG）
 - `python build.py --release`：打包 → 提交 → 打 tag → 推送确认 → GitHub Release 上传（一键发布）
+- `python build.py --release --auto`：全自动模式，跳过推送确认，用于 Claude Code 等非交互环境
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
 - **Windows**：dist 目录输出 `BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
@@ -78,12 +79,12 @@ boss-resume-filter/
 - `build.py` 会显式收集 Anaconda Python 的 Tcl/Tk 运行库，防止 EXE 启动时报 `No module named 'tkinter'`
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 体验优化 / 问题修复"顺序分类时直接中断
 - `--release` 使用 `--notes-file` + UTF-8 临时文件创建/更新 Release，避免 Windows 终端 GBK 编码导致中文乱码
-- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动从本地并行上传产物到 Gitee Release（ThreadPoolExecutor 3 路，需要 `GITEE_TOKEN` 环境变量）；上传顺序：配置文件/EXE/ZIP 优先，DMG 最后；CI 构建的对端产物从 GitHub 下载后再上传到 Gitee
-- **Gitee 覆盖发布**：重新发布同一版本时，先删除旧附件再重新上传（与 GitHub 行为一致）；同时同步 Release 标题（以 CHANGELOG 为准，正文保留手动修改不覆盖）；附件 ID 通过 `attach_files` API 获取（releases 列表 API 不返回 ID）
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动从本地并行上传产物到 Gitee Release（ThreadPoolExecutor 3 路，需要 `GITEE_TOKEN` 环境变量）；上传顺序：配置文件/EXE/ZIP 优先，DMG 最后；CI 构建的对端产物从 GitHub 下载后再上传到 Gitee；增量上传：比较远端 size + created_at 与本地文件，大小一致且时间差 ≤5 分钟则跳过
+- **Gitee 覆盖发布**：重新发布同一版本时，增量比对后只重传有变化的文件；同时同步 Release 标题（以 CHANGELOG 为准，正文保留手动修改不覆盖）；附件信息通过 `attach_files` API 获取（releases 列表 API 不返回 ID/size）
 - CHANGELOG 面向用户，避免技术细节：描述"做了什么"和"对用户的好处"，不描述实现原理、内部模块、函数名、技术栈；Bug 修复只写现象和结果，不写根因和修复方案；分类用用户视角（"体验优化"而非"行为优化/构建改进"）；功能归类要准确反映适用范围；只记录原始需求和原始 bug，不记录开发过程中自己引入又修掉的问题
 - **CHANGELOG 和 README 必须同步**：修改 CHANGELOG.md 的任何版本条目时，必须同步更新 README.md 中对应版本的条目。README 版本历史的条目数量、分类（新增功能/体验优化/问题修复）必须与 CHANGELOG 完全一致，不允许遗漏。build.py --release 的发布前检查会自动核对
 - Release 模式不再 `git add -A`；只允许自动提交 `--version` 引起的 `gui_main.py` 版本号变化，其他变更必须先手工提交
-- 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；tag 冲突时自动 `--force`（master 除外）
+- 推送前 `input()` 确认 [y/N]，不确认则保留本地提交和 tag；`--auto` 模式跳过确认直接推送；tag 冲突时自动 `--force`（master 除外）
 
 ## 代码规范
 - 使用 type hints
@@ -271,7 +272,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 新增 `assets` 字段（`size`、`sha256`），供客户端校验下载完整性
-- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；覆盖发布时先删除旧附件再重新上传，同时同步标题；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；增量上传：比较远端 size + created_at 与本地文件，大小一致且时间差 ≤5 分钟则跳过；同时同步标题；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
 - 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_upload_local()`、`build.py:_gitee_delete_asset()`、`build.py:_sync_gitee_from_github()`
 
