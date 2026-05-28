@@ -130,6 +130,7 @@ def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
         'has_update': False,
         'release_info': None,
         'download_url': None,
+        'download_url_fallback': None,
         'error': None
     }
 
@@ -205,6 +206,7 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
         'has_update': False,
         'release_info': None,
         'download_url': None,
+        'download_url_fallback': None,
         'error': None
     }
 
@@ -267,10 +269,13 @@ def _file_sha256(path):
 
 
 def verify_downloaded_file(path, asset_info=None):
-    """校验下载文件的大小和 SHA256。asset_info 为空时视为无校验元数据。"""
+    """校验下载文件的大小和 SHA256。自动更新核心资产必须同时提供两项元数据。"""
     asset_info = asset_info or {}
     expected_size = asset_info.get('size')
     expected_sha256 = asset_info.get('sha256')
+
+    if expected_size is None or not expected_sha256:
+        return False, "更新源缺少文件大小或 SHA256 校验信息，已拒绝安装"
 
     if expected_size is not None:
         try:
@@ -281,6 +286,10 @@ def verify_downloaded_file(path, asset_info=None):
         if actual_size != expected_size:
             return False, f"文件大小不匹配: 期望 {expected_size} bytes，实际 {actual_size} bytes"
 
+    magic_error = _validate_file_magic(path)
+    if magic_error:
+        return False, magic_error
+
     if expected_sha256:
         actual_sha256 = _file_sha256(path)
         if actual_sha256.lower() != str(expected_sha256).lower():
@@ -290,6 +299,33 @@ def verify_downloaded_file(path, asset_info=None):
             )
 
     return True, None
+
+
+def _validate_file_magic(path):
+    """检查常见更新包文件头，防止 HTML 错误页等非目标文件进入安装流程。"""
+    path = Path(path)
+    suffix = path.suffix.lower()
+    expected = None
+    label = None
+    if suffix == ".exe":
+        expected = b"MZ"
+        label = "EXE"
+    elif suffix == ".zip":
+        expected = b"PK"
+        label = "ZIP"
+
+    if not expected:
+        return None
+
+    try:
+        with open(path, "rb") as f:
+            actual = f.read(len(expected))
+    except OSError as e:
+        return f"无法读取更新包文件头: {e}"
+
+    if actual != expected:
+        return f"{label} 文件头无效，下载内容可能不是正确的更新包"
+    return None
 
 
 def download_file(url, dest_path, progress_callback=None):
@@ -338,17 +374,23 @@ def download_and_verify_file(url, dest_path, asset_info=None, progress_callback=
     return True, None
 
 
-def cleanup_windows_update_backup():
-    """新版本成功启动后清理 Windows 自动更新留下的旧 EXE 备份。"""
-    if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+def mark_update_success_and_cleanup():
+    """新版本成功进入 GUI 后写入启动标记，并清理平台相关旧版本备份。"""
+    if not getattr(sys, 'frozen', False):
         return
 
     try:
-        for suffix in (".old", ".old.previous"):
-            old_exe = Path(sys.executable + suffix)
-            if old_exe.exists():
-                old_exe.unlink()
-                print(f"[更新] 已清理旧版本备份: {old_exe}")
+        marker = os.environ.get("BOSS_UPDATE_MARKER")
+        if marker:
+            Path(marker).write_text(str(time.time()), encoding="utf-8")
+            print(f"[更新] 已写入启动成功标记: {marker}")
+
+        if sys.platform == 'win32':
+            for suffix in (".old", ".old.previous"):
+                old_exe = Path(sys.executable + suffix)
+                if old_exe.exists():
+                    old_exe.unlink()
+                    print(f"[更新] 已清理旧版本备份: {old_exe}")
     except OSError as e:
         print(f"[更新] 清理旧版本备份失败: {e}")
 
@@ -370,6 +412,7 @@ def update_windows(new_exe_path, current_exe_path):
         # 生成 update.bat
         bat_path = Path(current_exe_path).parent / "update.bat"
         temp_dir = Path(new_exe_path).parent
+        marker_path = Path(current_exe_path).with_suffix(Path(current_exe_path).suffix + ".update_ok")
         current_pid = os.getpid()
 
         bat_content = f"""@echo off
@@ -377,8 +420,10 @@ setlocal
 set "OLD_EXE={current_exe_path}"
 set "NEW_EXE={new_exe_path}"
 set "TEMP_DIR={temp_dir}"
+set "MARKER_FILE={marker_path}"
 set "OLD_PID={current_pid}"
 set "LOG_FILE=%TEMP%\\boss_resume_filter_update.log"
+set "FAILED_FILE=%OLD_EXE%.update_failed.txt"
 
 echo [%date% %time%] Starting update > "%LOG_FILE%"
 echo 正在更新 BOSS 简历筛选器...
@@ -426,10 +471,36 @@ echo 等待文件系统刷盘...
 timeout /t 2 /nobreak >nul
 
 echo 启动新版本...
-start "" "%OLD_EXE%"
+if exist "%MARKER_FILE%" del /f /q "%MARKER_FILE%" >> "%LOG_FILE%" 2>&1
+set "BOSS_UPDATE_MARKER=%MARKER_FILE%"
+set "NEW_PID="
+for /f %%P in ('powershell -NoProfile -Command "$p = Start-Process -FilePath $env:OLD_EXE -PassThru; $p.Id"') do set "NEW_PID=%%P"
+echo [%date% %time%] Started new process PID=%NEW_PID% >> "%LOG_FILE%"
 
-echo 旧版本备份保留到新版本成功启动后清理...
-echo [%date% %time%] Old executable backup kept: %OLD_EXE%.old >> "%LOG_FILE%"
+echo 等待新版本启动确认...
+echo [%date% %time%] Waiting for startup marker %MARKER_FILE% >> "%LOG_FILE%"
+for /l %%i in (1,1,90) do (
+    if exist "%MARKER_FILE%" goto update_confirmed
+    timeout /t 1 /nobreak >nul
+)
+
+echo [%date% %time%] Startup marker not found, rolling back >> "%LOG_FILE%"
+echo 自动更新失败，已回滚到旧版本。> "%FAILED_FILE%"
+echo 失败时间: %date% %time%>> "%FAILED_FILE%"
+echo 详细日志: %LOG_FILE%>> "%FAILED_FILE%"
+if defined NEW_PID taskkill /f /pid %NEW_PID% >> "%LOG_FILE%" 2>&1
+timeout /t 2 /nobreak >nul
+if exist "%OLD_EXE%" del /f /q "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
+if exist "%OLD_EXE%.old" move /y "%OLD_EXE%.old" "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
+if exist "%TEMP_DIR%" rmdir /s /q "%TEMP_DIR%" >> "%LOG_FILE%" 2>&1
+echo [%date% %time%] Rolled back to old executable >> "%LOG_FILE%"
+exit /b 1
+
+:update_confirmed
+echo [%date% %time%] Startup marker found, update confirmed >> "%LOG_FILE%"
+if exist "%MARKER_FILE%" del /f /q "%MARKER_FILE%" >> "%LOG_FILE%" 2>&1
+if exist "%OLD_EXE%.old" del /f /q "%OLD_EXE%.old" >> "%LOG_FILE%" 2>&1
+if exist "%OLD_EXE%.old.previous" del /f /q "%OLD_EXE%.old.previous" >> "%LOG_FILE%" 2>&1
 if exist "%TEMP_DIR%" rmdir /s /q "%TEMP_DIR%" >> "%LOG_FILE%" 2>&1
 
 echo 更新完成！
@@ -543,6 +614,8 @@ def update_macos_app(zip_path, current_app_path):
         quoted_current_app = shlex.quote(str(current_app_path))
         quoted_new_app = shlex.quote(str(new_app_path))
         quoted_temp_dir = shlex.quote(str(temp_dir))
+        marker_path = Path(tempfile.gettempdir()) / "boss_update_ok"
+        quoted_marker = shlex.quote(str(marker_path))
 
         script = f'''#!/bin/bash
 set -e
@@ -550,7 +623,18 @@ exec > /tmp/boss_update.log 2>&1
 OLD_APP={quoted_current_app}
 NEW_APP={quoted_new_app}
 TEMP_DIR={quoted_temp_dir}
+MARKER_FILE={quoted_marker}
+BACKUP_APP="${{OLD_APP}}.backup"
+FAILED_FILE="${{OLD_APP}}.update_failed.txt"
 OLD_PID={current_pid}
+
+rollback() {{
+    echo "[$(date)] Rolling back app update"
+    rm -rf "$OLD_APP"
+    if [ -d "$BACKUP_APP" ]; then
+        mv "$BACKUP_APP" "$OLD_APP"
+    fi
+}}
 
 echo "[$(date)] Starting update"
 echo "[$(date)] Waiting for old process $OLD_PID to exit"
@@ -572,17 +656,56 @@ if [ ! -d "$NEW_APP" ]; then
 fi
 
 echo "[$(date)] Removing old app"
-rm -rf "$OLD_APP"
+rm -rf "$BACKUP_APP"
+if [ -d "$OLD_APP" ]; then
+    mv "$OLD_APP" "$BACKUP_APP"
+fi
 echo "[$(date)] Copying new app with ditto"
-ditto "$NEW_APP" "$OLD_APP"
+if ! ditto "$NEW_APP" "$OLD_APP"; then
+    rollback
+    exit 1
+fi
 echo "[$(date)] Restoring executable permission"
 EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$OLD_APP/Contents/Info.plist")
-chmod +x "$OLD_APP/Contents/MacOS/$EXECUTABLE"
+if [ -z "$EXECUTABLE" ] || [ ! -f "$OLD_APP/Contents/MacOS/$EXECUTABLE" ]; then
+    echo "[$(date)] New app executable missing"
+    rollback
+    exit 1
+fi
+chmod +x "$OLD_APP/Contents/MacOS/$EXECUTABLE" || {{
+    rollback
+    exit 1
+}}
 echo "[$(date)] Clearing quarantine attributes"
 xattr -cr "$OLD_APP" 2>/dev/null || true
 echo "[$(date)] Opening app"
-open "$OLD_APP"
+rm -f "$MARKER_FILE"
+BOSS_UPDATE_MARKER="$MARKER_FILE" "$OLD_APP/Contents/MacOS/$EXECUTABLE" &
+NEW_PID=$!
+echo "[$(date)] Started new process PID=$NEW_PID"
+echo "[$(date)] Waiting for startup marker $MARKER_FILE"
+for i in {{1..90}}; do
+    if [ -f "$MARKER_FILE" ]; then
+        break
+    fi
+    sleep 1
+done
+
+if [ ! -f "$MARKER_FILE" ]; then
+    echo "[$(date)] Startup marker not found"
+    cat > "$FAILED_FILE" <<EOF
+自动更新失败，已回滚到旧版本。
+失败时间: $(date)
+详细日志: /tmp/boss_update.log
+EOF
+    kill "$NEW_PID" 2>/dev/null || true
+    rollback
+    exit 1
+fi
+
 echo "[$(date)] Cleanup"
+rm -f "$MARKER_FILE"
+rm -rf "$BACKUP_APP"
 rm -rf "$TEMP_DIR"
 rm -f "$0"
 '''
@@ -618,7 +741,7 @@ def exit_for_update(root):
     os._exit(0)
 
 
-def check_and_update_gui(root, silent=False):
+def check_and_update_gui(root, silent=False, on_complete=None):
     """
     GUI 版本的更新检查和执行
 
@@ -648,6 +771,8 @@ def check_and_update_gui(root, silent=False):
         if result['error']:
             if not silent:
                 messagebox.showerror("检查更新失败", result['error'], parent=root)
+            if on_complete:
+                on_complete(result)
             return
 
         if not result['has_update']:
@@ -657,10 +782,14 @@ def check_and_update_gui(root, silent=False):
                     f"当前已是最新版本 v{result['current']}",
                     parent=root
                 )
+            if on_complete:
+                on_complete(result)
             return
 
         # 有新版本，显示更新对话框
         show_update_dialog(root, result)
+        if on_complete:
+            on_complete(result)
 
     # 启动后台检查
     threading.Thread(target=do_check, daemon=True).start()
@@ -911,7 +1040,9 @@ def auto_check_on_startup(root, delay_ms=3000):
     # 检查冷却时间（24 小时内不重复检查）
     base_dir = get_base_dir()
     cooldown_file = base_dir / ".last_update_check"
+    failed_cooldown_file = base_dir / ".last_update_check_failed"
     cooldown_hours = 4
+    failed_cooldown_hours = 0.25
 
     try:
         if cooldown_file.exists():
@@ -923,14 +1054,29 @@ def auto_check_on_startup(root, delay_ms=3000):
     except (ValueError, OSError):
         pass  # 文件损坏或读取失败，继续检查
 
+    try:
+        if failed_cooldown_file.exists():
+            last_failed = float(failed_cooldown_file.read_text().strip())
+            hours_since_failed = (time.time() - last_failed) / 3600
+            if hours_since_failed < failed_cooldown_hours:
+                print(f"[更新] 距离上次失败仅 {hours_since_failed:.1f} 小时，暂缓自动检查")
+                return
+    except (ValueError, OSError):
+        pass
+
     def _do_check_and_record():
         """执行检查并记录时间戳"""
-        # 先记录检查时间（即使检查失败也记录，避免频繁重试）
-        try:
-            cooldown_file.write_text(str(time.time()))
-        except OSError:
-            pass
-        check_and_update_gui(root, silent=True)
+        def record_result(result):
+            try:
+                if result.get('error'):
+                    failed_cooldown_file.write_text(str(time.time()))
+                else:
+                    cooldown_file.write_text(str(time.time()))
+                    failed_cooldown_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        check_and_update_gui(root, silent=True, on_complete=record_result)
 
     root.after(delay_ms, _do_check_and_record)
 
