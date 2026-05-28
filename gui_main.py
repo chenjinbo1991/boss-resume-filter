@@ -7,6 +7,10 @@ __version__ = "2.8.11"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
+try:
+    from tkcalendar import DateEntry
+except ImportError:
+    DateEntry = None  # tkcalendar 未安装时回退到文本输入
 import json
 import sys
 import os
@@ -681,6 +685,7 @@ class BossFilterGUI:
         # 缓存：Treeview 刷新（数据未变则跳过重建）
         self._result_tree_fingerprint = None
         self._result_last_job = None
+        self._result_last_dates = None
         self._stats_tree_fingerprint = None
         self._stats_last_job = None
         self._stats_last_time = None
@@ -2426,6 +2431,37 @@ class BossFilterGUI:
                                               font=self.font_label)
         self.result_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.result_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_results())
+
+        # 日期过滤（日历控件）
+        ttk.Label(filter_frame, text="日期:", font=self.font_label,
+                 background=self.colors['bg_main']).pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
+        _cal_font = (FONT_FAMILY, int(11 * self.font_scale))
+        _cal_kw = dict(width=12, font=_cal_font, date_pattern='yyyy-mm-dd',
+                       showweeknumbers=False)
+        try:
+            _cal_kw['locale'] = 'zh_CN'
+            self.result_date_start_entry = DateEntry(filter_frame, **_cal_kw)
+        except Exception:
+            _cal_kw.pop('locale', None)
+            self.result_date_start_entry = DateEntry(filter_frame, **_cal_kw)
+        self.result_date_start_entry.pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
+        self.result_date_start_entry.bind("<<DateEntrySelected>>",
+                                          lambda e: self._validate_date_range('start'))
+
+        ttk.Label(filter_frame, text="~", font=self.font_label,
+                 background=self.colors['bg_main']).pack(side="left", padx=int(2 * self.dpi_scale * self.zoom_factor))
+
+        self.result_date_end_entry = DateEntry(filter_frame, **_cal_kw)
+        self.result_date_end_entry.pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
+        self.result_date_end_entry.bind("<<DateEntrySelected>>",
+                                        lambda e: self._validate_date_range('end'))
+
+        # 互斥关闭：包装 drop_down，展开自己前先收起对方的下拉日历
+        self._wrap_date_dropdown_mutex(self.result_date_start_entry, self.result_date_end_entry)
+        self._wrap_date_dropdown_mutex(self.result_date_end_entry, self.result_date_start_entry)
+
+        ttk.Button(filter_frame, text="重置日期", command=self._clear_result_dates).pack(
+            side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
 
         # 统计卡片区（纵向卡片布局）
         stats_container = ttk.Frame(self.result_page, style='Page.TFrame')
@@ -4614,6 +4650,73 @@ class BossFilterGUI:
             else:
                 entry.configure(foreground=self.colors['text_primary'])
 
+    # ── 筛选结果页日期过滤（日历控件） ─────────────────────────────────
+
+    @staticmethod
+    def _wrap_date_dropdown_mutex(this_entry, other_entry):
+        """包装 DateEntry.drop_down，展开自己前先收起对方的下拉日历"""
+        original_drop_down = this_entry.drop_down
+
+        def _wrapped_drop_down():
+            other_top = getattr(other_entry, '_top_cal', None)
+            if other_top and other_top.winfo_ismapped():
+                other_top.withdraw()
+            original_drop_down()
+
+        this_entry.drop_down = _wrapped_drop_down
+
+    def _clear_result_dates(self):
+        """重置两个日期控件为今天"""
+        today = datetime.now().date()
+        self.result_date_start_entry.set_date(today)
+        self.result_date_end_entry.set_date(today)
+        if hasattr(self, 'result_tree'):
+            self.refresh_results()
+
+    def _validate_date_range(self, which: str):
+        """验证日期范围：终止日期 >= 起始日期，终止日期 <= 今天"""
+        try:
+            today = datetime.now().date()
+            start_date = self.result_date_start_entry.get_date()
+            end_date = self.result_date_end_entry.get_date()
+
+            # 终止日期不能超过今天
+            if end_date > today:
+                self.result_date_end_entry.set_date(today)
+                end_date = today
+
+            # 起始日期不能超过今天
+            if start_date > today:
+                self.result_date_start_entry.set_date(today)
+                start_date = today
+
+            # 起始日期不能晚于终止日期
+            if start_date > end_date:
+                if which == 'start':
+                    # 用户改了起始日期，让终止日期跟随
+                    self.result_date_end_entry.set_date(start_date)
+                else:
+                    # 用户改了终止日期，让起始日期跟随
+                    self.result_date_start_entry.set_date(end_date)
+        except Exception:
+            pass
+
+        if hasattr(self, 'result_tree'):
+            self.refresh_results()
+
+    def _get_result_date_filter(self):
+        """读取筛选结果页日期过滤值，返回 (start_str, end_str)，均为 YYYYMMDD 格式或 None"""
+        start_str = end_str = None
+        try:
+            start_str = self.result_date_start_entry.get_date().strftime("%Y%m%d")
+        except Exception:
+            pass
+        try:
+            end_str = self.result_date_end_entry.get_date().strftime("%Y%m%d")
+        except Exception:
+            pass
+        return start_str, end_str
+
     def _insert_requirement_template(self):
         """插入招聘需求模板到输入框（模板文本从 job_config.json 读取）"""
         try:
@@ -5762,16 +5865,18 @@ class BossFilterGUI:
             )
 
     def refresh_results(self):
-        """刷新结果 - 增强版：支持表头排序、颜色标记和岗位过滤"""
-        # 数据未变 + 岗位过滤未变 → 跳过 Treeview 重建，避免页面切换卡顿
+        """刷新结果 - 增强版：支持表头排序、颜色标记和岗位+日期过滤"""
+        # 数据未变 + 过滤条件未变 → 跳过 Treeview 重建，避免页面切换卡顿
         current_job = self.result_job_var.get() if hasattr(self, 'result_job_var') else ""
+        current_dates = self._get_result_date_filter() if hasattr(self, 'result_date_start_entry') else (None, None)
         if CANDIDATES_PATH.exists():
             stat = CANDIDATES_PATH.stat()
             fingerprint = (stat.st_mtime, stat.st_size)
-            if fingerprint == self._result_tree_fingerprint and current_job == self._result_last_job:
+            if fingerprint == self._result_tree_fingerprint and current_job == self._result_last_job and current_dates == self._result_last_dates:
                 return
             self._result_tree_fingerprint = fingerprint
             self._result_last_job = current_job
+            self._result_last_dates = current_dates
         elif self._result_tree_fingerprint is not None:
             self._result_tree_fingerprint = None
 
@@ -5784,6 +5889,21 @@ class BossFilterGUI:
                 selected_job = self.result_job_var.get()
                 if selected_job != "全部岗位":
                     candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
+
+                # 日期过滤（基于 batch_timestamp 前 8 位 YYYYMMDD）
+                date_start, date_end = current_dates
+                if date_start or date_end:
+                    def _in_date_range(c):
+                        ts = c.get('batch_timestamp', '')
+                        if not ts or len(ts) < 8:
+                            return False
+                        d = ts[:8]
+                        if date_start and d < date_start:
+                            return False
+                        if date_end and d > date_end:
+                            return False
+                        return True
+                    candidates = [c for c in candidates if _in_date_range(c)]
 
                 # 计算新的指标
                 total = len(candidates)

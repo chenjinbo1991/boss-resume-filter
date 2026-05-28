@@ -10,8 +10,8 @@
 BOSS_ResumeFilter.exe
 README.md
 job_config.json
-selectors.json
 ```
+> `selectors.json` 已嵌入 EXE，无需单独复制。
 
 #### 2. 首次运行
 双击 `BOSS_ResumeFilter.exe` 启动程序

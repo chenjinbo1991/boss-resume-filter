@@ -1846,6 +1846,8 @@ def main():
         '--hidden-import=tkinter.font',
         '--hidden-import=tkinter.filedialog',
         '--hidden-import=tkinter.messagebox',
+        '--hidden-import=tkcalendar',
+        '--collect-submodules=babel',
         *tk_args,
         '--collect-all', 'PIL',
         '--exclude-module=PyQt5',

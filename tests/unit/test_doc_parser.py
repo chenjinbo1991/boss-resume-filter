@@ -1,5 +1,8 @@
-"""Tests for doc_parser.parse_job_requirements() — the 530-line requirement parsing engine."""
-from doc_parser import parse_job_requirements, _resolve_city, _extract_work_location
+"""Tests for doc_parser.parse_job_requirements() — the requirement parsing engine."""
+from doc_parser import (
+    parse_job_requirements, _resolve_city, _extract_work_location,
+    _extract_salary_range, generate_config_from_text, _preprocess_text
+)
 
 
 # ========== 城市提取 ==========
@@ -274,3 +277,475 @@ def test_markdown_format_full():
     assert result["job_title"] == "Python 后端工程师"
     assert result["min_exp"] == 3
     assert result["edu"] == "本科"
+
+
+# ========== P0 薪资解析增强 ==========
+
+def test_salary_no_label_range():
+    """无标签但有薪资上下文：15-25K"""
+    assert _extract_salary_range("我们提供15-25K的薪资") == (15, 25)
+
+
+def test_salary_zhi_separator():
+    """薪资：15k至25k"""
+    assert _extract_salary_range("薪资：15k至25k") == (15, 25)
+
+
+def test_salary_annual_range():
+    """年薪20-35万 → 转月薪"""
+    result = _extract_salary_range("年薪20-35万")
+    assert result[0] == 20 * 10 // 12  # 16
+    assert result[1] == 35 * 10 // 12  # 29
+
+
+def test_salary_annual_single():
+    """年薪30万 → 转月薪"""
+    result = _extract_salary_range("年薪30万")
+    assert result[0] == 30 * 10 // 12  # 25
+    assert result[1] == 25
+
+
+def test_salary_no_k_suffix():
+    """薪资：15000-25000（无K后缀）"""
+    assert _extract_salary_range("薪资：15000-25000") == (15000, 25000)
+
+
+def test_salary_min_only_qi():
+    """15K起"""
+    assert _extract_salary_range("15K起") == (15, None)
+
+
+def test_salary_min_only_yishang():
+    """15000以上"""
+    assert _extract_salary_range("15000以上") == (15000, None)
+
+
+def test_salary_budi():
+    """不低于15K"""
+    assert _extract_salary_range("不低于15K") == (15, None)
+
+
+def test_salary_miantan():
+    """面谈"""
+    assert _extract_salary_range("薪资面谈") == (None, None)
+
+
+def test_salary_daiyu_congyou():
+    """待遇从优"""
+    assert _extract_salary_range("待遇从优") == (None, None)
+
+
+def test_salary_xinzi_miantan():
+    """薪资可谈"""
+    assert _extract_salary_range("薪资可谈") == (None, None)
+
+
+def test_salary_xinchou_prefix():
+    """薪酬：15k-25k"""
+    assert _extract_salary_range("薪酬：15k-25k") == (15, 25)
+
+
+def test_salary_no_false_positive_experience():
+    """不应把经验年限误匹配为薪资"""
+    assert _extract_salary_range("要求3-5年经验") == (None, None)
+
+
+# ========== P0 年龄提取增强 ==========
+
+def test_age_yixia():
+    """35岁以下"""
+    result = parse_job_requirements("## 硬性条件\n35岁以下")
+    assert result["max_age"] == 35
+
+
+def test_age_buchaoguo():
+    """不超过40岁"""
+    result = parse_job_requirements("## 硬性条件\n不超过40岁")
+    assert result["max_age"] == 40
+
+
+def test_age_zhousui():
+    """年龄不超过 35 周岁"""
+    result = parse_job_requirements("## 硬性条件\n年龄不超过 35 周岁")
+    assert result["max_age"] == 35
+
+
+def test_age_zhousui_yinei():
+    """35周岁以内"""
+    result = parse_job_requirements("## 硬性条件\n35周岁以内")
+    assert result["max_age"] == 35
+
+
+def test_age_yinei_suffix():
+    """40 岁以内"""
+    result = parse_job_requirements("## 硬性条件\n40 岁以内")
+    assert result["max_age"] == 40
+
+
+def test_age_le_symbol():
+    """≤35岁"""
+    result = parse_job_requirements("## 硬性条件\n≤35岁")
+    assert result["max_age"] == 35
+
+
+def test_age_le_ascii():
+    """<=35岁"""
+    result = parse_job_requirements("## 硬性条件\n<=35岁")
+    assert result["max_age"] == 35
+
+
+def test_age_range_takes_max():
+    """年龄25-35岁 → 取上限"""
+    result = parse_job_requirements("## 硬性条件\n年龄25-35岁")
+    assert result["max_age"] == 35
+
+
+def test_age_nianling_yixia_no_sui():
+    """年龄35以下（无岁字）"""
+    result = parse_job_requirements("## 硬性条件\n年龄35以下")
+    assert result["max_age"] == 35
+
+
+def test_age_no_false_positive_experience():
+    """不应把经验年限误匹配为年龄"""
+    result = parse_job_requirements("## 硬性条件\n5年经验")
+    assert result["max_age"] is None
+
+
+# ========== P0 权重正则空格修复 ==========
+
+def test_skill_weight_no_space_chinese():
+    """中文无空格：Spring熟悉 → 权重 2"""
+    text = "职位要求\nSpring熟悉\nDocker了解"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    spring_kw = next((k for k in job["keywords"] if "Spring" in k["name"] and "Cloud" not in k["name"]
+                       and "Boot" not in k["name"] and "MVC" not in k["name"]
+                       and "AI" not in k["name"]), None)
+    assert spring_kw is not None
+    assert spring_kw["weight"] == 2
+
+
+def test_skill_weight_youxian_no_space():
+    """Java优先 → 权重 2"""
+    text = "职位要求\nJava优先"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    java_kw = next((k for k in job["keywords"] if k["name"] == "Java"), None)
+    assert java_kw is not None
+    assert java_kw["weight"] == 2
+
+
+def test_skill_weight_jingtong_no_space():
+    """精通MySQL → 权重 3"""
+    text = "职位要求\n精通MySQL"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    mysql_kw = next((k for k in job["keywords"] if k["name"] == "MySQL"), None)
+    assert mysql_kw is not None
+    assert mysql_kw["weight"] == 3
+
+
+def test_skill_weight_same_line_youxian():
+    """同行"优先"关键词：有 Redis 经验优先"""
+    text = "职位要求\n有 Redis 经验优先"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    redis_kw = next((k for k in job["keywords"] if k["name"] == "Redis"), None)
+    assert redis_kw is not None
+    assert redis_kw["weight"] == 2
+
+
+# ========== 死代码清理 ==========
+
+def test_dead_code_removed():
+    """experience_keywords 和 education_keywords 字典已删除"""
+    import doc_parser
+    import inspect
+    src = inspect.getsource(doc_parser.parse_job_requirements)
+    assert 'experience_keywords' not in src
+    assert 'education_keywords' not in src
+
+
+# ========== 职位名称后缀扩展 ==========
+
+def test_job_title_yanfa():
+    """资深后端研发"""
+    result = parse_job_requirements("岗位：资深后端研发\n职位要求\n本科")
+    assert result["job_title"] == "资深后端研发"
+
+
+def test_job_title_fuzeren():
+    """技术负责人"""
+    result = parse_job_requirements("招聘：技术负责人\n职位要求\n本科")
+    assert result["job_title"] == "技术负责人"
+
+
+def test_job_title_analyst():
+    """数据分析师"""
+    result = parse_job_requirements("职位：数据分析师\n职位要求\n本科")
+    assert result["job_title"] == "数据分析师"
+
+
+def test_job_title_dba():
+    """DBA"""
+    result = parse_job_requirements("岗位名称：DBA\n职位要求\n本科")
+    assert result["job_title"] == "DBA"
+
+
+def test_job_title_yunwei():
+    """运维"""
+    result = parse_job_requirements("诚聘：高级运维\n职位要求\n本科")
+    assert result["job_title"] == "高级运维"
+
+
+def test_job_title_ceishi():
+    """测试"""
+    result = parse_job_requirements("招聘：自动化测试\n职位要求\n本科")
+    assert result["job_title"] == "自动化测试"
+
+
+# ========== 技能子串误匹配防护 ==========
+
+def test_skill_go_no_false_match_google():
+    """Go 不应匹配 Google"""
+    result = parse_job_requirements("职位要求\n使用 Google Cloud 服务")
+    skill_names_lower = [s.lower() for s in result["soft_skills"]]
+    assert "go" not in skill_names_lower
+
+
+def test_skill_go_real_match():
+    """Go 应该匹配真实的 Go 技能"""
+    result = parse_job_requirements("职位要求\n熟悉 Go 语言开发")
+    skill_names_lower = [s.lower() for s in result["soft_skills"]]
+    assert "go" in skill_names_lower
+
+
+def test_skill_csharp_no_false_match():
+    """C# 不应匹配 CSharpDoc"""
+    result = parse_job_requirements("职位要求\n使用 CSharpDoc 生成文档")
+    # C# 应不在结果中（CSharpDoc 不是 C#）
+    skill_names_lower = [s.lower() for s in result["soft_skills"]]
+    assert "c#" not in skill_names_lower
+
+
+def test_skill_java_in_chinese_context():
+    """Java 在中文上下文中应正常匹配（中文旁无空格）"""
+    result = parse_job_requirements("职位要求\n精通Java开发")
+    skill_names_lower = [s.lower() for s in result["soft_skills"]]
+    assert "java" in skill_names_lower
+
+
+# ========== 学历语境排除补全 ==========
+
+def test_education_youboshi_exclude():
+    """有博士学历者加分 不应被当作最低学历门槛"""
+    result = parse_job_requirements("## 硬性条件\n本科，有博士学历者加分")
+    assert result["edu"] == "本科"
+
+
+def test_education_boshi_xueli_youxian_exclude():
+    """博士学历优先 不应被当作最低学历门槛"""
+    result = parse_job_requirements("## 硬性条件\n本科，博士学历优先")
+    assert result["edu"] == "本科"
+
+
+def test_education_shuoshi_xueli_youxian_exclude():
+    """硕士学历优先 不应被当作最低学历门槛"""
+    result = parse_job_requirements("## 硬性条件\n本科，硕士学历优先")
+    assert result["edu"] == "本科"
+
+
+def test_education_boshi_xueli_zhe_exclude():
+    """博士学历者 不应被当作最低学历门槛"""
+    result = parse_job_requirements("## 硬性条件\n本科，博士学历者优先考虑")
+    assert result["edu"] == "本科"
+
+
+# ========== P3: 全角/emoji 预处理 ==========
+
+def test_preprocess_fullwidth_digits():
+    """全角数字转半角"""
+    assert '15' in _preprocess_text('薪资１５Ｋ')
+
+
+def test_preprocess_fullwidth_letters():
+    """全角英文转半角"""
+    assert 'Java' in _preprocess_text('精通Ｊａｖａ开发')
+
+
+def test_preprocess_emoji_stripped():
+    """emoji 被移除"""
+    result = _preprocess_text('✅ Java ✅ Python ✅ MySQL')
+    assert '✅' not in result
+    assert 'Java' in result
+
+
+def test_preprocess_zero_width_stripped():
+    """零宽字符被移除"""
+    # ​ = zero-width space
+    result = _preprocess_text('Java​开发')
+    assert result == 'Java开发'
+
+
+def test_preprocess_fullwidth_salary_parses():
+    """全角薪资格式能被正确解析"""
+    result = _extract_salary_range('薪资：１５Ｋ－２５Ｋ')
+    assert result == (15, 25)
+
+
+def test_preprocess_emoji_in_requirement():
+    """含 emoji 的招聘需求仍能解析"""
+    text = "## 硬性条件\n工作年限：3 年\n✅ 本科\n最低学历：本科"
+    result = parse_job_requirements(text)
+    assert result["edu"] == "本科"
+    assert result["min_exp"] == 3
+
+
+# ========== P1: 经验提取增强（中文数字 + 至少/不低于）==========
+
+def test_experience_chinese_san_nian():
+    """三年以上"""
+    result = parse_job_requirements("## 硬性条件\n三年以上开发经验")
+    assert result["min_exp"] == 3
+
+
+def test_experience_chinese_wu_nian():
+    """五年以上"""
+    result = parse_job_requirements("## 硬性条件\n五年以上Java开发经验")
+    assert result["min_exp"] == 5
+
+
+def test_experience_chinese_liang_nian():
+    """两年以上"""
+    result = parse_job_requirements("## 硬性条件\n两年以上")
+    assert result["min_exp"] == 2
+
+
+def test_experience_zhishao():
+    """至少3年"""
+    result = parse_job_requirements("## 硬性条件\n至少3年相关经验")
+    assert result["min_exp"] == 3
+
+
+def test_experience_budiyu():
+    """不低于5年"""
+    result = parse_job_requirements("## 硬性条件\n不低于5年开发经验")
+    assert result["min_exp"] == 5
+
+
+def test_experience_bushaoyu():
+    """不少于3年"""
+    result = parse_job_requirements("## 硬性条件\n不少于3年")
+    assert result["min_exp"] == 3
+
+
+def test_experience_juyou():
+    """具有5年以上"""
+    result = parse_job_requirements("## 硬性条件\n具有5年以上相关经验")
+    assert result["min_exp"] == 5
+
+
+def test_experience_chinese_zhishao():
+    """至少三年年（中文数字+至少）"""
+    result = parse_job_requirements("## 硬性条件\n至少三年开发经验")
+    assert result["min_exp"] == 3
+
+
+# ========== P1: 段落分离增强（非标准标题词）==========
+
+def test_section_gangwei_zhize():
+    """'岗位职责' 替代 '职位描述'"""
+    text = "岗位职责\n负责后端开发\n\n任职要求\n3年以上Java经验"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 3
+
+
+def test_section_renzhi_yaoqiu():
+    """'任职要求' 替代 '职位要求'"""
+    text = "职位描述\n做后端\n\n任职要求\n5年以上经验"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 5
+
+
+def test_section_gangwei_yaoqiu():
+    """'岗位要求' 替代 '职位要求'"""
+    text = "岗位职责\n写代码\n\n岗位要求\n3年以上"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 3
+
+
+def test_section_yingpin_yaoqiu():
+    """'应聘要求' 替代 '职位要求'"""
+    text = "工作内容\n开发系统\n\n应聘要求\n5年经验"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 5
+
+
+def test_section_nengli_yaoqiu():
+    """'能力要求' 替代 '职位要求'"""
+    text = "主要职责\n后端开发\n\n能力要求\n3年以上经验"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 3
+
+
+def test_section_yingxing_yaoqiu():
+    """'硬性要求' 替代 '硬性条件'（markdown 格式）"""
+    text = "# Java工程师\n\n## 硬性要求\n工作年限：5 年\n最低学历：本科"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 5
+    assert result["edu"] == "本科"
+
+
+def test_section_bibe_tiaojian():
+    """'必备条件' 替代 '硬性条件'"""
+    text = "# Python工程师\n\n## 必备条件\n工作年限：3 年"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 3
+
+
+def test_section_jiafen_xiang():
+    """'加分项' 作为软性条件标题"""
+    text = "# Java工程师\n\n## 硬性条件\n本科\n\n## 加分项\n有AI经验优先"
+    result = parse_job_requirements(text)
+    assert result["edu"] == "本科"
+
+
+def test_section_women_xiwang():
+    """'我们希望你' 替代 '职位要求'"""
+    text = "岗位职责\n做开发\n\n我们希望你\n有3年以上经验"
+    result = parse_job_requirements(text)
+    assert result["min_exp"] == 3
+
+
+# ========== P2: 地点兜底误匹配修复 ==========
+
+def test_location_hq_excluded_fallback():
+    """总部城市不应被兜底匹配为工作地点"""
+    text = "公司总部在上海\n我们在成都招聘Java工程师"
+    result = _extract_work_location(text)
+    assert result == "成都"
+
+
+def test_location_hq_with_explicit_workplace():
+    """有明确工作地点时，总部城市不影响"""
+    text = "公司总部在北京\n工作地点：深圳南山"
+    result = _extract_work_location(text)
+    assert result == "深圳"
+
+
+def test_location_work_city_keyword():
+    """'工作城市' 关键词"""
+    assert _extract_work_location("工作城市：杭州") == "杭州"
+
+
+def test_location_office_keyword():
+    """'办公地' 关键词"""
+    assert _extract_work_location("办公地：武汉光谷") == "武汉"
+
+
+def test_location_multiple_cities_first_non_hq():
+    """多城市文本，排除总部后取招聘城市"""
+    text = "总部在广州\n本岗位base杭州\n欢迎加入"
+    result = _extract_work_location(text)
+    assert result == "杭州"

@@ -8,11 +8,59 @@
 import json
 import re
 import os
+import unicodedata
 from typing import Dict, List
 from constants import MAJOR_CITIES
 
 
 _major_cities_set = set(MAJOR_CITIES)
+
+
+def _preprocess_text(text: str) -> str:
+    """文本预处理：全角转半角、去零宽字符、去 emoji、统一空白"""
+    if not text:
+        return text
+    # 1. 全角数字/英文 → 半角（不转全角标点，保留中文语境）
+    result = []
+    for ch in text:
+        code = ord(ch)
+        # 全角数字 0-9 (0xFF10-0xFF19)
+        if 0xFF10 <= code <= 0xFF19:
+            result.append(chr(code - 0xFF10 + ord('0')))
+        # 全角大写字母 A-Z (0xFF21-0xFF3A)
+        elif 0xFF21 <= code <= 0xFF3A:
+            result.append(chr(code - 0xFF21 + ord('A')))
+        # 全角小写字母 a-z (0xFF41-0xFF5A)
+        elif 0xFF41 <= code <= 0xFF5A:
+            result.append(chr(code - 0xFF41 + ord('a')))
+        # 全角空格
+        elif code == 0x3000:
+            result.append(' ')
+        else:
+            result.append(ch)
+    text = ''.join(result)
+
+    # 2. 全角标点 → 半角（减号、冒号、波浪号等常见于薪资/经验模式）
+    _punct_map = {
+        0xFF0D: '-',   # － → -
+        0xFF1A: ':',   # ： → :（保留中文冒号用于显示，但正则已兼容两种）
+        0xFF5E: '~',   # ～ → ~
+        0xFF08: '(',   # （ → (
+        0xFF09: ')',   # ） → )
+        0xFF0C: ',',   # ， → ,
+    }
+    text = ''.join(_punct_map[ord(ch)] if ord(ch) in _punct_map else ch for ch in text)
+
+    # 3. 去零宽字符（从网页/微信复制时常见）
+    text = re.sub(r'[​‌‍﻿⁠]', '', text)
+
+    # 4. 去 emoji（Unicode Category 以 So 为主，排除常用符号）
+    text = ''.join(ch for ch in text if unicodedata.category(ch) not in ('So', 'Sk') or ch in '°±×÷')
+
+    # 5. 连续空白压缩（保留换行，压缩行内空格和 tab）
+    text = re.sub(r'[^\S\n]+', ' ', text)
+
+    return text
 
 
 def _resolve_city(raw: str) -> str:
@@ -36,25 +84,30 @@ def _extract_work_location(text: str) -> str:
     """从招聘需求中提取工作地点（城市名）"""
     if not text:
         return ""
-    # 模式1: "工作地点：南京市雨花区凯润大厦"
-    m = re.search(r'工作地点\s*[：:]\s*([^\n]{2,20})', text)
+    text = _preprocess_text(text)
+    # 地点相关关键词（用于模式匹配和兜底优先级）
+    _loc_keywords = r'(?:工作地点|工作城市|工作地|办公地|办公地点|入职城市|派驻|base\s*地?|坐标)'
+
+    # 模式1: "工作地点：南京市雨花区凯润大厦" 等
+    m = re.search(rf'{_loc_keywords}\s*[：:]\s*([^\n]{{2,20}})', text, re.IGNORECASE)
     if m:
         city = _resolve_city(m.group(1))
         if city:
             return city
-    # 模式2: "base：上海浦东" / "base地：深圳南山"
-    m = re.search(r'base\s*(?:地)?\s*[：:]\s*([^\n]{2,20})', text, re.IGNORECASE)
-    if m:
-        city = _resolve_city(m.group(1))
-        if city:
-            return city
-    # 模式3: "坐标：成都高新区"
-    m = re.search(r'坐标\s*[：:]\s*([^\n]{2,20})', text)
-    if m:
-        city = _resolve_city(m.group(1))
-        if city:
-            return city
-    # 兜底：全文扫描城市名
+
+    # 兜底：优先扫描地点关键词附近的行（前后 30 字符），而非盲目全文扫描
+    # 避免"公司总部在上海，本次在成都招聘"误匹配上海
+    _hq_keywords = re.compile(r'总部|公司位于|集团位于|坐落于')
+
+    for line in text.split('\n'):
+        # 排除总部/公司所在地相关行
+        if _hq_keywords.search(line):
+            continue
+        for city in MAJOR_CITIES:
+            if city in line:
+                return city
+
+    # 最后手段：全文扫描（无分行排除）
     for city in MAJOR_CITIES:
         if city in text:
             return city
@@ -62,24 +115,82 @@ def _extract_work_location(text: str) -> str:
 
 
 def _extract_salary_range(text: str):
-    """从招聘需求中提取薪资范围。返回 (min_k, max_k)，未匹配或面议返回 (None, None)"""
+    """从招聘需求中提取薪资范围。返回 (min_k, max_k)，未匹配或面议返回 (None, None)
+
+    支持格式：
+    - 标签前缀：薪资/薪酬/待遇/月薪/底薪 + 冒号 + 范围
+    - 年薪制：年薪/年包 X-Y万 → 自动转换为月薪 K
+    - 无标签范围：15-25K / 15k-25k / 15000-25000元（需附近出现薪资关键词）
+    - 单边下限：15K起 / 不低于15K / 保底15K
+    - 面议变体：面议/薪资open/待遇从优/面谈
+    """
     if not text:
         return None, None
+    text = _preprocess_text(text)
 
-    # 边界情况：面议/薪资open/可谈 等非数字薪资描述，直接跳过
-    non_numeric = ['面议', '薪资面议', '待遇面议', '薪资可谈', '薪资Open', '薪资open', '薪资OPEN']
-    for kw in non_numeric:
-        if kw in text:
-            return None, None
+    # 边界情况：面议/可谈 等非数字薪资描述，按行检测避免误杀
+    for line in text.split('\n'):
+        if re.search(r'薪资|薪酬|待遇|月薪|年薪', line):
+            if re.search(r'面议|可谈|open|面谈|从优', line, re.IGNORECASE):
+                return None, None
 
-    patterns = [
-        r'薪资(?:范围)?\s*[：:]\s*(\d+)\s*[kK]\s*[-~～\-]\s*(\d+)\s*[kK]',
-        r'月薪\s*[：:]\s*(\d+)\s*[kK]\s*[-~～\-]\s*(\d+)\s*[kK]',
+    # --- 有标签前缀的模式（高优先级）---
+    labeled_prefix = r'(?:薪资(?:范围)?|薪酬|待遇|月薪|底薪|工资)'
+    labeled_patterns = [
+        # 薪资范围：15k-25k / 薪酬：15K-25K / 薪资：15-25K（首个K可省略）
+        labeled_prefix + r'\s*[：:]\s*(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]',
+        # 薪资：15k至25k / 薪资15至25k（首个K可省略）
+        labeled_prefix + r'\s*[：:]?\s*(\d+)\s*[kK]?\s*[至到]\s*(\d+)\s*[kK]',
+        # 薪资：15000-25000 / 薪酬：12000-18000元（无K后缀，需4位以上数字）
+        labeled_prefix + r'\s*[：:]\s*(\d{4,})\s*[-~～\-]\s*(\d{4,})',
+        # 年薪20-35万 → 转月薪
+        r'(?:年薪|年包)\s*[：:]?\s*(\d+)\s*[-~～\-]\s*(\d+)\s*万',
+        # 年薪30万 → 转月薪
+        r'(?:年薪|年包)\s*[：:]?\s*(\d+)\s*万',
     ]
-    for pat in patterns:
+    for pat in labeled_patterns:
         m = re.search(pat, text)
         if m:
-            return int(m.group(1)), int(m.group(2))
+            groups = m.groups()
+            if len(groups) == 2 and groups[1] is not None:
+                a, b = int(groups[0]), int(groups[1])
+                if '年薪' in pat or '年包' in pat:
+                    return a * 10 // 12, b * 10 // 12
+                return a, b
+            elif len(groups) == 1 or (len(groups) == 2 and groups[1] is None):
+                val = int(groups[0])
+                if '年薪' in pat or '年包' in pat:
+                    m_val = val * 10 // 12
+                    return m_val, m_val
+                return val, val
+
+    # --- 无标签的范围（需附近有薪资关键词，避免匹配"3-5年"等非薪资数字）---
+    no_label_patterns = [
+        # 15-25K / 15k-25k（首个K可省略，末尾必须有K）
+        r'(?=.*(?:薪资|薪酬|待遇|月薪|底薪|工资))(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[Kk]',
+        # 15000-25000元
+        r'(?=.*(?:薪资|薪酬|待遇|月薪|底薪|工资))(\d{4,})\s*[-~～\-]\s*(\d{4,})\s*(?:元|块)',
+    ]
+    for pat in no_label_patterns:
+        m = re.search(pat, text)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            return a, b
+
+    # --- 单边下限 ---
+    min_only_patterns = [
+        # 15K起 / 15k以上 / 不低于15K / 保底15K / 起薪15K
+        r'(?:起|以上|不低于|保底|起薪|至少)\s*(\d+)\s*[kK]?',
+        # 15K起 / 15000以上 / 15K以上
+        r'(\d+)\s*[kK]?\s*(?:起|以上)',
+        # 不低于15K / 保底15000 / 起薪15K
+        r'(?:不低于|保底|起薪|至少)\s*(\d+)',
+    ]
+    for pat in min_only_patterns:
+        m = re.search(pat, text)
+        if m:
+            return int(m.group(1)), None
+
     return None, None
 
 
@@ -87,49 +198,32 @@ def parse_job_requirements(text: str) -> Dict:
     """
     从招聘需求文本中解析出关键信息
     """
-    # 预定义关键词库
-    experience_keywords = {
-        '应届生': 0, '应届毕业生': 0,
-        '1 年': 1, '一年': 1, '1-3 年': 1, '1-5 年': 1,
-        '2 年': 2, '两年': 2, '3-5 年': 3,
-        '3 年': 3, '三年': 3, '3-10 年': 3,
-        '4 年': 4, '四年': 4, '5-10 年': 5,
-        '5 年': 5, '五年': 5, '5 年以上': 5,
-        '6 年': 6, '六年': 6,
-        '7 年': 7, '七年': 7,
-        '8 年': 8, '八年': 8,
-        '9 年': 9, '九年': 9,
-        '10 年': 10, '十年': 10,
-        '不限': 0, '无要求': 0
-    }
-
-    education_keywords = {
-        '不限': '不限', '无要求': '不限',
-        '高中': '高中', '中专': '中专', '大专': '大专',
-        '本科': '本科', '学士': '本科',
-        '硕士': '硕士', '研究生': '硕士',
-        '博士': '博士', '博士后': '博士'
-    }
+    text = _preprocess_text(text)
 
     # === 1. 提取职位名称 ===
     job_title = "Java 工程师"  # 默认值
 
+    # 岗位名称后缀（匹配越多越通用）
+    _title_suffix = r'工程师|开发|架构|专家|经理|总监|研发|负责人|分析师|设计师|运维|测试|DBA|产品'
+
     # 支持多种格式匹配岗位名称
     title_patterns = [
         # markdown 标题格式：# 高级 Python/Java 开发工程师
-        r'#\s*(.*(工程师|开发|架构|专家|经理|总监))',
+        rf'#\s*(.*({_title_suffix}))',
         # 职位描述【高级 Java/Python 工程师】
-        r'职位描述\s*[\[【〔(（]\s*(.*?(?:工程师|开发|架构|专家|经理|总监))\s*[\]】〕)）]',
+        rf'职位描述\s*[\[【〔(（]\s*(.*?(?:{_title_suffix}))\s*[\]】〕)）]',
         # 【高级 Java/Python 工程师】（没有"职位描述"前缀）
-        r'^[\[【〔(（]\s*(.*?(?:工程师|开发|架构|专家|经理|总监))\s*[\]】〕)）]',
+        rf'^[\[【〔(（]\s*(.*?(?:{_title_suffix}))\s*[\]】〕)）]',
         # 职位：高级 Java/Python 工程师
-        r'职位\s*[：:]\s*(.*?(?:工程师|开发|架构|专家|经理|总监))',
+        rf'职位\s*[：:]\s*(.*?(?:{_title_suffix}))',
         # 岗位：高级 Java/Python 工程师
-        r'岗位\s*[：:]\s*(.*?(?:工程师|开发|架构|专家|经理|总监))',
+        rf'岗位\s*[：:]\s*(.*?(?:{_title_suffix}))',
         # 诚聘：高级 Java/Python 工程师
-        r'诚聘\s*[：:]\s*(.*?(?:工程师|开发|架构|专家|经理|总监))',
+        rf'诚聘\s*[：:]\s*(.*?(?:{_title_suffix}))',
         # 职位名称：高级 Java 工程师
-        r'职位名称\s*[：:]\s*(.*?(?:工程师|开发|架构|专家|经理|总监))',
+        rf'职位名称\s*[：:]\s*(.*?(?:{_title_suffix}))',
+        # 招聘：高级 Java 工程师 / 岗位名称：DBA
+        rf'(?:招聘|岗位名称)\s*[：:]\s*(.*?(?:{_title_suffix}))',
     ]
 
     for pattern in title_patterns:
@@ -145,51 +239,56 @@ def parse_job_requirements(text: str) -> Dict:
     job_desc_section = ""
     position_req_section = ""
 
+    # 段落标题关键词（支持多种写法）
+    _hard_keywords = r'(?:硬性条件|硬性要求|基本条件|必备条件|必须满足|必须条件)'
+    _necessary_keywords = r'(?:必要条件|必须条件)'
+    _desc_keywords = r'(?:职位描述|岗位职责|工作内容|主要职责|工作职责)'
+    _req_keywords = r'(?:职位要求|任职要求|岗位要求|应聘要求|能力要求|我们希望你|任职要求)'
+    _soft_keywords = r'(?:软性条件|加分项|优先条件|加分条件|优先考虑)'
+
     # 先尝试用 markdown 格式分离
-    if re.search(r'^##\s*硬性条件', text, re.MULTILINE):
-        # markdown 格式：## 硬性条件
-        parts = re.split(r'^##\s*硬性条件', text, flags=re.MULTILINE)
+    _hard_md_pat = rf'^##\s*{_hard_keywords}'
+    if re.search(_hard_md_pat, text, re.MULTILINE):
+        parts = re.split(_hard_md_pat, text, maxsplit=1, flags=re.MULTILINE)
         if len(parts) > 1:
             job_desc_and_position = parts[0]
             required_section = parts[1]
-    elif '必要条件' in text:
-        parts = text.split('必要条件', 1)
+    elif re.search(_necessary_keywords, text):
+        parts = re.split(_necessary_keywords, text, maxsplit=1)
         job_desc_and_position = parts[0]
         required_section = parts[1] if len(parts) > 1 else ""
-        # 清理前缀符号
         required_section = re.sub(r'^[\s:：（(]*.*?[）)]?[\s:：,，]*', '', required_section).strip()
     else:
         job_desc_and_position = text
 
-    # 进一步分离职位描述和职位要求
-    if '职位描述' in job_desc_and_position and '职位要求' in job_desc_and_position:
-        # 先按职位描述分
-        pos_parts = job_desc_and_position.split('职位描述', 1)
-        if len(pos_parts) > 1:
-            remaining = pos_parts[1]
-            if '职位要求' in remaining:
-                req_parts = remaining.split('职位要求', 1)
-                job_desc_section = req_parts[0]
-                position_req_section = req_parts[1] if len(req_parts) > 1 else ""
-            else:
-                job_desc_section = remaining
-    elif '职位描述' in job_desc_and_position:
-        pos_parts = job_desc_and_position.split('职位描述', 1)
-        job_desc_section = pos_parts[1] if len(pos_parts) > 1 else ""
-    elif '职位要求' in job_desc_and_position:
-        pos_parts = job_desc_and_position.split('职位要求', 1)
-        position_req_section = pos_parts[1] if len(pos_parts) > 1 else ""
+    # 进一步分离职位描述和职位要求（使用正则匹配标题变体）
+    _desc_pat = re.compile(_desc_keywords)
+    _req_pat = re.compile(_req_keywords)
+    _desc_m = _desc_pat.search(job_desc_and_position)
+    _req_m = _req_pat.search(job_desc_and_position)
+
+    if _desc_m and _req_m and _desc_m.start() < _req_m.start():
+        # 职位描述在前，职位要求在后
+        job_desc_section = job_desc_and_position[_desc_m.end():_req_m.start()]
+        position_req_section = job_desc_and_position[_req_m.end():]
+    elif _desc_m and _req_m and _req_m.start() < _desc_m.start():
+        # 职位要求在前，职位描述在后
+        position_req_section = job_desc_and_position[_req_m.end():_desc_m.start()]
+        job_desc_section = job_desc_and_position[_desc_m.end():]
+    elif _desc_m:
+        job_desc_section = job_desc_and_position[_desc_m.end():]
+    elif _req_m:
+        position_req_section = job_desc_and_position[_req_m.end():]
     else:
         job_desc_section = job_desc_and_position
 
     # 如果是 markdown 格式，使用章节来分离
     if re.search(r'^#\s*', text, re.MULTILINE):
-        # 提取## 硬性条件 和### 工作经验、### 学历要求等章节
-        hard_match = re.search(r'^##\s*硬性条件.*?(?=^##|\Z)', text, flags=re.MULTILINE|re.DOTALL)
-        work_exp_match = re.search(r'^###\s*工作经验.*?(?=^###|\Z)', text, flags=re.MULTILINE|re.DOTALL)
-        edu_match = re.search(r'^###\s*学历要求.*?(?=^###|\Z)', text, flags=re.MULTILINE|re.DOTALL)
+        _hard_md_full = rf'^##\s*{_hard_keywords}.*?(?=^##|\Z)'
+        hard_match = re.search(_hard_md_full, text, flags=re.MULTILINE | re.DOTALL)
+        work_exp_match = re.search(r'^###\s*工作经验.*?(?=^###|\Z)', text, flags=re.MULTILINE | re.DOTALL)
+        edu_match = re.search(r'^###\s*学历要求.*?(?=^###|\Z)', text, flags=re.MULTILINE | re.DOTALL)
 
-        # 合并硬性条件、工作经验、学历要求作为 required_section
         sections = []
         if hard_match:
             sections.append(hard_match.group(0))
@@ -199,49 +298,66 @@ def parse_job_requirements(text: str) -> Dict:
             sections.append(edu_match.group(0))
         required_section = '\n'.join(sections)
 
-        # 提取## 软性条件 章节作为 position_req_section
-        match = re.search(r'^##\s*软性条件.*?(?=^##|\Z)', text, flags=re.MULTILINE|re.DOTALL)
+        # 提取软性条件章节（支持多种标题）
+        _soft_md_full = rf'^##\s*{_soft_keywords}.*?(?=^##|\Z)'
+        match = re.search(_soft_md_full, text, flags=re.MULTILINE | re.DOTALL)
         if match:
             position_req_section = match.group(0)
-        # 其余部分作为 job_desc_section
         job_desc_section = text
 
     # === 3. 提取经验要求 ===
     exp_value = 0
 
+    # 中文数字 → 阿拉伯数字映射
+    _cn_num_map = {
+        '零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
+        '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+    }
+    # 数字匹配组：阿拉伯数字 OR 中文数字
+    _num = r'(?:\d+|[零一二两三四五六七八九十])'
+
+    def _to_int(s: str) -> int:
+        """将阿拉伯数字或中文数字转为 int"""
+        if s in _cn_num_map:
+            return _cn_num_map[s]
+        try:
+            return int(s)
+        except ValueError:
+            return 0
+
     # 优先从明确的"工作年限"字段匹配
     work_exp_patterns = [
-        r'工作年限\s*[：:]\s*(\d+)\s*[-~～]\s*(\d+)\s*年',  # 5-8 年
-        r'工作年限\s*[：:]\s*(\d+)\s*年及以上',
-        r'工作年限\s*[：:]\s*(\d+)\s*年以上',
-        r'工作年限\s*[：:]\s*(\d+)\s*年',
-        # 支持 markdown 粗体格式：**工作年限**：5-8 年
-        r'\*\*工作年限\*\*\s*[：:]\s*(\d+)\s*[-~～]\s*(\d+)\s*年',
-        r'\*\*工作年限\*\*\s*[：:]\s*(\d+)\s*年及以上',
-        r'\*\*工作年限\*\*\s*[：:]\s*(\d+)\s*年以上',
-        r'\*\*工作年限\*\*\s*[：:]\s*(\d+)\s*年',
+        rf'工作年限\s*[：:]\s*({_num})\s*[-~～]\s*({_num})\s*年',
+        rf'工作年限\s*[：:]\s*({_num})\s*年(?:及以上|以上)?',
+        rf'\*\*工作年限\*\*\s*[：:]\s*({_num})\s*[-~～]\s*({_num})\s*年',
+        rf'\*\*工作年限\*\*\s*[：:]\s*({_num})\s*年(?:及以上|以上)?',
     ]
 
-    # 优先从必要条件部分查找明确的"工作年限"字段
     for pattern in work_exp_patterns:
         match = re.search(pattern, required_section)
         if match:
-            if len(match.groups()) == 2:  # 范围匹配，取最小值
-                exp_value = int(match.group(1))
+            groups = match.groups()
+            if len(groups) == 2 and groups[1] is not None:
+                exp_value = _to_int(groups[0])
             else:
-                exp_value = int(match.group(1))
+                exp_value = _to_int(groups[0])
             break
 
     # 如果没有找到，再用通用模式匹配
     if exp_value == 0:
         # 按优先级排序：越具体的模式越优先
         exp_patterns = [
-            (r'(\d+)\s*年以上', lambda m: int(m)),         # X 年以上 - 直接取
-            (r'(\d+)\s*年及以上', lambda m: int(m)),       # X 年及以上 - 直接取
-            (r'(\d+)\s*年工作经验', lambda m: int(m)),     # X 年工作经验 - 直接取
-            (r'(\d+)\s*年经验', lambda m: int(m)),         # X 年经验 - 直接取
-            (r'(\d+)\s*[-~～]\s*(\d+)\s*年', lambda m: min(int(m[0]), int(m[1]))),  # X-Y 年 - 取最小值
-            (r'(\d+)\s*年', lambda m: int(m)),             # 单独 X 年 - 最后使用
+            # X年以上工作经验 / 具有X年以上相关经验
+            (rf'({_num})\s*年以上(?:\S*经验)?', lambda m: _to_int(m)),
+            (rf'({_num})\s*年及以上', lambda m: _to_int(m)),
+            # 至少X年 / 不低于X年 / 不少于X年（支持中文数字）
+            (rf'(?:至少|不低于|不少于)\s*({_num})\s*年', lambda m: _to_int(m)),
+            (rf'({_num})\s*年工作经验', lambda m: _to_int(m)),
+            (rf'({_num})\s*年经验', lambda m: _to_int(m)),
+            # X-Y 年 - 取最小值
+            (rf'({_num})\s*[-~～]\s*({_num})\s*年', lambda m: min(_to_int(m[0]), _to_int(m[1]))),
+            # 单独 X 年 - 最后使用（避免匹配"3-5年"中的"5年"）
+            (rf'(?<!\d)(?<![一二两三四五六七八九十])({_num})\s*年(?!(?:以上|及|经验))', lambda m: _to_int(m)),
         ]
 
         # 优先从必要条件部分查找
@@ -316,12 +432,21 @@ def parse_job_requirements(text: str) -> Dict:
                 found_edu = '不限'
                 break
 
+    # 学历加分/偏好语境排除列表（防止"博士优先"被当作最低学历门槛）
+    _edu_bonus_patterns = [
+        r'博士优先', r'博士后优先', r'硕士优先', r'研究生优先',
+        r'博士学历加分', r'博士学历优先', r'硕士学历优先',
+        r'有博士学历', r'有博士', r'有硕士', r'有研究生',
+        r'博士及以上优先', r'硕士及以上优先',
+        r'博士学历者', r'硕士学历者',
+    ]
+
     # 如果没有找到明确字段，从必要条件部分提取学历关键词
     # 注意：最低学历应从低到高判断，因为"最低"意味着门槛，不应被加分项误导
     if found_edu is None and required_section:
         # 先排除加分语境（如"博士优先"、"硕士优先"等）
         cleaned_section = required_section
-        for pattern in [r'博士优先\b', r'博士后优先\b', r'硕士优先\b', r'研究生优先\b', r'博士学历加分\b']:
+        for pattern in _edu_bonus_patterns:
             cleaned_section = re.sub(pattern, '', cleaned_section)
         # 从低到高判断：大专 → 本科 → 硕士 → 博士
         if '大专' in cleaned_section:
@@ -361,8 +486,7 @@ def parse_job_requirements(text: str) -> Dict:
     if found_edu is None:
         # 排除加分语境后再判断，从低到高
         cleaned_desc = job_desc_section
-        for pattern in [r'博士优先\b', r'博士后优先\b', r'硕士优先\b', r'研究生优先\b', r'博士学历加分\b',
-                        r'博士及以上\b', r'硕士及以上\b', r'有博士\b', r'有硕士\b']:
+        for pattern in _edu_bonus_patterns:
             cleaned_desc = re.sub(pattern, '', cleaned_desc)
         if '大专' in cleaned_desc:
             found_edu = '大专'
@@ -398,11 +522,28 @@ def parse_job_requirements(text: str) -> Dict:
     if '211' in required_section:
         required_conditions.append('211 院校')
 
-    # 年龄限制
-    age_match = re.search(r'年龄在?\s*(\d+)\s*岁', required_section)
+    # 年龄限制（多种格式：35岁以下 / 不超过40岁 / 25-35岁 / ≤35岁 / 35周岁以内）
     max_age = None
-    if age_match:
-        max_age = int(age_match.group(1))
+    age_patterns = [
+        # 年龄35岁 / 年龄 35 周岁 / 年龄 35 岁以下（岁/周岁 必须出现）
+        r'年龄[^\d]{0,5}(\d+)\s*(?:岁|周岁)(?:\s*(?:以下|以内|及以下))?',
+        # 不超过40岁 / 不超过 35 周岁
+        r'不超过\s*(\d+)\s*(?:岁|周岁)',
+        # X岁以下 / X周岁以内（无需"年龄"前缀）
+        r'(\d+)\s*(?:岁|周岁)\s*(?:以下|以内|及以下)',
+        # ≤35岁 / <=35岁
+        r'[≤<]=?\s*(\d+)\s*(?:岁|周岁)',
+        # 25-35岁 / 25~35周岁（取上限）
+        r'\d+\s*[-~～]\s*(\d+)\s*(?:岁|周岁)(?:\s*(?:以下|以内|之间))?',
+        # 年龄35以下 / 年龄 35 以内（岁/周岁 可省略，但必须有范围限定词）
+        r'年龄[^\d]{0,5}(\d+)\s*(?=以下|以内|及以下)',
+    ]
+    for pat in age_patterns:
+        age_match = re.search(pat, required_section)
+        if age_match:
+            max_age = int(age_match.group(1))
+            break
+    if max_age:
         required_conditions.append(f'年龄≤{max_age}岁')
 
     # 从必要条件部分提取技术关键词（硬约束，只需满足其一）
@@ -490,14 +631,23 @@ def parse_job_requirements(text: str) -> Dict:
     for skill in tech_skills:
         normalized_skill = normalized_skill_map.get(skill, re.sub(r'\s+', '', skill))
 
-        # 英文技能：不使用 \b，改用更宽松的模式（适配中文上下文）
-        if re.search(re.escape(normalized_skill), normalized_text, re.IGNORECASE):
-            if skill not in soft_skills:
-                soft_skills.append(skill)
+        # 英文技能：使用单词边界防止子串误匹配（Go 不匹配 Google，API 不匹配 RAPID）
+        # 中文上下文无空格，\b 依赖 ASCII/non-ASCII 边界，中文旁的英文词仍可匹配
+        if re.match(r'^[A-Za-z0-9+#/.]+$', normalized_skill):
+            # 纯英文技能：用 \b 单词边界
+            pat = r'(?<![A-Za-z0-9_])' + re.escape(normalized_skill) + r'(?![A-Za-z0-9_])'
+            if re.search(pat, normalized_text, re.IGNORECASE):
+                if skill not in soft_skills:
+                    soft_skills.append(skill)
         # 中文技能直接匹配
         elif len(skill) >= 2 and not any(c.isalpha() for c in skill):
             if skill in combined_soft_section and skill not in soft_skills:
                 soft_skills.append(skill)
+        else:
+            # 混合技能（如含中英文）
+            if re.search(re.escape(normalized_skill), normalized_text, re.IGNORECASE):
+                if skill not in soft_skills:
+                    soft_skills.append(skill)
 
     # 去重（忽略大小写，同时处理空格变体）
     unique_soft_skills = []
@@ -585,17 +735,17 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
 
         if re.search(rf'{re.escape(skill_lower)}\s*精通|精通\s*{re.escape(skill_lower)}', requirements_text.lower()):
             weight = 3
-        elif re.search(rf'{re.escape(skill_lower)}\s*熟练 | 熟练\s*{re.escape(skill_lower)}|'
-                       rf'{re.escape(skill_lower)}\s*熟悉 | 熟悉\s*{re.escape(skill_lower)}|'
-                       rf'{re.escape(skill_lower)}\s*优先 | 优先\s*{re.escape(skill_lower)}|'
-                       rf'{re.escape(skill_lower)}\s*深入 | 深入\s*{re.escape(skill_lower)}', requirements_text.lower()):
+        elif re.search(rf'{re.escape(skill_lower)}\s*熟练|熟练\s*{re.escape(skill_lower)}|'
+                       rf'{re.escape(skill_lower)}\s*熟悉|熟悉\s*{re.escape(skill_lower)}|'
+                       rf'{re.escape(skill_lower)}\s*优先|优先\s*{re.escape(skill_lower)}|'
+                       rf'{re.escape(skill_lower)}\s*深入|深入\s*{re.escape(skill_lower)}', requirements_text.lower()):
             weight = 2
         # 检查是否在"优先/熟悉/熟练"条件所在的同一行（支持同一行中多个技能共享权重）
         for line in requirements_text.split('\n'):
             line_lower = line.lower()
             if skill_lower in line_lower:
                 # 检查该行是否有"优先"、"熟悉"、"熟练"等关键词
-                if re.search(r'优先 | 熟悉 | 熟练 | 掌握 | 擅长', line_lower):
+                if re.search(r'优先|熟悉|熟练|掌握|擅长', line_lower):
                     weight = 2
                     break
 
