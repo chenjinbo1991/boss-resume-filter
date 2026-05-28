@@ -1228,19 +1228,25 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
     if release:
         release_id = release["id"]
         existing_assets = _gitee_fetch_assets(api_base, token, release_id, _retry_request)
-        # 标题有变化时同步更新（以 CHANGELOG 为准），正文不覆盖（保留手动修改）
+        # 标题或正文有变化时同步更新（以 CHANGELOG 为准）
         new_name = release_title or tag
-        if release.get("name") != new_name:
+        new_body = release_notes or ""
+        old_name = release.get("name", "")
+        old_body = release.get("body", "")
+        if old_name != new_name or old_body != new_body:
             _retry_request("patch",
                 f"{api_base}/releases/{release_id}",
                 params={"access_token": token},
                 json={
                     "tag_name": tag,
                     "name": new_name,
-                    "body": release.get("body", ""),
+                    "body": new_body,
                 },
                 timeout=30)
-            print(f"  [OK] Gitee Release 标题已更新: {new_name}")
+            if old_name != new_name:
+                print(f"  [OK] Gitee Release 标题已更新: {new_name}")
+            if old_body != new_body:
+                print(f"  [OK] Gitee Release 正文已同步 ({len(new_body)} 字符)")
         return release_id, existing_assets
 
     resp = _retry_request("post",
