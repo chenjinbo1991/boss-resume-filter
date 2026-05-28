@@ -413,6 +413,7 @@ def update_windows(new_exe_path, current_exe_path):
         bat_path = Path(current_exe_path).parent / "update.bat"
         temp_dir = Path(new_exe_path).parent
         marker_path = Path(current_exe_path).with_suffix(Path(current_exe_path).suffix + ".update_ok")
+        runtime_dir = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()))
         current_pid = os.getpid()
 
         bat_content = f"""@echo off
@@ -421,6 +422,7 @@ set "OLD_EXE={current_exe_path}"
 set "NEW_EXE={new_exe_path}"
 set "TEMP_DIR={temp_dir}"
 set "MARKER_FILE={marker_path}"
+set "RUNTIME_DIR={runtime_dir}"
 set "OLD_PID={current_pid}"
 set "LOG_FILE=%TEMP%\\boss_resume_filter_update.log"
 set "FAILED_FILE=%OLD_EXE%.update_failed.txt"
@@ -468,7 +470,10 @@ if not "%NEW_SIZE%"=="%OLD_SIZE%" (
 )
 
 echo 等待文件系统刷盘...
-timeout /t 2 /nobreak >nul
+timeout /t 8 /nobreak >nul
+
+echo 清理残留运行时解包目录...
+for /d %%D in ("%RUNTIME_DIR%\\_MEI*") do rmdir /s /q "%%D" >> "%LOG_FILE%" 2>&1
 
 echo 启动新版本...
 if exist "%MARKER_FILE%" del /f /q "%MARKER_FILE%" >> "%LOG_FILE%" 2>&1
@@ -479,12 +484,24 @@ echo [%date% %time%] Started new process PID=%NEW_PID% >> "%LOG_FILE%"
 
 echo 等待新版本启动确认...
 echo [%date% %time%] Waiting for startup marker %MARKER_FILE% >> "%LOG_FILE%"
+for /l %%i in (1,1,45) do (
+    if exist "%MARKER_FILE%" goto update_confirmed
+    timeout /t 1 /nobreak >nul
+)
+
+echo [%date% %time%] First startup marker not found, retrying once >> "%LOG_FILE%"
+if defined NEW_PID taskkill /f /pid %NEW_PID% >> "%LOG_FILE%" 2>&1
+timeout /t 5 /nobreak >nul
+for /d %%D in ("%RUNTIME_DIR%\\_MEI*") do rmdir /s /q "%%D" >> "%LOG_FILE%" 2>&1
+set "NEW_PID="
+for /f %%P in ('powershell -NoProfile -Command "$p = Start-Process -FilePath $env:OLD_EXE -WorkingDirectory (Split-Path $env:OLD_EXE) -PassThru; $p.Id"') do set "NEW_PID=%%P"
+echo [%date% %time%] Retried new process PID=%NEW_PID% >> "%LOG_FILE%"
 for /l %%i in (1,1,90) do (
     if exist "%MARKER_FILE%" goto update_confirmed
     timeout /t 1 /nobreak >nul
 )
 
-echo [%date% %time%] Startup marker not found, rolling back >> "%LOG_FILE%"
+echo [%date% %time%] Startup marker not found after retry, rolling back >> "%LOG_FILE%"
 echo 自动更新失败，已回滚到旧版本。> "%FAILED_FILE%"
 echo 失败时间: %date% %time%>> "%FAILED_FILE%"
 echo 详细日志: %LOG_FILE%>> "%FAILED_FILE%"
