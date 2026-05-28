@@ -866,8 +866,19 @@ def _git_push(version, auto=False):
     print(f"  [OK] {tag} 已推送")
 
 
+def _print_progress(step, total, message, start_time=None):
+    """打印进度信息。如果提供 start_time，则在行尾显示耗时。"""
+    import time
+    if start_time is not None:
+        elapsed = time.time() - start_time
+        print(f"\n[{step}/{total}] {message} ({elapsed:.1f}s)")
+    else:
+        print(f"\n[{step}/{total}] {message}")
+
+
 def _gh_release(version, release_title, release_notes):
     """创建/更新 GitHub Release 并上传资源文件"""
+    import time
     tag = f"v{version}"
     cfg = DIST_DIR / "job_config.json"
     readme = DIST_DIR / "README.md"
@@ -887,6 +898,8 @@ def _gh_release(version, release_title, release_notes):
         print("[错误] gh CLI 未安装或未登录，请先运行 gh auth login")
         sys.exit(1)
 
+    step_start = time.time()
+    print(f"\n  [1/4] 清理 GitHub Release 旧资源...")
     # 删除 Release 中已有的当前平台资源（保留对端产物，由 _trigger_cross_platform_ci 处理）
     existing = subprocess.run(["gh", "release", "view", tag, "--json", "assets"],
                               capture_output=True, text=True, cwd=BASE_DIR)
@@ -901,10 +914,13 @@ def _gh_release(version, release_title, release_notes):
         for a in assets:
             if a['name'] in skip_names:
                 continue
-            print(f"  删除旧资源: {a['name']}")
+            print(f"    删除旧资源: {a['name']}")
             subprocess.run(["gh", "release", "delete-asset", tag, a["name"], "-y"],
                            cwd=BASE_DIR, check=True)
+    print(f"  [1/4] 清理完成 ({time.time() - step_start:.1f}s)")
 
+    step_start = time.time()
+    print(f"\n  [2/4] 创建/更新 GitHub Release...")
     # 创建 Release（如果已存在则跳过创建步骤）
     r = subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=BASE_DIR)
 
@@ -917,46 +933,71 @@ def _gh_release(version, release_title, release_notes):
             subprocess.run(
                 ["gh", "release", "create", tag, "--title", release_title, "--notes-file", str(_notes_file)],
                 cwd=BASE_DIR, check=True)
-            print(f"  [OK] GitHub Release 已创建: {tag}")
+            print(f"    [OK] GitHub Release 已创建: {tag}")
         else:
-            print(f"  [OK] GitHub Release 已存在: {tag}")
+            print(f"    [OK] GitHub Release 已存在: {tag}")
             subprocess.run(
                 ["gh", "release", "edit", tag, "--title", release_title, "--notes-file", str(_notes_file)],
                 cwd=BASE_DIR, check=True)
-            print("  [OK] GitHub Release 标题和说明已同步")
+            print("    [OK] GitHub Release 标题和说明已同步")
     finally:
         _notes_file.unlink(missing_ok=True)
+    print(f"  [2/4] Release 创建/更新完成 ({time.time() - step_start:.1f}s)")
 
+    step_start = time.time()
+    print(f"\n  [3/4] 上传 {len(artifacts)} 个资源文件到 GitHub...")
     # 上传资源
     for f, label in artifacts:
         if f.exists():
             subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
                            cwd=BASE_DIR, check=True)
-            print(f"  [OK] 已上传: {f.name}")
+            print(f"    [OK] 已上传: {f.name}")
         else:
-            print(f"  [跳过] 文件不存在: {f.name}")
+            print(f"    [跳过] 文件不存在: {f.name}")
+    print(f"  [3/4] 上传完成 ({time.time() - step_start:.1f}s)")
 
+    step_start = time.time()
+    print(f"\n  [4/4] 触发跨平台 CI 构建...")
     # 覆盖发布：删除对端产物 + 触发 CI 重建
     need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
+    print(f"  [4/4] CI 触发完成 ({time.time() - step_start:.1f}s)")
+
+    # 获取 Gitee Release 缓存（一次 API 调用，两个上传函数复用）
+    step_start = time.time()
+    print(f"\n>>> 准备 Gitee Release 上传...")
+    release_cache = _gitee_get_release_cache(version, release_title, release_notes)
 
     # 上传本地平台产物到 Gitee Release（国内下载源）
     downloads_cn = None
-    try:
-        downloads_cn = _gitee_upload_local(version, release_title, release_notes)
-    except Exception as e:
-        print(f"  [警告] Gitee 本地产物上传失败: {e}")
-        print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
+    if release_cache:
+        sub_start = time.time()
+        print(f"\n  [1/2] 上传本地产物到 Gitee...")
+        try:
+            downloads_cn = _gitee_upload_local(version, release_title, release_notes, release_cache)
+        except Exception as e:
+            print(f"  [警告] Gitee 本地产物上传失败: {e}")
+            print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
+        print(f"  [1/2] 本地产物上传完成 ({time.time() - sub_start:.1f}s)")
 
-    # 等待 CI 完成，从 GitHub 下载对端产物并上传到 Gitee
-    try:
-        gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
-                                              need_wait=need_ci)
-        if gitee_sync:
-            downloads_cn = downloads_cn or {}
-            downloads_cn.update(gitee_sync)
-    except Exception as e:
-        print(f"  [警告] Gitee 对端产物同步失败: {e}")
-        print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
+        # 等待 CI 完成，从 GitHub 下载对端产物并上传到 Gitee
+        sub_start = time.time()
+        if need_ci:
+            print(f"\n  [2/2] 等待 CI 完成并同步对端产物到 Gitee...")
+        else:
+            print(f"\n  [2/2] 同步对端产物到 Gitee（无需等待 CI）...")
+
+        try:
+            gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
+                                                  need_wait=need_ci, release_cache=release_cache)
+            if gitee_sync:
+                downloads_cn = downloads_cn or {}
+                downloads_cn.update(gitee_sync)
+        except Exception as e:
+            print(f"  [警告] Gitee 对端产物同步失败: {e}")
+            print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
+        print(f"  [2/2] 对端产物同步完成 ({time.time() - sub_start:.1f}s)")
+
+    print(f">>> Gitee 上传总计: {time.time() - step_start:.1f}s")
 
     return downloads_cn
 
@@ -1361,13 +1402,10 @@ def _gitee_delete_asset(api_base, token, release_id, asset_id, filename):
                 raise
 
 
-def _gitee_upload_local(version, release_title, release_notes):
-    """上传本地平台的产物到 Gitee Release。
+def _gitee_get_release_cache(version, release_title, release_notes):
+    """获取 Gitee Release 缓存信息（API 连通性、release_id、existing assets）。
 
-    Windows: EXE + job_config.json + README.md
-    macOS:   DMG + ZIP + job_config.json + README.md
-
-    返回 downloads_cn 字典。需要环境变量 GITEE_TOKEN，未设置时返回 None。
+    返回 dict 或 None（失败时）。调用方应将此 dict 传递给后续的上传函数以避免重复 API 调用。
     """
     token = os.environ.get("GITEE_TOKEN")
     if not token:
@@ -1377,7 +1415,7 @@ def _gitee_upload_local(version, release_title, release_notes):
     # 连通性预检：避免批量操作时才发现 API 不可达
     if not _gitee_ping(token):
         print(f"\n{'!'*60}")
-        print(f"  [!!]  Gitee API 不可达，跳过本地产物上传")
+        print(f"  [!!]  Gitee API 不可达，跳过 Gitee 上传")
         print(f"  手动补传: python build.py --gitee-upload {version}")
         print(f"{'!'*60}\n")
         return None
@@ -1386,6 +1424,50 @@ def _gitee_upload_local(version, release_title, release_notes):
     repo = "boss-resume-filter"
     tag = f"v{version}"
     api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+    try:
+        release_id, existing = _gitee_find_or_create_release(
+            api_base, token, tag, release_title, release_notes)
+
+        return {
+            'token': token,
+            'owner': owner,
+            'repo': repo,
+            'tag': tag,
+            'api_base': api_base,
+            'release_id': release_id,
+            'existing': existing,
+        }
+    except requests.exceptions.RequestException as e:
+        print(f"\n{'!'*60}")
+        print(f"  [!!]  Gitee Release 获取失败: {e}")
+        print(f"  手动补传: python build.py --gitee-upload {version}")
+        print(f"{'!'*60}\n")
+        return None
+
+
+def _gitee_upload_local(version, release_title, release_notes, release_cache=None):
+    """上传本地平台的产物到 Gitee Release。
+
+    Windows: EXE + job_config.json + README.md
+    macOS:   DMG + ZIP + job_config.json + README.md
+
+    返回 downloads_cn 字典。需要环境变量 GITEE_TOKEN，未设置时返回 None。
+    release_cache: 可选的缓存信息（来自 _gitee_get_release_cache），避免重复 API 调用。
+    """
+    # 如果没有传入缓存，则获取缓存
+    if release_cache is None:
+        release_cache = _gitee_get_release_cache(version, release_title, release_notes)
+        if release_cache is None:
+            return None
+
+    token = release_cache['token']
+    owner = release_cache['owner']
+    repo = release_cache['repo']
+    tag = release_cache['tag']
+    api_base = release_cache['api_base']
+    release_id = release_cache['release_id']
+    existing = release_cache['existing']
 
     if IS_MAC:
         # 第一批：自动更新用 ZIP + 配置（优先）
@@ -1409,9 +1491,6 @@ def _gitee_upload_local(version, release_title, release_notes):
     batch2 = [f for f in batch2 if f.exists()]
 
     try:
-        release_id, existing = _gitee_find_or_create_release(
-            api_base, token, tag, release_title, release_notes)
-
         downloads_cn = {}
         failed = []
 
@@ -1559,21 +1638,26 @@ def _collect_github_release_asset_metadata(version, existing_metadata=None):
         shutil.rmtree(download_dir, ignore_errors=True)
 
 
-def _sync_gitee_from_github(version, release_title, release_notes, need_wait=False):
+def _sync_gitee_from_github(version, release_title, release_notes, need_wait=False, release_cache=None):
     """从 GitHub Release 下载对端产物，并行上传到 Gitee Release。
 
     当 need_wait=True 时，先轮询等待 CI 构建完成（对端产物出现在 GitHub Release）。
+    release_cache: 可选的缓存信息（来自 _gitee_get_release_cache），避免重复 API 调用。
     返回 downloads_cn 字典，失败返回 None。
     """
-    token = os.environ.get("GITEE_TOKEN")
-    if not token:
-        print("  [跳过] Gitee 同步: 未设置 GITEE_TOKEN")
-        return None
+    # 如果没有传入缓存，则获取缓存
+    if release_cache is None:
+        release_cache = _gitee_get_release_cache(version, release_title, release_notes)
+        if release_cache is None:
+            return None
 
-    owner = "yaoyouzhong"
-    repo = "boss-resume-filter"
-    tag = f"v{version}"
-    api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+    token = release_cache['token']
+    owner = release_cache['owner']
+    repo = release_cache['repo']
+    tag = release_cache['tag']
+    api_base = release_cache['api_base']
+    release_id = release_cache['release_id']
+    existing = release_cache['existing']
 
     # 对端产物列表
     if IS_MAC:
@@ -1581,13 +1665,12 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     else:
         opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
 
-    print(f"\n>>> 同步 Gitee Release（从 GitHub 下载对端产物）")
-
     if need_wait:
         print(f"  等待 CI 构建对端产物（{', '.join(opposite_assets)}）...")
-        poll_interval = 30
+        # 优化：前 60s 每 10s 轮询，之后每 30s 轮询
         max_wait = 600
         elapsed = 0
+        poll_interval = 10
         while elapsed < max_wait:
             try:
                 r = subprocess.run(
@@ -1607,6 +1690,9 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
                 pass
             time.sleep(poll_interval)
             elapsed += poll_interval
+            # 60s 后切换到 30s 间隔
+            if elapsed >= 60:
+                poll_interval = 30
         else:
             print(f"\n{'!'*60}")
             print(f"  [!!]  等待超时 ({max_wait}s)，CI 可能未完成")
@@ -1642,20 +1728,8 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     batch1 = [f for f in downloaded if not f.name.endswith(".dmg")]
     batch2 = [f for f in downloaded if f.name.endswith(".dmg")]
 
-    # 上传前预检 Gitee API 连通性
-    if not _gitee_ping(token):
-        print(f"\n{'!'*60}")
-        print(f"  [!!]  Gitee API 不可达，跳过对端产物同步")
-        print(f"  手动补传: python build.py --gitee-upload {version}")
-        print(f"{'!'*60}\n")
-        shutil.rmtree(download_dir, ignore_errors=True)
-        return None
-
-    # 上传到 Gitee
+    # 上传到 Gitee（使用缓存的 release_id 和 existing）
     try:
-        release_id, existing = _gitee_find_or_create_release(
-            api_base, token, tag, release_title, release_notes)
-
         downloads_cn = {}
         failed = []
 
@@ -1813,8 +1887,16 @@ def main():
 ╚══════════════════════════════════════════════════════════════╝
 """)
 
+    # 定义发布流程步骤（用于进度显示）
+    total_steps = 7 if args.release else 2
+    current_step = 0
+
     # ---- 打包前：验证依赖、敏感路径、源码和测试 ----
+    current_step += 1
+    step_start = time.time()
+    print(f"\n[{current_step}/{total_steps}] 发布前检查（依赖、编译、测试）...")
     _preflight_checks(require_clean=not version_changed)
+    print(f"[{current_step}/{total_steps}] 发布前检查完成 ({time.time() - step_start:.1f}s)")
 
     clean_dist()
 
@@ -1864,13 +1946,61 @@ def main():
         str(BASE_DIR / "gui_main.py")
     ]
 
-    print(">>> PyInstaller 打包中...")
+    current_step += 1
+    print(f"\n[{current_step}/{total_steps}] PyInstaller 打包（约 60-90 秒）...")
     os.chdir(BASE_DIR)
-    result = subprocess.run(cmd, env=pyinstaller_env)
 
-    if result.returncode != 0:
-        print("\n[错误] 打包失败")
+    # 使用 Popen 实时显示进度
+    start_time = time.time()
+    process = subprocess.Popen(
+        cmd,
+        env=pyinstaller_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+
+    # 实时读取输出并显示进度
+    output_lines = []
+    spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    spinner_idx = 0
+    last_update = 0
+
+    for line in process.stdout:
+        output_lines.append(line)
+        elapsed = time.time() - start_time
+
+        # 每 2 秒更新一次进度显示
+        if elapsed - last_update >= 2:
+            # 解析 PyInstaller 输出的关键信息
+            if 'INFO:' in line:
+                # 提取 INFO 后的关键步骤
+                if 'Building' in line:
+                    step = '构建中'
+                elif 'Analyzing' in line:
+                    step = '分析依赖'
+                elif 'Processing' in line:
+                    step = '处理模块'
+                else:
+                    step = '打包中'
+            else:
+                step = '打包中'
+
+            print(f"\r  {spinner[spinner_idx % len(spinner)]} {step}... {elapsed:.0f}s", end='', flush=True)
+            spinner_idx += 1
+            last_update = elapsed
+
+    process.wait()
+    elapsed = time.time() - start_time
+
+    if process.returncode != 0:
+        print(f"\n[错误] 打包失败（耗时 {elapsed:.0f}s）")
+        print(">>> PyInstaller 输出:")
+        print(''.join(output_lines[-50:]))  # 显示最后 50 行
         sys.exit(1)
+
+    print(f"\r[{current_step}/{total_steps}] PyInstaller 打包完成 ({elapsed:.0f}s) {' ' * 20}")
 
     print("\n  更新辅助文件...")
     for file in ["README.md", "job_config.json"]:
@@ -1899,14 +2029,33 @@ def main():
         print(f"  Release 模式：v{version}")
         print(f"{'='*60}")
 
+        release_start = time.time()
+
         # 先提交源码/版本变更，latest.json 等 Release 资产齐全后再发布，避免自动更新读到半成品清单。
+        current_step += 1
+        step_start = time.time()
+        print(f"\n[{current_step}/{total_steps}] Git 提交和打标签...")
         allowed = ["gui_main.py"] if args.version else []
         _git_commit(version, allowed_paths=allowed)
         _git_tag(version)
+        print(f"[{current_step}/{total_steps}] Git 提交和打标签完成 ({time.time() - step_start:.1f}s)")
+
+        current_step += 1
+        step_start = time.time()
+        print(f"\n[{current_step}/{total_steps}] 推送到远程仓库...")
         _git_push(version, auto=args.auto)
+        print(f"[{current_step}/{total_steps}] 推送完成 ({time.time() - step_start:.1f}s)")
+
+        current_step += 1
+        step_start = time.time()
+        print(f"\n[{current_step}/{total_steps}] 创建 GitHub Release 并上传产物...")
         downloads_cn = _gh_release(version, release_title, release_notes)
+        print(f"[{current_step}/{total_steps}] GitHub Release 完成 ({time.time() - step_start:.1f}s)")
 
         # Release 资产齐全后再发布 latest.json，确保自动更新拿到完整 size + SHA256。
+        current_step += 1
+        step_start = time.time()
+        print(f"\n[{current_step}/{total_steps}] 更新 latest.json 并提交...")
         asset_metadata = _collect_github_release_asset_metadata(
             version, existing_metadata=_release_asset_metadata())
         update_latest_json(
@@ -1921,10 +2070,12 @@ def main():
                        cwd=BASE_DIR, check=True)
         subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
         print("  [OK] latest.json 已自动提交并推送（含完整校验信息）")
+        print(f"[{current_step}/{total_steps}] latest.json 更新完成 ({time.time() - step_start:.1f}s)")
 
         print(f"\n{'='*60}")
-        print(f"  v{version} 发布完成！")
+        print(f"  ✓ v{version} 发布完成！")
         print(f"  {artifact_path} ({size_mb:.1f} MB)")
+        print(f"  总耗时: {time.time() - release_start:.1f}s")
         print(f"{'='*60}\n")
     elif args.release and args.ci:
         print(f"\n{'='*60}")
