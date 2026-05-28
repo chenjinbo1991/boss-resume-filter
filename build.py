@@ -562,7 +562,10 @@ def _release_asset_metadata():
     if IS_WIN:
         assets = {"windows": DIST_DIR / "BOSS_ResumeFilter.exe"}
     elif IS_MAC:
-        assets = {"macos": DIST_DIR / "BOSS_ResumeFilter_mac.zip"}
+        assets = {
+            "macos": DIST_DIR / "BOSS_ResumeFilter_mac.zip",
+            "macos_dmg": DIST_DIR / "BOSS_ResumeFilter.dmg",
+        }
     else:
         assets = {}
 
@@ -746,7 +749,7 @@ def _git_commit(version, allowed_paths=None):
     print(f"  [OK] 已提交：{msg}")
 
 
-def update_latest_json(version, release_notes, downloads_cn=None):
+def update_latest_json(version, release_notes, downloads_cn=None, quiet=False):
     """更新 latest.json 文件（供 Gitee 镜像使用）
 
     Args:
@@ -775,7 +778,8 @@ def update_latest_json(version, release_notes, downloads_cn=None):
     with open(latest_path, 'w', encoding='utf-8') as f:
         json.dump(latest_data, f, ensure_ascii=False, indent=2)
 
-    print(f"  [OK] 已更新 latest.json (v{version})")
+    if not quiet:
+        print(f"  [OK] 已更新 latest.json (v{version})")
 
 
 def _git_tag(version):
