@@ -1481,6 +1481,42 @@ def _needs_cross_platform_rebuild(changed_files):
     return False
 
 
+def _needs_local_rebuild():
+    """判断本地是否需要重新打包。
+
+    检查逻辑：
+    1. 如果 dist/BOSS_ResumeFilter.exe 不存在，需要构建
+    2. 比较 exe 的 mtime 与所有源文件的 mtime
+    3. 如果任何源文件比 exe 新，需要重新构建
+
+    影响构建的文件：
+    - 所有 .py 文件（排除 build.py 和 tests/）
+    - 配置文件：job_config.json, api_config.json, selectors.json
+    - requirements.txt
+    """
+    exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
+    if not exe_path.exists():
+        return True  # exe 不存在，必须构建
+
+    exe_mtime = exe_path.stat().st_mtime
+
+    # 检查所有 .py 文件（排除 build.py 和 tests/）
+    for py_file in BASE_DIR.glob("*.py"):
+        if py_file.name == "build.py":
+            continue
+        if py_file.stat().st_mtime > exe_mtime:
+            return True
+
+    # 检查配置文件
+    config_files = ["job_config.json", "api_config.json", "selectors.json", "requirements.txt"]
+    for config_file in config_files:
+        config_path = BASE_DIR / config_file
+        if config_path.exists() and config_path.stat().st_mtime > exe_mtime:
+            return True
+
+    return False
+
+
 def _get_github_release_assets(tag):
     """获取 GitHub Release 上的产物列表。返回 {文件名: {size, updatedAt}} 字典。"""
     r = subprocess.run(
@@ -2336,65 +2372,71 @@ def main():
     ]
 
     # ---- 步骤 2：PyInstaller 打包 ----
-    progress.start_step(1)
-    os.chdir(BASE_DIR)
+    # 检查是否需要重新打包（避免无意义的重复构建）
+    if not _needs_local_rebuild():
+        progress.skip_step(1, reason="源文件未变动，跳过打包")
+        print("  [跳过] PyInstaller 打包（源文件未变动）")
+    else:
+        progress.start_step(1)
+        os.chdir(BASE_DIR)
 
-    # 使用 Popen 实时显示进度
-    start_time = time.time()
-    process = subprocess.Popen(
-        cmd,
-        env=pyinstaller_env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
+        # 使用 Popen 实时显示进度
+        start_time = time.time()
+        process = subprocess.Popen(
+            cmd,
+            env=pyinstaller_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
 
-    # 实时读取输出并显示进度
-    output_lines = []
-    # braille spinner 在 GBK 终端无法编码，用 ASCII 回退
-    try:
-        '⠋'.encode(sys.stdout.encoding or 'utf-8')
-        spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-    except (UnicodeEncodeError, LookupError):
-        spinner = ['|', '/', '-', '\\', '|', '/', '-', '\\', '|', '/']
-    spinner_idx = 0
-    last_update = 0
+        # 实时读取输出并显示进度
+        output_lines = []
+        # braille spinner 在 GBK 终端无法编码，用 ASCII 回退
+        try:
+            '⠋'.encode(sys.stdout.encoding or 'utf-8')
+            spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        except (UnicodeEncodeError, LookupError):
+            spinner = ['|', '/', '-', '\\', '|', '/', '-', '\\', '|', '/']
+        spinner_idx = 0
+        last_update = 0
 
-    for line in process.stdout:
-        output_lines.append(line)
-        elapsed = time.time() - start_time
+        for line in process.stdout:
+            output_lines.append(line)
+            elapsed = time.time() - start_time
 
-        # 每 2 秒更新一次进度显示（PyInstaller spinner 在进度表下方输出）
-        if elapsed - last_update >= 2:
-            if 'INFO:' in line:
-                if 'Building' in line:
-                    step = '构建中'
-                elif 'Analyzing' in line:
-                    step = '分析依赖'
-                elif 'Processing' in line:
-                    step = '处理模块'
+            # 每 2 秒更新一次进度显示（PyInstaller spinner 在进度表下方输出）
+            if elapsed - last_update >= 2:
+                if 'INFO:' in line:
+                    if 'Building' in line:
+                        step = '构建中'
+                    elif 'Analyzing' in line:
+                        step = '分析依赖'
+                    elif 'Processing' in line:
+                        step = '处理模块'
+                    else:
+                        step = '打包中'
                 else:
                     step = '打包中'
-            else:
-                step = '打包中'
 
-            print(f"\r  {spinner[spinner_idx % len(spinner)]} {step}... {elapsed:.0f}s", end='', flush=True)
-            spinner_idx += 1
-            last_update = elapsed
+                print(f"\r  {spinner[spinner_idx % len(spinner)]} {step}... {elapsed:.0f}s", end='', flush=True)
+                spinner_idx += 1
+                last_update = elapsed
 
-    process.wait()
-    elapsed = time.time() - start_time
+        process.wait()
+        elapsed = time.time() - start_time
 
-    if process.returncode != 0:
-        progress.fail_step(f'打包失败（{elapsed:.0f}s）')
-        print(f"\n[错误] 打包失败（耗时 {elapsed:.0f}s）")
-        print(">>> PyInstaller 输出:")
-        print(''.join(output_lines[-50:]))
-        sys.exit(1)
+        if process.returncode != 0:
+            progress.fail_step(f'打包失败（{elapsed:.0f}s）')
+            print(f"\n[错误] 打包失败（耗时 {elapsed:.0f}s）")
+            print(">>> PyInstaller 输出:")
+            print(''.join(output_lines[-50:]))
+            sys.exit(1)
 
-    # 清掉 spinner 行
-    print(f"\r{' ' * 60}\r", end='')
+        # 清掉 spinner 行
+        print(f"\r{' ' * 60}\r", end='')
+        progress.end_step()
 
     print("  更新辅助文件...")
     for file in ["README.md", "job_config.json"]:
