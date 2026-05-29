@@ -1963,7 +1963,12 @@ def main():
 
     # 实时读取输出并显示进度
     output_lines = []
-    spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    # braille spinner 在 GBK 终端无法编码，用 ASCII 回退
+    try:
+        '⠋'.encode(sys.stdout.encoding or 'utf-8')
+        spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    except (UnicodeEncodeError, LookupError):
+        spinner = ['|', '/', '-', '\\', '|', '/', '-', '\\', '|', '/']
     spinner_idx = 0
     last_update = 0
 
