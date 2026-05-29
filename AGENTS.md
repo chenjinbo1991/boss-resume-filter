@@ -7,7 +7,7 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.8.11）
+├── gui_main.py           # 图形界面主程序（v2.8.12）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -33,7 +33,9 @@ boss-resume-filter/
 ├── DEPLOYMENT.md         # 部署说明（新电脑配置）
 ├── PACKAGING.md          # 打包指南
 ├── tests/                # 测试脚本目录
-└── scripts/              # 辅助脚本目录
+├── scripts/              # 辅助脚本目录
+│   └── watch_progress.py # 发布进度监控脚本（轮询 .build_progress.json）
+└── .build_progress.json  # 发布进度文件（build.py 实时更新，供外部监控）
 ```
 
 ## 运行命令
@@ -65,12 +67,17 @@ boss-resume-filter/
 - `python build.py --release --auto`：全自动模式，跳过推送确认，用于 Claude Code 等非交互环境
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
+- **智能跳过打包**：`_needs_local_rebuild()` 使用 `.build_state.json` 构建指纹判断是否需要重新执行 PyInstaller；指纹覆盖源码、配置、依赖、CHANGELOG、打包命令、平台和 Python 版本，未变化时复用现有 dist 产物，`--force-build` 可强制重建
+- **发布范围开关**：`--no-gitee` 跳过 Gitee 上传和 `downloads_cn` 更新；`--no-ci-sync` 跳过跨平台 CI 重建和对端产物同步；`--force-build` 忽略构建指纹缓存
+- **实时进度跟踪**：`ReleaseProgress` 类在 ANSI 终端原地重绘进度表（6 步状态 + 耗时），非 TTY 环境降级为逐行打印；每次状态变化自动写入 `.build_progress.json` 供外部监控（如 `scripts/watch_progress.py` 每 3 秒轮询推送）
+- **网络操作重试**：GitHub 上传/删除/下载、Release 创建/编辑、git push 等网络操作均支持 3 次重试（间隔 5s），失败时打印重试日志；Release 创建时检测是否已存在（并发场景），已存在则自动切换为编辑模式
+- **CJK 字符对齐**：汇总表使用 `unicodedata.east_asian_width()` 计算显示宽度（CJK 字符宽度 2，ASCII 宽度 1），确保状态列和耗时列垂直对齐
 - **Windows**：dist 目录输出 `BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
 - **macOS**：dist 目录输出 `BOSS_ResumeFilter.app`（应用包）+ `BOSS_ResumeFilter_mac.zip`（自动更新用）+ `BOSS_ResumeFilter.dmg`（用户安装用）
 - `build.py` 自动检测平台（`IS_MAC`/`IS_WIN`），无需额外参数
 - macOS 打包使用 `--onedir --windowed` 生成 .app，Windows 使用 `--onefile --noconsole --runtime-tmpdir %LOCALAPPDATA%` 生成 EXE（`%LOCALAPPDATA%` 替代默认 `%TEMP%`，规避企业电脑临时目录策略限制导致的 PyInstaller 解压失败）
 - macOS DMG 使用系统自带 `hdiutil` 生成，ZIP 使用 Python `zipfile` 模块
-- **GitHub Actions 自动补齐打包**：推送 tag 后 CI 检查 Release 已有产物，只构建缺失的平台（`.github/workflows/release.yml`）；本地 Mac 发布时上传 DMG+ZIP → CI 构建 EXE；本地 Windows 发布时上传 EXE → CI 构建 DMG+ZIP；CI 模式使用 `--ci --release` 跳过虚拟环境切换和 git 操作
+- **GitHub Actions 自动补齐打包**：推送 tag 后 CI 检查 Release 已有产物，只构建缺失的平台（`.github/workflows/release.yml`）；本地 Mac 发布时上传 DMG+ZIP → CI 构建 EXE；本地 Windows 发布时上传 EXE → CI 构建 DMG+ZIP；CI 只负责构建和上传 GitHub Release，不上传 Gitee；CI 模式使用 `--ci --release` 跳过虚拟环境切换和 git 操作
 - **覆盖发布按需重建对端**：`build.py --release` 上传当前平台产物后，自动检测变更是否需要重建对端（通过 `_needs_cross_platform_rebuild()` 判断）；tests/、scripts/、docs/、*.md、build.py 等非构建文件变更跳过 CI 重建，共享模块变更才触发 `gh workflow run release.yml`（Windows 发布删旧 DMG/ZIP，macOS 发布删旧 EXE）
 - **CI 只负责构建和上传 GitHub Release，不上传 Gitee**
 - job_config.json、api_config.json、selectors.json 和 CHANGELOG.md 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
@@ -275,6 +282,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - **GitHub 源**（fallback，10s 超时）：`https://api.github.com/repos/yaoyouzhong/boss-resume-filter/releases/latest`
 - **下载链接**：`latest.json` 中 `downloads_cn` 字段存储 Gitee 国内下载链接，优先使用；无则回退到 GitHub
 - 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」
+- **更新弹窗字体统一**：`updater.py` 使用 `FONT_FAMILY` 和 `FONT_FAMILY_SEMIBOLD` 常量（与 gui_main.py 一致），避免硬编码字体名
 - **Windows**：下载新 EXE（有元数据时校验文件大小和 SHA256，不匹配则报错）→ 生成 `update.bat` 脚本 → 启动脚本 → 退出当前程序 → 脚本替换 EXE 并重启；旧 EXE 保留为 `.old` 备份，新版本成功启动后自动清理（`cleanup_windows_update_backup()`，`gui_main.py` 启动后 10 秒触发）
 - Windows 更新脚本启动新 EXE 前必须清理 `_PYI_*` 环境变量并设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，避免 PyInstaller onefile 继承旧 `_MEI...` 解包目录导致 `python312.dll` 缺失；不要在更新脚本中主动删除 `%LOCALAPPDATA%\_MEI*`
 - **macOS**：

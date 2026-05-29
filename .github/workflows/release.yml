@@ -58,7 +58,9 @@ jobs:
 
       - name: Set UTF-8 encoding
         shell: bash
-        run: echo "PYTHONIOENCODING=utf-8" >> $GITHUB_ENV
+        run: |
+          echo "PYTHONIOENCODING=utf-8" >> $GITHUB_ENV
+          echo "PYTHONUTF8=1" >> $GITHUB_ENV
 
       - name: Cache virtual environment
         uses: actions/cache@v4

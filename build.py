@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -281,6 +282,8 @@ BASE_DIR = Path(__file__).parent.resolve()
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
 VENV_DIR = BASE_DIR / "pack_venv"
+BUILD_STATE_PATH = BASE_DIR / ".build_state.json"
+BUILD_FINGERPRINT_VERSION = 1
 
 # 平台检测
 IS_MAC = sys.platform == 'darwin'
@@ -887,6 +890,9 @@ def _github_asset_matches_local(tag, local_path, remote_asset):
             return True, f"SHA256 一致 ({local_size} bytes)"
         return False, "SHA256 不一致"
 
+    if _latest_json_asset_matches_local(local_path):
+        return True, f"latest.json 元数据一致 ({local_size} bytes)"
+
     compare_dir = Path(tempfile.mkdtemp(prefix="gh_asset_compare_"))
     try:
         remote_path = _download_from_github_release(tag, local_path.name, compare_dir)
@@ -912,6 +918,9 @@ def _gitee_asset_matches_local(local_path, remote_asset, owner, repo, tag, token
             return True, f"SHA256 一致 ({local_size} bytes)"
         return False, "SHA256 不一致"
 
+    if _latest_json_asset_matches_local(local_path):
+        return True, f"latest.json 元数据一致 ({local_size} bytes)"
+
     url = _gitee_asset_url(owner, repo, tag, local_path.name)
     try:
         remote_sha = _remote_file_sha256(url, token=token)
@@ -920,6 +929,39 @@ def _gitee_asset_matches_local(local_path, remote_asset, owner, repo, tag, token
     if remote_sha == local_sha:
         return True, f"SHA256 一致 ({local_size} bytes)"
     return False, "SHA256 不一致"
+
+
+def _latest_json_asset_info(path_or_name):
+    """Return asset metadata from latest.json for a release artifact, if available."""
+    key = _release_asset_key(path_or_name)
+    if not key:
+        return None
+    latest_path = BASE_DIR / "latest.json"
+    if not latest_path.exists():
+        return None
+    try:
+        data = json.loads(latest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data.get("assets", {}).get(key)
+
+
+def _latest_json_asset_matches_local(local_path):
+    """Use latest.json asset metadata as a cheap local equality check."""
+    asset_info = _latest_json_asset_info(local_path)
+    if not asset_info:
+        return False
+    try:
+        expected_size = int(asset_info.get("size"))
+    except (TypeError, ValueError):
+        return False
+    expected_sha = _asset_digest_sha256(asset_info)
+    if not expected_sha:
+        return False
+    return (
+        expected_size == local_path.stat().st_size
+        and expected_sha == _sha256_file(local_path)
+    )
 
 
 def _release_asset_key(path_or_name):
@@ -1164,9 +1206,21 @@ def update_latest_json(version, release_notes, downloads_cn=None, quiet=False,
     """
     from datetime import date
 
+    latest_path = BASE_DIR / "latest.json"
+    existing_data = None
+    if latest_path.exists():
+        try:
+            existing_data = json.loads(latest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing_data = None
+
+    release_date = date.today().isoformat()
+    if existing_data and existing_data.get("version") == version and existing_data.get("release_date"):
+        release_date = existing_data["release_date"]
+
     latest_data = {
         "version": version,
-        "release_date": date.today().isoformat(),
+        "release_date": release_date,
         "downloads": {
             "windows": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.exe",
             "macos": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter_mac.zip",
@@ -1181,15 +1235,22 @@ def update_latest_json(version, release_notes, downloads_cn=None, quiet=False,
     if require_complete_assets:
         _assert_update_asset_metadata_complete(latest_data["assets"])
 
-    if downloads_cn:
+    if downloads_cn is not None:
         latest_data["downloads_cn"] = downloads_cn
+    elif existing_data and existing_data.get("downloads_cn"):
+        latest_data["downloads_cn"] = existing_data["downloads_cn"]
 
-    latest_path = BASE_DIR / "latest.json"
+    if existing_data == latest_data:
+        if not quiet:
+            print(f"  [跳过] latest.json 无变化")
+        return False
+
     with open(latest_path, 'w', encoding='utf-8') as f:
         json.dump(latest_data, f, ensure_ascii=False, indent=2)
 
     if not quiet:
         print(f"  [OK] 已更新 latest.json (v{version})")
+    return True
 
 
 def _git_tag(version):
@@ -1269,7 +1330,8 @@ def _print_progress(step, total, message, start_time=None):
         print(f"\n[{step}/{total}] {message}")
 
 
-def _gh_release(version, release_title, release_notes, progress=None):
+def _gh_release(version, release_title, release_notes, progress=None,
+                enable_gitee=True, enable_ci_sync=True):
     """创建/更新 GitHub Release 并上传资源文件"""
     import time
     tag = f"v{version}"
@@ -1384,7 +1446,10 @@ def _gh_release(version, release_title, release_notes, progress=None):
             _sub(f'[跳过] {f.name}')
 
     changed_update_artifacts = uploaded_names & _current_platform_update_artifact_names()
-    if changed_update_artifacts:
+    if not enable_ci_sync:
+        _sub('跳过跨平台 CI 检查：--no-ci-sync')
+        need_ci, old_assets_info = False, {}
+    elif changed_update_artifacts:
         _sub(f'检查是否需要跨平台 CI 重建: {", ".join(sorted(changed_update_artifacts))}')
         need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
     else:
@@ -1392,8 +1457,12 @@ def _gh_release(version, release_title, release_notes, progress=None):
         need_ci, old_assets_info = False, {}
 
     # 获取 Gitee Release 缓存（一次 API 调用，两个上传函数复用）
-    _sub('准备 Gitee Release 上传...')
-    release_cache = _gitee_get_release_cache(version, release_title, release_notes)
+    if enable_gitee:
+        _sub('准备 Gitee Release 上传...')
+        release_cache = _gitee_get_release_cache(version, release_title, release_notes)
+    else:
+        _sub('跳过 Gitee Release 上传：--no-gitee')
+        release_cache = None
 
     # 上传本地平台产物到 Gitee Release（国内下载源）
     downloads_cn = None
@@ -1406,17 +1475,20 @@ def _gh_release(version, release_title, release_notes, progress=None):
 
         if need_ci:
             _sub('等待 CI 完成并同步对端产物到 Gitee...')
-        else:
+        elif enable_ci_sync:
             _sub('同步对端产物到 Gitee...')
+        else:
+            _sub('跳过对端产物同步：--no-ci-sync')
 
-        try:
-            gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
-                                                  need_wait=need_ci, release_cache=release_cache)
-            if gitee_sync:
-                downloads_cn = downloads_cn or {}
-                downloads_cn.update(gitee_sync)
-        except Exception as e:
-            _sub(f'[警告] Gitee 对端产物同步失败: {e}')
+        if enable_ci_sync:
+            try:
+                gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
+                                                      need_wait=need_ci, release_cache=release_cache)
+                if gitee_sync:
+                    downloads_cn = downloads_cn or {}
+                    downloads_cn.update(gitee_sync)
+            except Exception as e:
+                _sub(f'[警告] Gitee 对端产物同步失败: {e}')
 
     _sub('Release 发布完成')
     return downloads_cn
@@ -1490,40 +1562,79 @@ def _needs_cross_platform_rebuild(changed_files):
     return False
 
 
-def _needs_local_rebuild():
-    """判断本地是否需要重新打包。
+def _local_build_outputs():
+    """Return files that prove the current platform artifact exists."""
+    if IS_MAC:
+        return [
+            DIST_DIR / "BOSS_ResumeFilter.app",
+            DIST_DIR / "BOSS_ResumeFilter_mac.zip",
+            DIST_DIR / "BOSS_ResumeFilter.dmg",
+        ]
+    return [DIST_DIR / "BOSS_ResumeFilter.exe"]
 
-    检查逻辑：
-    1. 如果 dist/BOSS_ResumeFilter.exe 不存在，需要构建
-    2. 比较 exe 的 mtime 与所有源文件的 mtime
-    3. 如果任何源文件比 exe 新，需要重新构建
 
-    影响构建的文件：
-    - 所有 .py 文件（排除 build.py 和 tests/）
-    - 配置文件：job_config.json, api_config.json, selectors.json
-    - requirements.txt
-    """
-    exe_path = DIST_DIR / "BOSS_ResumeFilter.exe"
-    if not exe_path.exists():
-        return True  # exe 不存在，必须构建
+def _build_input_files():
+    """Return files that affect the PyInstaller output."""
+    files = [
+        "bossmaster.py", "gui_main.py", "filtering.py", "llm_eval.py",
+        "storage.py", "doc_parser.py", "security.py", "constants.py",
+        "paths.py", "icons.py", "updater.py", "migrate_keys.py",
+        "build.py", "requirements.txt", "job_config.json",
+        "api_config.json", "selectors.json", "CHANGELOG.md",
+    ]
+    return [BASE_DIR / f for f in files if (BASE_DIR / f).exists()]
 
-    exe_mtime = exe_path.stat().st_mtime
 
-    # 检查所有 .py 文件（排除 build.py 和 tests/）
-    for py_file in BASE_DIR.glob("*.py"):
-        if py_file.name == "build.py":
-            continue
-        if py_file.stat().st_mtime > exe_mtime:
-            return True
+def _build_fingerprint(pyinstaller_cmd):
+    """Build a stable fingerprint for deciding whether PyInstaller must run."""
+    file_hashes = {}
+    for path in _build_input_files():
+        rel = path.relative_to(BASE_DIR).as_posix()
+        file_hashes[rel] = _sha256_file(path)
 
-    # 检查配置文件
-    config_files = ["job_config.json", "api_config.json", "selectors.json", "requirements.txt"]
-    for config_file in config_files:
-        config_path = BASE_DIR / config_file
-        if config_path.exists() and config_path.stat().st_mtime > exe_mtime:
-            return True
+    payload = {
+        "version": BUILD_FINGERPRINT_VERSION,
+        "platform": sys.platform,
+        "python": sys.version,
+        "is_mac": IS_MAC,
+        "is_win": IS_WIN,
+        "pyinstaller_cmd": [str(x) for x in pyinstaller_cmd],
+        "files": file_hashes,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
 
-    return False
+
+def _read_build_state():
+    try:
+        return json.loads(BUILD_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_build_state(fingerprint):
+    data = {
+        "fingerprint": fingerprint,
+        "platform": sys.platform,
+        "outputs": [str(p.relative_to(BASE_DIR)) for p in _local_build_outputs()],
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    BUILD_STATE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _needs_local_rebuild(pyinstaller_cmd):
+    """Return (needs_rebuild, reason) using artifact existence plus build fingerprint."""
+    missing = [p for p in _local_build_outputs() if not p.exists()]
+    if missing:
+        return True, f"缺少产物: {', '.join(p.name for p in missing)}"
+
+    current = _build_fingerprint(pyinstaller_cmd)
+    previous = _read_build_state().get("fingerprint")
+    if previous != current:
+        return True, "构建指纹变化"
+
+    return False, "构建指纹未变化"
 
 
 def _get_github_release_assets(tag):
@@ -2248,6 +2359,12 @@ def main():
                         help="手动补传产物到 Gitee Release（需要 GITEE_TOKEN）")
     parser.add_argument("--auto", action="store_true",
                         help="全自动模式：跳过推送确认，用于 Claude Code 等非交互环境")
+    parser.add_argument("--force-build", action="store_true",
+                        help="忽略构建指纹缓存，强制重新执行 PyInstaller")
+    parser.add_argument("--no-gitee", action="store_true",
+                        help="发布时跳过 Gitee Release 上传和 downloads_cn 更新")
+    parser.add_argument("--no-ci-sync", action="store_true",
+                        help="发布时跳过跨平台 CI 重建和对端产物同步")
     args = parser.parse_args()
 
     version_changed = False
@@ -2300,15 +2417,18 @@ def main():
         if downloads_cn:
             asset_metadata = _collect_github_release_asset_metadata(
                 version, existing_metadata=_release_asset_metadata())
-            update_latest_json(
+            changed = update_latest_json(
                 version,
                 release_notes,
                 downloads_cn,
                 asset_metadata=asset_metadata,
                 require_complete_assets=True,
             )
-            print(f"\n  [OK] downloads_cn 已更新，请手动提交推送：")
-            print(f"  git add latest.json && git commit -m \"chore: 更新 Gitee 下载链接\" && git push")
+            if changed:
+                print(f"\n  [OK] downloads_cn 已更新，请手动提交推送：")
+                print(f"  git add latest.json && git commit -m \"chore: 更新 Gitee 下载链接\" && git push")
+            else:
+                print(f"\n  [跳过] latest.json 无变化，无需提交")
         else:
             print(f"\n  [失败] Gitee 上传未成功")
         return
@@ -2331,8 +2451,6 @@ def main():
     progress.start_step(0)
     _preflight_checks(require_clean=not version_changed)
     progress.end_step()
-
-    clean_dist()
 
     tk_args, pyinstaller_env = _pyinstaller_tk_args()
     if tk_args:
@@ -2382,10 +2500,16 @@ def main():
 
     # ---- 步骤 2：PyInstaller 打包 ----
     # 检查是否需要重新打包（避免无意义的重复构建）
-    if not _needs_local_rebuild():
-        progress.skip_step(1, reason="源文件未变动，跳过打包")
-        print("  [跳过] PyInstaller 打包（源文件未变动）")
+    if args.force_build:
+        needs_rebuild, rebuild_reason = True, "--force-build"
     else:
+        needs_rebuild, rebuild_reason = _needs_local_rebuild(cmd)
+    if not needs_rebuild:
+        progress.skip_step(1, reason=rebuild_reason)
+        print(f"  [跳过] PyInstaller 打包（{rebuild_reason}）")
+    else:
+        print(f"  [信息] 需要重新打包：{rebuild_reason}")
+        clean_dist()
         progress.start_step(1)
         os.chdir(BASE_DIR)
 
@@ -2445,7 +2569,6 @@ def main():
 
         # 清掉 spinner 行
         print(f"\r{' ' * 60}\r", end='')
-        progress.end_step()
 
     print("  更新辅助文件...")
     for file in ["README.md", "job_config.json"]:
@@ -2458,17 +2581,20 @@ def main():
             print(f"    ! {file} (源文件缺失)")
 
     # macOS: 创建 ZIP 和 DMG 分发包
-    if IS_MAC:
+    if IS_MAC and needs_rebuild:
         _create_mac_zip()
         _create_mac_dmg()
 
     version, artifact_path, size_mb = _check_version_consistency()
+    if needs_rebuild:
+        _write_build_state(_build_fingerprint(cmd))
     release_title = release_notes = None
     if args.release:
         release_title, release_notes = _extract_changelog_release(version)
         _check_readme_release(version)
 
-    progress.end_step()
+    if needs_rebuild:
+        progress.end_step()
 
     # ---- Release 模式：提交 → 打 tag → 推送 → GitHub/Gitee Release → latest.json ----
     if args.release and not args.ci:
@@ -2487,35 +2613,45 @@ def main():
 
         # ---- 步骤 5：Release 发布（GitHub + Gitee） ----
         progress.start_step(4)
-        downloads_cn = _gh_release(version, release_title, release_notes, progress)
+        downloads_cn = _gh_release(
+            version,
+            release_title,
+            release_notes,
+            progress,
+            enable_gitee=not args.no_gitee,
+            enable_ci_sync=not args.no_ci_sync,
+        )
         progress.end_step()
 
         # ---- 步骤 6：latest.json 更新 ----
         progress.start_step(5)
         asset_metadata = _collect_github_release_asset_metadata(
             version, existing_metadata=_release_asset_metadata())
-        update_latest_json(
+        latest_changed = update_latest_json(
             version,
             release_notes,
             downloads_cn,
             asset_metadata=asset_metadata,
             require_complete_assets=True,
         )
-        subprocess.run(["git", "add", "latest.json"], cwd=BASE_DIR, check=True)
-        subprocess.run(["git", "commit", "-m", "chore: 更新自动更新清单"],
-                       cwd=BASE_DIR, check=True)
-        # 推送 latest.json，带重试
-        for attempt in range(3):
-            try:
-                subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
-                progress.sub('latest.json 已自动提交并推送')
-                break
-            except subprocess.CalledProcessError as e:
-                if attempt < 2:
-                    progress.sub(f'[重试] 推送 latest.json 失败 (attempt {attempt+1}/3), 5s 后重试...')
-                    time.sleep(5)
-                else:
-                    raise
+        if latest_changed:
+            subprocess.run(["git", "add", "latest.json"], cwd=BASE_DIR, check=True)
+            subprocess.run(["git", "commit", "-m", "chore: 更新自动更新清单"],
+                           cwd=BASE_DIR, check=True)
+            # 推送 latest.json，带重试
+            for attempt in range(3):
+                try:
+                    subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
+                    progress.sub('latest.json 已自动提交并推送')
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt < 2:
+                        progress.sub(f'[重试] 推送 latest.json 失败 (attempt {attempt+1}/3), 5s 后重试...')
+                        time.sleep(5)
+                    else:
+                        raise
+        else:
+            progress.sub('latest.json 无变化，跳过提交和推送')
         progress.end_step()
 
         # 最终汇总表

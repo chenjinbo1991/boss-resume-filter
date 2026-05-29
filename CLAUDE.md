@@ -33,7 +33,9 @@ boss-resume-filter/
 ├── DEPLOYMENT.md         # 部署说明（新电脑配置）
 ├── PACKAGING.md          # 打包指南
 ├── tests/                # 测试脚本目录
-└── scripts/              # 辅助脚本目录
+├── scripts/              # 辅助脚本目录
+│   └── watch_progress.py # 发布进度监控脚本（轮询 .build_progress.json）
+└── .build_progress.json  # 发布进度文件（build.py 实时更新，供外部监控）
 ```
 
 ## 运行命令
@@ -65,6 +67,11 @@ boss-resume-filter/
 - `python build.py --release --auto`：全自动模式，跳过推送确认，用于 Claude Code 等非交互环境
 - `python build.py --release --version 2.5`：自动更新 `__version__` + 一键发布
 - `__version__` 在 `gui_main.py` 中定义，是唯一版本号来源；`build.py` 通过 AST 解析提取并核对
+- **智能跳过打包**：`_needs_local_rebuild()` 使用 `.build_state.json` 构建指纹判断是否需要重新执行 PyInstaller；指纹覆盖源码、配置、依赖、CHANGELOG、打包命令、平台和 Python 版本，未变化时复用现有 dist 产物，`--force-build` 可强制重建
+- **发布范围开关**：`--no-gitee` 跳过 Gitee 上传和 `downloads_cn` 更新；`--no-ci-sync` 跳过跨平台 CI 重建和对端产物同步；`--force-build` 忽略构建指纹缓存
+- **实时进度跟踪**：`ReleaseProgress` 类在 ANSI 终端原地重绘进度表（6 步状态 + 耗时），非 TTY 环境降级为逐行打印；每次状态变化自动写入 `.build_progress.json` 供外部监控（如 `scripts/watch_progress.py` 每 3 秒轮询推送）
+- **网络操作重试**：GitHub 上传/删除/下载、Release 创建/编辑、git push 等网络操作均支持 3 次重试（间隔 5s），失败时打印重试日志；Release 创建时检测是否已存在（并发场景），已存在则自动切换为编辑模式
+- **CJK 字符对齐**：汇总表使用 `unicodedata.east_asian_width()` 计算显示宽度（CJK 字符宽度 2，ASCII 宽度 1），确保状态列和耗时列垂直对齐
 - **Windows**：dist 目录输出 `BOSS_ResumeFilter.exe` + `README.md` + `job_config.json`
 - **macOS**：dist 目录输出 `BOSS_ResumeFilter.app`（应用包）+ `BOSS_ResumeFilter_mac.zip`（自动更新用）+ `BOSS_ResumeFilter.dmg`（用户安装用）
 - `build.py` 自动检测平台（`IS_MAC`/`IS_WIN`），无需额外参数
@@ -290,6 +297,7 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - **GitHub 源**（fallback，10s 超时）：`https://api.github.com/repos/yaoyouzhong/boss-resume-filter/releases/latest`
 - **下载链接**：`latest.json` 中 `downloads_cn` 字段存储 Gitee 国内下载链接，优先使用；无则回退到 GitHub
 - 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」
+- **更新弹窗字体统一**：`updater.py` 使用 `FONT_FAMILY` 和 `FONT_FAMILY_SEMIBOLD` 常量（与 gui_main.py 一致），避免硬编码字体名
 - **Windows**：下载新 EXE（有元数据时校验文件大小和 SHA256，不匹配则报错）→ 生成 `update.bat` 脚本 → 启动脚本 → 退出当前程序 → 脚本替换 EXE 并重启；旧 EXE 保留为 `.old` 备份，新版本成功启动后自动清理（`cleanup_windows_update_backup()`，`gui_main.py` 启动后 10 秒触发）
 - Windows 更新脚本启动新 EXE 前必须清理 `_PYI_*` 环境变量并设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，避免 PyInstaller onefile 继承旧 `_MEI...` 解包目录导致 `python312.dll` 缺失；不要在更新脚本中主动删除 `%LOCALAPPDATA%\_MEI*`
 - **macOS**：

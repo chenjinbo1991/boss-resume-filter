@@ -13,16 +13,19 @@ def _with_build_context(tmp_path, dist_dir, *, is_win, is_mac):
         def __enter__(self):
             self.original_base_dir = build.BASE_DIR
             self.original_dist_dir = build.DIST_DIR
+            self.original_build_state_path = build.BUILD_STATE_PATH
             self.original_is_win = build.IS_WIN
             self.original_is_mac = build.IS_MAC
             build.BASE_DIR = tmp_path
             build.DIST_DIR = dist_dir
+            build.BUILD_STATE_PATH = tmp_path / ".build_state.json"
             build.IS_WIN = is_win
             build.IS_MAC = is_mac
 
         def __exit__(self, exc_type, exc, tb):
             build.BASE_DIR = self.original_base_dir
             build.DIST_DIR = self.original_dist_dir
+            build.BUILD_STATE_PATH = self.original_build_state_path
             build.IS_WIN = self.original_is_win
             build.IS_MAC = self.original_is_mac
 
@@ -197,6 +200,72 @@ def test_update_latest_json_requires_complete_auto_update_metadata():
                     raise AssertionError("missing macos metadata should block latest.json publication")
 
 
+def test_update_latest_json_skips_when_content_is_unchanged():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        exe_path = dist_dir / "BOSS_ResumeFilter.exe"
+        exe_path.write_bytes(b"exe")
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            changed_first = build.update_latest_json("9.9.9", "notes", quiet=True)
+            before = (tmp_path / "latest.json").read_text(encoding="utf-8")
+            changed_second = build.update_latest_json("9.9.9", "notes", quiet=True)
+            after = (tmp_path / "latest.json").read_text(encoding="utf-8")
+
+    assert changed_first is True
+    assert changed_second is False
+    assert after == before
+
+
+def test_update_latest_json_preserves_existing_release_date_for_same_version():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (dist_dir / "BOSS_ResumeFilter.exe").write_bytes(b"exe")
+        existing = {
+            "version": "9.9.9",
+            "release_date": "2026-01-02",
+            "downloads": {},
+            "assets": {},
+            "release_notes": "old",
+        }
+        (tmp_path / "latest.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            build.update_latest_json("9.9.9", "notes", quiet=True)
+            data = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+
+    assert data["release_date"] == "2026-01-02"
+
+
+def test_needs_local_rebuild_uses_build_fingerprint():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (tmp_path / "gui_main.py").write_text('__version__ = "9.9.9"', encoding="utf-8")
+        (tmp_path / "build.py").write_text("build script", encoding="utf-8")
+        (tmp_path / "requirements.txt").write_text("requests>=2", encoding="utf-8")
+        exe_path = dist_dir / "BOSS_ResumeFilter.exe"
+        exe_path.write_bytes(b"exe")
+
+        cmd = ["python", "-m", "PyInstaller", "gui_main.py"]
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            fingerprint = build._build_fingerprint(cmd)
+            build._write_build_state(fingerprint)
+            needs, reason = build._needs_local_rebuild(cmd)
+            (tmp_path / "build.py").write_text("changed build script", encoding="utf-8")
+            needs_after_change, reason_after_change = build._needs_local_rebuild(cmd)
+
+    assert needs is False
+    assert "未变化" in reason
+    assert needs_after_change is True
+    assert "指纹变化" in reason_after_change
+
+
 def test_github_asset_matches_local_by_digest_without_download():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "asset.exe"
@@ -251,6 +320,49 @@ def test_gitee_asset_matches_local_downloads_remote_hash_when_digest_missing():
     assert same is True
     assert "SHA256 一致" in reason
     assert calls == [("https://gitee.com/owner/repo/releases/download/v9.9.9/asset.exe", "token")]
+
+
+def test_gitee_asset_matches_local_uses_latest_json_metadata_before_download():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        path = dist_dir / "BOSS_ResumeFilter.exe"
+        path.write_bytes(b"MZsame-content")
+        latest = {
+            "version": "9.9.9",
+            "release_date": "2026-01-02",
+            "downloads": {},
+            "assets": {
+                "windows": {
+                    "size": path.stat().st_size,
+                    "sha256": build._sha256_file(path),
+                }
+            },
+            "release_notes": "notes",
+        }
+        (tmp_path / "latest.json").write_text(json.dumps(latest), encoding="utf-8")
+        original_remote_hash = build._remote_file_sha256
+
+        def fail_remote_hash(url, token=None):
+            raise AssertionError("remote download should be skipped")
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            build._remote_file_sha256 = fail_remote_hash
+            try:
+                same, reason = build._gitee_asset_matches_local(
+                    path,
+                    {"size": path.stat().st_size},
+                    "owner",
+                    "repo",
+                    "v9.9.9",
+                    token="token",
+                )
+            finally:
+                build._remote_file_sha256 = original_remote_hash
+
+    assert same is True
+    assert "latest.json 元数据一致" in reason
 
 
 def test_current_platform_update_artifact_names_windows():
