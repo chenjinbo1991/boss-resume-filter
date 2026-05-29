@@ -61,6 +61,8 @@ class ReleaseProgress:
         self.current = idx
         self.steps[idx]['status'] = 'running'
         self.steps[idx]['start'] = time.time()
+        if not self._ansi:
+            print(f"[{idx+1}/{len(self.step_names)}] {self.step_names[idx]}...")
         self._render()
 
     def end_step(self):
@@ -68,12 +70,16 @@ class ReleaseProgress:
         step = self.steps[self.current]
         step['status'] = 'done'
         step['duration'] = time.time() - step['start']
+        if not self._ansi:
+            print(f"[{self.current+1}/{len(self.step_names)}] ✓ {self.step_names[self.current]} ({self._fmt_duration(step['duration'])})")
         self._render()
 
     def sub(self, msg):
         """当前步骤的子步骤输出"""
         if self.current >= 0:
             self.steps[self.current]['subs'].append(msg)
+        if not self._ansi:
+            print(f"  │ {msg}")
         self._render()
 
     def skip_step(self, idx, reason=''):
@@ -82,6 +88,8 @@ class ReleaseProgress:
         self.steps[idx]['duration'] = 0
         if reason:
             self.steps[idx]['subs'].append(reason)
+        if not self._ansi:
+            print(f"[{idx+1}/{len(self.step_names)}] – {self.step_names[idx]} 跳过")
         self._render()
 
     def fail_step(self, msg=''):
@@ -91,6 +99,8 @@ class ReleaseProgress:
         step['duration'] = time.time() - step.get('start', time.time())
         if msg:
             step['subs'].append(msg)
+        if not self._ansi:
+            print(f"[{self.current+1}/{len(self.step_names)}] ✗ {self.step_names[self.current]}: {msg}")
         self._render()
 
     def _fmt_duration(self, d):
