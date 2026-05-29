@@ -10,22 +10,22 @@
   },
   "assets": {
     "windows": {
-      "size": 61149671,
-      "sha256": "b8a28eb175fd38f0b7d278990d879e61aa8780e4d31c5fe0e953360766b88f7e"
+      "size": 61149093,
+      "sha256": "0eebd67172442c0ac612ac559710c18db366156e6c6521024744835a547e45a2"
     },
     "macos": {
-      "size": 48333887,
-      "sha256": "afdd5ef636dd4496825e406643bf340abc0aad2a19a1162bc46883784a6ad4ea"
+      "size": 48333828,
+      "sha256": "96d23622d02d7d644d669e00cc6db4470d0c0916523321f0cce318bb7c1d80d2"
     },
     "macos_dmg": {
-      "size": 44175291,
-      "sha256": "d73b235fd50362a8fdf4a503a5537b42adc4fdbb105b2814ae305954498002f9"
+      "size": 44180600,
+      "sha256": "78dc81f187d927a5dcaa131063a914ca53cd80c35cf59f6378f18d675e108bab"
     }
   },
-  "release_notes": "### 体验优化\r\n- **筛选结果日期默认一周**：日期过滤默认显示最近一周的结果（起始一周前、终止今天），重置按钮也恢复为这个范围，减少手动选日期的操作\r\n\r\n### 问题修复\r\n- **弹窗背景色统一**：修复\"选择模型\"和\"清空候选人\"弹窗在 macOS 上文字和按钮出现白色方块的问题；Windows 不受影响\r\n- **升级后启动兼容**：修复部分电脑升级后因日历控件缺失导致 App 启动报错的问题；打包前也会提前检查日历依赖是否完整，并校验依赖清单没有遗漏",
+  "release_notes": "### 体验优化\n- **筛选结果日期默认一周**：日期过滤默认显示最近一周的结果（起始一周前、终止今天），重置按钮也恢复为这个范围，减少手动选日期的操作\n- **发布上传更省流量**：上传 GitHub/Gitee Release 文件前先校验远端同名文件，内容完全一致时自动跳过；当前平台更新包未变化时不触发跨平台 CI，避免重复上传和无意义构建\n\n### 问题修复\n- **弹窗背景色统一**：修复\"选择模型\"和\"清空候选人\"弹窗在 macOS 上文字和按钮出现白色方块的问题；Windows 不受影响\n- **升级后启动兼容**：修复部分电脑升级后因日历控件缺失导致 App 启动报错的问题；打包前也会提前检查日历依赖是否完整，并校验依赖清单没有遗漏\n- **Windows 自动更新重启修复**：修复更新完成后自动重启时可能继承旧版运行时目录，导致提示 `python312.dll` 缺失的问题；新版本文件已安装成功时手动启动不受影响",
   "downloads_cn": {
-    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/README.md",
     "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/job_config.json",
+    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/README.md",
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/BOSS_ResumeFilter.exe",
     "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/BOSS_ResumeFilter_mac.zip",
     "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/BOSS_ResumeFilter.dmg"
