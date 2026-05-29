@@ -280,7 +280,7 @@ boss-resume-filter/
 
 ## AI 模型配置（v2.0 新增）
 ### 支持的服务商
-qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic、custom
+通义千问 (Qwen)、DeepSeek、Kimi (月之暗面)、智谱 (Zhipu)、MiniMax、小米 (Xiaomi)、阶跃星辰 (StepFun)、OpenAI、Anthropic (Claude)、自定义 (Custom)
 
 ### 配置管理
 - api_config.json 存储多服务商配置（不含明文 Key）
