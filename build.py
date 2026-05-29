@@ -22,6 +22,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
+
+# Windows 终端默认 GBK 编码导致中文乱码和 Unicode 字符崩溃，强制 UTF-8
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, OSError):
+        pass  # Python < 3.7 或不支持 reconfigure
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
