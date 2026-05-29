@@ -2456,6 +2456,11 @@ class BossFilterGUI:
         self.result_date_end_entry.bind("<<DateEntrySelected>>",
                                         lambda e: self._validate_date_range('end'))
 
+        # 默认日期范围：一周前 ~ 今天
+        _today = datetime.now().date()
+        self.result_date_start_entry.set_date(_today - timedelta(days=7))
+        self.result_date_end_entry.set_date(_today)
+
         # 互斥关闭：包装 drop_down，展开自己前先收起对方的下拉日历
         self._wrap_date_dropdown_mutex(self.result_date_start_entry, self.result_date_end_entry)
         self._wrap_date_dropdown_mutex(self.result_date_end_entry, self.result_date_start_entry)
@@ -4013,6 +4018,10 @@ class BossFilterGUI:
                             dialog.title("选择模型")
                             dialog.transient(self.root)
                             dialog.withdraw()  # 先隐藏，布局完成后再定位显示
+                            dialog.configure(background=self.colors['bg_card'])
+                            # 对话框内标签统一白底，避免 macOS aqua 灰底上出现白色方块
+                            _dlg_style = ttk.Style(dialog)
+                            _dlg_style.configure('Dialog.TLabel', background=self.colors['bg_card'])
 
                             # 对话框大小
                             dialog_width = 750
@@ -4026,7 +4035,8 @@ class BossFilterGUI:
                             # 标题
                             title_text = f"{provider} - 可用模型 ({len(models)} 个)"
                             info_label = ttk.Label(dialog, text=title_text,
-                                                   font=self.font_section)
+                                                   font=self.font_section,
+                                                   style='Dialog.TLabel')
                             info_label.pack(pady=(15, 0))
 
                             # 过滤说明
@@ -4034,7 +4044,8 @@ class BossFilterGUI:
                             if filter_note:
                                 note_label = ttk.Label(dialog, text=filter_note,
                                                        font=(FONT_FAMILY, int(11 * self.font_scale)),
-                                                       foreground=self.colors['warning'])
+                                                       foreground=self.colors['warning'],
+                                                       style='Dialog.TLabel')
                                 note_label.pack(pady=(4, 12))
 
                             # 模型列表框
@@ -4666,9 +4677,9 @@ class BossFilterGUI:
         this_entry.drop_down = _wrapped_drop_down
 
     def _clear_result_dates(self):
-        """重置两个日期控件为今天"""
+        """重置两个日期控件为一周前 ~ 今天"""
         today = datetime.now().date()
-        self.result_date_start_entry.set_date(today)
+        self.result_date_start_entry.set_date(today - timedelta(days=7))
         self.result_date_end_entry.set_date(today)
         if hasattr(self, 'result_tree'):
             self.refresh_results()
@@ -6540,24 +6551,29 @@ class BossFilterGUI:
         dialog_height = max(300, int(300 * _s))
         self._center_window(dialog, dialog_width, dialog_height)
 
+        # 配置大号 RadioButton/CheckButton 字体
+        dialog_rb_font = (FONT_FAMILY, int(14 * dialog_fs))
+
+        # 对话框内统一灰底样式
+        _cd_style = ttk.Style()
+        _cd_style.configure('ClearDialog.TLabel', background=self.colors['bg_main'])
+        _cd_style.configure('ClearDialog.TFrame', background=self.colors['bg_main'])
+        _cd_style.configure('ClearDialog.TRadiobutton', font=dialog_rb_font,
+                        background=self.colors['bg_main'])
+        _cd_style.configure('ClearDialog.TCheckbutton', font=dialog_rb_font,
+                        background=self.colors['bg_main'])
+
         # 标题
         ttk.Label(dialog, text="清空候选人数据",
                   font=(FONT_FAMILY, int(16 * dialog_fs)),
-                  foreground=self.colors['danger']).pack(pady=(int(20 * _s), int(10 * _s)))
+                  foreground=self.colors['danger'],
+                  style='ClearDialog.TLabel').pack(pady=(int(20 * _s), int(10 * _s)))
 
         # 选项
         choice_var = tk.StringVar(value="all" if is_all_jobs else "current")
 
-        radio_frame = ttk.Frame(dialog, style='TFrame')
+        radio_frame = ttk.Frame(dialog, style='ClearDialog.TFrame')
         radio_frame.pack(fill="x", padx=int(30 * _s))
-
-        # 配置大号 RadioButton 样式
-        dialog_rb_font = (FONT_FAMILY, int(14 * dialog_fs))
-        style = ttk.Style()
-        style.configure('ClearDialog.TRadiobutton', font=dialog_rb_font,
-                        background=self.colors['bg_main'])
-        style.configure('ClearDialog.TCheckbutton', font=dialog_rb_font,
-                        background=self.colors['bg_main'])
 
         rb_current = ttk.Radiobutton(radio_frame,
                                      text=f"清空当前岗位数据（{selected_job}）",
@@ -6580,7 +6596,7 @@ class BossFilterGUI:
 
         # 保留已打招呼复选框
         keep_greeted_var = tk.BooleanVar(value=True)
-        cb_frame = ttk.Frame(dialog, style='TFrame')
+        cb_frame = ttk.Frame(dialog, style='ClearDialog.TFrame')
         cb_frame.pack(fill="x", padx=int(30 * _s),
                        pady=(int(12 * _s), 0))
         cb_text = f"保留已打招呼的候选人（{greeted_count} 人）" if greeted_count > 0 else "保留已打招呼的候选人（无）"
@@ -6595,10 +6611,11 @@ class BossFilterGUI:
         # 提示
         ttk.Label(dialog, text="操作前会自动备份数据文件，清空后不可恢复",
                   font=(FONT_FAMILY, int(13 * dialog_fs)),
-                  foreground=self.colors['text_muted']).pack(pady=(int(12 * _s), 0))
+                  foreground=self.colors['text_muted'],
+                  style='ClearDialog.TLabel').pack(pady=(int(12 * _s), 0))
 
         # 按钮
-        btn_frame = ttk.Frame(dialog, style='TFrame')
+        btn_frame = ttk.Frame(dialog, style='ClearDialog.TFrame')
         btn_frame.pack(pady=int(15 * _s))
 
         def do_clear():
@@ -6686,19 +6703,19 @@ class BossFilterGUI:
         _pad = int(10 * _s)
 
         def _icon_btn(parent, icon, text, command):
-            frame = tk.Frame(parent, bg=self.colors['bg_card'],
+            frame = tk.Frame(parent, bg=self.colors['bg_main'],
                            highlightbackground=self.colors['border'],
                            highlightthickness=1, cursor='hand2')
-            tk.Label(frame, image=icon, bg=self.colors['bg_card']).pack(
+            tk.Label(frame, image=icon, bg=self.colors['bg_main']).pack(
                 side='left', padx=(_pad, 2), pady=4, anchor='center')
-            tk.Label(frame, text=text, bg=self.colors['bg_card'],
+            tk.Label(frame, text=text, bg=self.colors['bg_main'],
                     font=(FONT_FAMILY, int(13 * dialog_fs)), fg=self.colors['text_primary']).pack(
                 side='left', padx=(2, _pad), pady=4, anchor='center')
             _children = [frame] + list(frame.winfo_children())
             def _on_enter(e, f=frame, ch=_children, c=self.colors['bg_hover']):
                 for w in ch:
                     w.config(bg=c)
-            def _on_leave(e, f=frame, ch=_children, c=self.colors['bg_card']):
+            def _on_leave(e, f=frame, ch=_children, c=self.colors['bg_main']):
                 for w in ch:
                     w.config(bg=c)
             for widget in _children:

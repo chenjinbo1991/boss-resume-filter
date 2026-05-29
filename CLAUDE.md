@@ -7,7 +7,7 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.8.11）
+├── gui_main.py           # 图形界面主程序（v2.8.12）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -257,7 +257,7 @@ boss-resume-filter/
 - 显示 ≥55 分的所有候选人（强烈推荐 + 推荐 + 待定），按匹配分降序排列
 - 统计卡片"通过筛选"仅计 ≥65 分（强烈推荐+推荐），与列表总数不同属正常设计
 - 待定候选人（55-64 分）用 `pending` tag 标记低色背景，支持右键打招呼（依赖智能滚动定位）
-- **岗位+日期双重过滤**：岗位下拉框 + 开始/结束日期日历控件（`tkcalendar.DateEntry`，下拉选日期），两个日期默认均为今天，直接按控件显示日期过滤（无激活标志，所见即所得）。用户从日历控件选择日期后自动刷新结果，日期自动校验：起始日期不能晚于终止日期（选了更早的日期会自动调整另一端）、两个日期均不能超过今天（选了未来日期会自动拉回今天）。「重置日期」按钮一键恢复为今天。互斥关闭机制避免两个日历面板同时展开。基于 `batch_timestamp` 前 8 位（`YYYYMMDD`）字符串比较
+- **岗位+日期双重过滤**：岗位下拉框 + 开始/结束日期日历控件（`tkcalendar.DateEntry`，下拉选日期），起始日期默认一周前、终止日期默认今天，直接按控件显示日期过滤（无激活标志，所见即所得）。用户从日历控件选择日期后自动刷新结果，日期自动校验：起始日期不能晚于终止日期（选了更早的日期会自动调整另一端）、两个日期均不能超过今天（选了未来日期会自动拉回今天）。「重置日期」按钮一键恢复为一周前~今天。互斥关闭机制避免两个日历面板同时展开。基于 `batch_timestamp` 前 8 位（`YYYYMMDD`）字符串比较
 - 实现位置：`gui_main.py:create_result_page()`、`gui_main.py:refresh_results()`、`gui_main.py:_validate_date_range()`、`gui_main.py:_get_result_date_filter()`、`gui_main.py:_clear_result_dates()`
 
 ### 页面选择器配置（selectors.json）
