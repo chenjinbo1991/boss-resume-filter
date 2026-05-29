@@ -213,29 +213,45 @@ class ReleaseProgress:
         lines.append(f'  产物: {artifact_path.name} ({size_mb:.1f} MB)')
         lines.append('')
 
-        # 表格格式的步骤耗时
-        lines.append(f'  {"序号":<4} {"任务名称":<20} {"状态":<6} {"耗时":>8}')
-        lines.append('  ' + '─' * 42)
+        # 表格格式的步骤耗时（CJK 字符算 2 列，ASCII 算 1 列）
+        def _dw(s):
+            """字符串的显示宽度"""
+            w = 0
+            for ch in str(s):
+                w += 2 if '一' <= ch <= '鿿' or ' ' <= ch <= '〿' else 1
+            return w
+
+        def _pad(s, width):
+            """按显示宽度右填充空格"""
+            s = str(s)
+            return s + ' ' * max(0, width - _dw(s))
+
+        COL_IDX = 4    # " 1. "
+        COL_NAME = 20  # 任务名称
+        COL_STAT = 4   # 状态
+        COL_DUR = 12   # 耗时
+
+        lines.append(f'  {_pad("序号", COL_IDX)} {_pad("任务名称", COL_NAME)} {_pad("状态", COL_STAT)} {_pad("耗时", COL_DUR)}')
+        lines.append('  ' + '─' * (COL_IDX + COL_NAME + COL_STAT + COL_DUR + 3))
         for idx, (name, step) in enumerate(zip(self.step_names, self.steps), 1):
             dur = self._fmt_duration(step.get('duration'))
             status = step['status']
             if status == 'done':
                 icon = '✓'
-                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {dur:>8}')
+                lines.append(f'  {_pad(f"{idx}.", COL_IDX)} {_pad(name, COL_NAME)} {_pad(icon, COL_STAT)} {dur}')
             elif status == 'skipped':
                 icon = '–'
-                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {"跳过":>6}')
+                lines.append(f'  {_pad(f"{idx}.", COL_IDX)} {_pad(name, COL_NAME)} {_pad(icon, COL_STAT)} 跳过')
             elif status == 'failed':
                 icon = '✗'
-                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {"失败":>6}')
+                lines.append(f'  {_pad(f"{idx}.", COL_IDX)} {_pad(name, COL_NAME)} {_pad(icon, COL_STAT)} 失败')
             else:
-                icon = ' '
-                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {dur:>8}')
+                lines.append(f'  {_pad(f"{idx}.", COL_IDX)} {_pad(name, COL_NAME)} {" " * COL_STAT} {dur}')
 
-        lines.append('  ' + '─' * 42)
+        lines.append('  ' + '─' * (COL_IDX + COL_NAME + COL_STAT + COL_DUR + 3))
         m, s = divmod(int(total), 60)
         total_str = f'{total:.1f}s ({m}m{s:02d}s)'
-        lines.append(f'  {"":4} {"总耗时":<20} {"":6} {total_str:>8}')
+        lines.append(f'  {_pad("", COL_IDX)} {_pad("总耗时", COL_NAME)} {" " * COL_STAT} {total_str}')
         lines.append('═' * W)
         print('\n'.join(lines))
 
