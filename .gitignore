@@ -39,6 +39,7 @@ debug_*.log
 build_log*.txt
 *.html
 .last_update_check
+.build_progress.json
 
 # IDE
 .vscode/

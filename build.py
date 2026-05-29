@@ -56,12 +56,39 @@ class ReleaseProgress:
         self._lines_printed = 0
         # 检测终端是否支持 ANSI
         self._ansi = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+        self._progress_file = BASE_DIR / '.build_progress.json'
+        self._write_progress_file()
+
+    def _write_progress_file(self):
+        """写入进度状态到固定路径的 JSON 文件，供外部查询。"""
+        from datetime import datetime
+        data = {
+            'version': self.version,
+            'started_at': datetime.fromtimestamp(self.start_time).isoformat(timespec='seconds'),
+            'elapsed': round(time.time() - self.start_time, 1),
+            'current_step': self.current,
+            'steps': [
+                {
+                    'name': name,
+                    'status': step['status'],
+                    'duration': round(step['duration'], 1) if step['duration'] is not None else None,
+                    'sub_count': len(step['subs']),
+                    'last_sub': step['subs'][-1] if step['subs'] else None,
+                }
+                for name, step in zip(self.step_names, self.steps)
+            ]
+        }
+        try:
+            self._progress_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass  # 进度文件写入失败不影响发布流程
 
     def start_step(self, idx):
         """开始第 idx 步（0-based）"""
         self.current = idx
         self.steps[idx]['status'] = 'running'
         self.steps[idx]['start'] = time.time()
+        self._write_progress_file()
         if not self._ansi:
             print(f"[{idx+1}/{len(self.step_names)}] {self.step_names[idx]}...")
         self._render()
@@ -71,6 +98,7 @@ class ReleaseProgress:
         step = self.steps[self.current]
         step['status'] = 'done'
         step['duration'] = time.time() - step['start']
+        self._write_progress_file()
         if not self._ansi:
             print(f"[{self.current+1}/{len(self.step_names)}] ✓ {self.step_names[self.current]} ({self._fmt_duration(step['duration'])})")
         self._render()
@@ -79,6 +107,7 @@ class ReleaseProgress:
         """当前步骤的子步骤输出"""
         if self.current >= 0:
             self.steps[self.current]['subs'].append(msg)
+        self._write_progress_file()
         if not self._ansi:
             print(f"  │ {msg}")
         self._render()
@@ -89,6 +118,7 @@ class ReleaseProgress:
         self.steps[idx]['duration'] = 0
         if reason:
             self.steps[idx]['subs'].append(reason)
+        self._write_progress_file()
         if not self._ansi:
             print(f"[{idx+1}/{len(self.step_names)}] – {self.step_names[idx]} 跳过")
         self._render()
@@ -100,6 +130,7 @@ class ReleaseProgress:
         step['duration'] = time.time() - step.get('start', time.time())
         if msg:
             step['subs'].append(msg)
+        self._write_progress_file()
         if not self._ansi:
             print(f"[{self.current+1}/{len(self.step_names)}] ✗ {self.step_names[self.current]}: {msg}")
         self._render()
@@ -202,6 +233,26 @@ class ReleaseProgress:
         lines.append(f'    {"总耗时":<20s} {total:.1f}s ({m}m{s:02d}s)')
         lines.append('═' * W)
         print('\n'.join(lines))
+
+        # 写入最终完成状态到进度文件
+        from datetime import datetime as _dt
+        try:
+            data = {
+                'status': 'completed',
+                'version': self.version,
+                'completed_at': _dt.now().isoformat(timespec='seconds'),
+                'total_duration': round(total, 1),
+                'artifact': artifact_path.name,
+                'size_mb': round(size_mb, 1),
+                'steps': [
+                    {'name': name, 'status': step['status'],
+                     'duration': round(step['duration'], 1) if step['duration'] else None}
+                    for name, step in zip(self.step_names, self.steps)
+                ]
+            }
+            self._progress_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
 
 BASE_DIR = Path(__file__).parent.resolve()
 DIST_DIR = BASE_DIR / "dist"
