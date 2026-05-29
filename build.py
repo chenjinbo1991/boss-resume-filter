@@ -181,13 +181,21 @@ class ReleaseProgress:
         lines.append(f'  产物: {artifact_path.name} ({size_mb:.1f} MB)')
         lines.append('')
         lines.append('  步骤耗时:')
-        for name, step in zip(self.step_names, self.steps):
+        for idx, (name, step) in enumerate(zip(self.step_names, self.steps), 1):
             dur = self._fmt_duration(step.get('duration'))
             status = step['status']
-            if status == 'skipped':
-                lines.append(f'    {name:<20s} 跳过')
+            if status == 'done':
+                icon = '✓'
+                lines.append(f'    {idx}. {name:<20s} {icon} {dur.rjust(8)}')
+            elif status == 'skipped':
+                icon = '–'
+                lines.append(f'    {idx}. {name:<20s} {icon} 跳过')
+            elif status == 'failed':
+                icon = '✗'
+                lines.append(f'    {idx}. {name:<20s} {icon} 失败')
             else:
-                lines.append(f'    {name:<20s} {dur.rjust(8)}')
+                icon = ' '
+                lines.append(f'    {idx}. {name:<20s} {icon} {dur.rjust(8)}')
         lines.append('  ' + '─' * 30)
         m, s = divmod(int(total), 60)
         lines.append(f'    {"总耗时":<20s} {total:.1f}s ({m}m{s:02d}s)')
