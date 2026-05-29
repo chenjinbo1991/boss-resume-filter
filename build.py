@@ -441,11 +441,46 @@ REQUIRED_IMPORTS = {
     "dotenv": "python-dotenv",
     "keyring": "keyring",
     "PIL": "Pillow",
+    "tkcalendar": "tkcalendar",
 }
+
+
+def _normalize_package_name(name):
+    """Normalize package names for requirements/import-check comparison."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _requirements_packages():
+    """Return direct package names declared in requirements.txt."""
+    packages = set()
+    requirements_path = BASE_DIR / "requirements.txt"
+    for raw_line in requirements_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        match = re.match(r"([A-Za-z0-9_.-]+)", line)
+        if match:
+            packages.add(_normalize_package_name(match.group(1)))
+    return packages
+
+
+def _check_dependency_manifest_complete():
+    """Ensure every requirements.txt package has an explicit import check."""
+    requirements = _requirements_packages()
+    checked = {_normalize_package_name(pkg_name) for pkg_name in REQUIRED_IMPORTS.values()}
+    missing = sorted(requirements - checked)
+    if missing:
+        print("[错误] requirements.txt 中存在未纳入打包依赖检查的包：\n")
+        for pkg_name in missing:
+            print(f"  [X] {pkg_name}")
+        print("\n请同步更新 build.py 的 REQUIRED_IMPORTS，避免漏装依赖后仍然打包。")
+        sys.exit(1)
 
 
 def _check_dependencies():
     """打包前验证所有关键依赖已安装，缺失时直接中断并给出修复命令"""
+    _check_dependency_manifest_complete()
+
     missing = []
     for import_name, pkg_name in REQUIRED_IMPORTS.items():
         try:
@@ -458,7 +493,7 @@ def _check_dependencies():
         for import_name, pkg_name in missing:
             print(f"  [X] {pkg_name}（import '{import_name}' 失败）")
         print(f"\n请在 pack_venv 中安装缺失依赖后重试：")
-        print(f"  pack_venv\\Scripts\\pip install -r requirements.txt\n")
+        print("  $env:PYTHONUTF8='1'; pack_venv\\Scripts\\pip install -r requirements.txt\n")
         sys.exit(1)
 
     print("  [OK] 依赖检查通过\n")

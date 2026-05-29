@@ -45,6 +45,30 @@ CHROME_DEBUG_PORT_FILE = BASE_DIR / ".chrome_debug_port"
 ensure_config_files(BASE_DIR)
 
 
+class TextDateEntry(ttk.Entry):
+    """Fallback date entry used when tkcalendar is unavailable."""
+
+    def __init__(self, master=None, **kwargs):
+        kwargs.pop('date_pattern', None)
+        kwargs.pop('showweeknumbers', None)
+        kwargs.pop('locale', None)
+        self._date_var = tk.StringVar()
+        super().__init__(master, textvariable=self._date_var, **kwargs)
+        self.set_date(datetime.now().date())
+
+    def set_date(self, date_value):
+        if isinstance(date_value, datetime):
+            date_value = date_value.date()
+        self._date_var.set(date_value.strftime("%Y-%m-%d"))
+
+    def get_date(self):
+        return datetime.strptime(self._date_var.get().strip(), "%Y-%m-%d").date()
+
+
+if DateEntry is None:
+    DateEntry = TextDateEntry
+
+
 def get_font_family():
     """获取字体 - 支持跨平台降级"""
     # 优先使用微软雅黑，macOS/Linux 降级到系统字体
@@ -2447,6 +2471,8 @@ class BossFilterGUI:
         self.result_date_start_entry.pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
         self.result_date_start_entry.bind("<<DateEntrySelected>>",
                                           lambda e: self._validate_date_range('start'))
+        self.result_date_start_entry.bind("<Return>", lambda e: self._validate_date_range('start'))
+        self.result_date_start_entry.bind("<FocusOut>", lambda e: self._validate_date_range('start'))
 
         ttk.Label(filter_frame, text="~", font=self.font_label,
                  background=self.colors['bg_main']).pack(side="left", padx=int(2 * self.dpi_scale * self.zoom_factor))
@@ -2455,6 +2481,8 @@ class BossFilterGUI:
         self.result_date_end_entry.pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
         self.result_date_end_entry.bind("<<DateEntrySelected>>",
                                         lambda e: self._validate_date_range('end'))
+        self.result_date_end_entry.bind("<Return>", lambda e: self._validate_date_range('end'))
+        self.result_date_end_entry.bind("<FocusOut>", lambda e: self._validate_date_range('end'))
 
         # 默认日期范围：一周前 ~ 今天
         _today = datetime.now().date()
@@ -4666,7 +4694,9 @@ class BossFilterGUI:
     @staticmethod
     def _wrap_date_dropdown_mutex(this_entry, other_entry):
         """包装 DateEntry.drop_down，展开自己前先收起对方的下拉日历"""
-        original_drop_down = this_entry.drop_down
+        original_drop_down = getattr(this_entry, 'drop_down', None)
+        if not callable(original_drop_down):
+            return
 
         def _wrapped_drop_down():
             other_top = getattr(other_entry, '_top_cal', None)

@@ -71,10 +71,11 @@ boss-resume-filter/
 - macOS 打包使用 `--onedir --windowed` 生成 .app，Windows 使用 `--onefile --noconsole --runtime-tmpdir %LOCALAPPDATA%` 生成 EXE（`%LOCALAPPDATA%` 替代默认 `%TEMP%`，规避企业电脑临时目录策略限制导致的 PyInstaller 解压失败）
 - macOS DMG 使用系统自带 `hdiutil` 生成，ZIP 使用 Python `zipfile` 模块
 - **GitHub Actions 自动补齐打包**：推送 tag 后 CI 检查 Release 已有产物，只构建缺失的平台（`.github/workflows/release.yml`）；本地 Mac 发布时上传 DMG+ZIP → CI 构建 EXE；本地 Windows 发布时上传 EXE → CI 构建 DMG+ZIP；CI 只负责构建和上传 GitHub Release，不上传 Gitee；CI 模式使用 `--ci --release` 跳过虚拟环境切换和 git 操作
-- **覆盖发布按需重建对端**：`build.py --release` 上传当前平台产物后，自动检测变更是否需要重建对端（通过 `_needs_cross_platform_rebuild()` 判断）；纯文档或测试文件变更跳过 CI 重建，共享模块变更才触发 `gh workflow run release.yml`（Windows 发布删旧 DMG/ZIP，macOS 发布删旧 EXE）
+- **覆盖发布按需重建对端**：`build.py --release` 上传当前平台产物后，自动检测变更是否需要重建对端（通过 `_needs_cross_platform_rebuild()` 判断）；tests/、scripts/、docs/、*.md、build.py 等非构建文件变更跳过 CI 重建，共享模块变更才触发 `gh workflow run release.yml`（Windows 发布删旧 DMG/ZIP，macOS 发布删旧 EXE）
 - job_config.json、api_config.json、selectors.json 和 CHANGELOG.md 内嵌到 EXE 中，dist 中额外放置 job_config.json 供用户编辑
 - CHANGELOG.md 通过 `--add-data` 打包进 EXE，`gui_main.py:show_changelog()` 优先从 `sys._MEIPASS` 读取（PyInstaller 解压目录），回退到 `BASE_DIR`
 - 打包/发布前 `_preflight_checks()` 会验证依赖、敏感文件跟踪、`api_config.json` 明文 Key、源码编译、**CHANGELOG 同步**（核心代码有变更时 CHANGELOG.md 必须更新）、稳定单元回归和导入烟测
+- 新增或修改 `requirements.txt` 依赖时，必须同步更新 `build.py:REQUIRED_IMPORTS`；`build.py --check` 会校验依赖清单覆盖完整，防止打包虚拟环境漏装依赖后仍生成不可启动的 EXE
 - `build.py` 会显式收集 Anaconda Python 的 Tcl/Tk 运行库，防止 EXE 启动时报 `No module named 'tkinter'`
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 体验优化 / 问题修复"顺序分类时直接中断
 - CHANGELOG 面向用户，避免技术细节：描述"做了什么"和"对用户的好处"，不描述实现原理、内部模块、函数名、技术栈；Bug 修复只写现象和结果，不写根因和修复方案；分类用用户视角（"体验优化"而非"行为优化/构建改进"）；功能归类要准确反映适用范围；只记录原始需求和原始 bug，不记录开发过程中自己引入又修掉的问题
@@ -294,8 +295,8 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 的 `assets` 字段记录产物元数据（`size`、`sha256`），Windows 记录 EXE，macOS 同时记录 ZIP 和 DMG，供客户端校验下载完整性
-- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，分两步同步 Gitee：(1) `_gitee_get_release_cache()` 获取 Release 缓存信息；(2) `_gitee_upload_local()` 上传本地平台产物（EXE/DMG+config+readme）；(3) `_sync_gitee_from_github()` 轮询等待 CI 完成 → 并行下载对端产物到本地 → 并行上传全部产物到 Gitee（`ThreadPoolExecutor` 3 路并发）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送。发布过程显示详细进度（7 步主流程 + 子步骤），每步完成后显示耗时
-- **Gitee 上传鲁棒性**：所有 Gitee API 调用使用 `requests.Session` + `HTTPAdapter` 自动重试（429/5xx，3 次指数退避）；`_gitee_find_or_create_release()` 和 `_gitee_delete_asset()` 额外包装手动重试（3 次，间隔 5/10/15s）；`_gitee_upload_single()` 5 次重试（间隔 5/10/20/40s，总等待 75s）+ 600s 超时；批量操作前 `_gitee_ping()` 预检 API 连通性（3 次 HEAD 请求）
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，分两步同步 Gitee：(1) `_gitee_get_release_cache()` 获取 Release 缓存信息；(2) `_gitee_upload_local()` 上传本地平台产物（EXE/DMG+config+readme）；(3) `_sync_gitee_from_github()` 轮询等待 CI 完成 → 并行下载对端产物到本地 → 并行上传全部产物到 Gitee（`ThreadPoolExecutor` 3 路并发）；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送。发布过程通过 `ReleaseProgress` 实时重绘进度表（ANSI 光标控制），6 步状态 + 子步骤一目了然，结束后打印汇总表
+- **Gitee 上传鲁棒性**：所有 Gitee API 调用使用 `requests.Session` + `HTTPAdapter` 自动重试（429/5xx，3 次指数退避）；`_gitee_find_or_create_release()` 和 `_gitee_delete_asset()` 额外包装手动重试（3 次，间隔 5/10/15s）；`_gitee_upload_single()` 5 次重试（间隔 5/10/20/40s，总等待 75s）+ 600s 超时，**4xx 客户端错误直接抛出不重试**；批量操作前 `_gitee_ping()` 预检 API 连通性（3 次 HEAD 请求）
 - **Gitee 增量上传**：上传前获取远端附件的 size 和 created_at，与本地文件比对：大小一致且本地 mtime 不超过远端创建时间 5 分钟 → 跳过；否则删旧重传。避免重复上传和单文件失败后全量重传
 - **Gitee 覆盖发布**：重新发布同一版本时，增量比对后只重传有变化的文件；同时同步 Release 标题和正文（均以 CHANGELOG 为准）；附件信息通过 `attach_files` API 获取（releases 列表 API 不返回 ID/size）
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
