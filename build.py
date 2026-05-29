@@ -90,7 +90,7 @@ class ReleaseProgress:
         self.steps[idx]['start'] = time.time()
         self._write_progress_file()
         if not self._ansi:
-            print(f"[{idx+1}/{len(self.step_names)}] {self.step_names[idx]}...")
+            print(f"[{idx+1}/{len(self.step_names)}] {self.step_names[idx]}...", flush=True)
         self._render()
 
     def end_step(self):
@@ -100,7 +100,7 @@ class ReleaseProgress:
         step['duration'] = time.time() - step['start']
         self._write_progress_file()
         if not self._ansi:
-            print(f"[{self.current+1}/{len(self.step_names)}] ✓ {self.step_names[self.current]} ({self._fmt_duration(step['duration'])})")
+            print(f"[{self.current+1}/{len(self.step_names)}] ✓ {self.step_names[self.current]} ({self._fmt_duration(step['duration'])})", flush=True)
         self._render()
 
     def sub(self, msg):
@@ -109,7 +109,7 @@ class ReleaseProgress:
             self.steps[self.current]['subs'].append(msg)
         self._write_progress_file()
         if not self._ansi:
-            print(f"  │ {msg}")
+            print(f"  │ {msg}", flush=True)
         self._render()
 
     def skip_step(self, idx, reason=''):
@@ -120,7 +120,7 @@ class ReleaseProgress:
             self.steps[idx]['subs'].append(reason)
         self._write_progress_file()
         if not self._ansi:
-            print(f"[{idx+1}/{len(self.step_names)}] – {self.step_names[idx]} 跳过")
+            print(f"[{idx+1}/{len(self.step_names)}] – {self.step_names[idx]} 跳过", flush=True)
         self._render()
 
     def fail_step(self, msg=''):
@@ -132,7 +132,7 @@ class ReleaseProgress:
             step['subs'].append(msg)
         self._write_progress_file()
         if not self._ansi:
-            print(f"[{self.current+1}/{len(self.step_names)}] ✗ {self.step_names[self.current]}: {msg}")
+            print(f"[{self.current+1}/{len(self.step_names)}] ✗ {self.step_names[self.current]}: {msg}", flush=True)
         self._render()
 
     def _fmt_duration(self, d):
@@ -212,25 +212,30 @@ class ReleaseProgress:
         lines.append('═' * W)
         lines.append(f'  产物: {artifact_path.name} ({size_mb:.1f} MB)')
         lines.append('')
-        lines.append('  步骤耗时:')
+
+        # 表格格式的步骤耗时
+        lines.append(f'  {"序号":<4} {"任务名称":<20} {"状态":<6} {"耗时":>8}')
+        lines.append('  ' + '─' * 42)
         for idx, (name, step) in enumerate(zip(self.step_names, self.steps), 1):
             dur = self._fmt_duration(step.get('duration'))
             status = step['status']
             if status == 'done':
                 icon = '✓'
-                lines.append(f'    {idx}. {name:<20s} {icon} {dur.rjust(8)}')
+                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {dur:>8}')
             elif status == 'skipped':
                 icon = '–'
-                lines.append(f'    {idx}. {name:<20s} {icon} 跳过')
+                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {"跳过":>6}')
             elif status == 'failed':
                 icon = '✗'
-                lines.append(f'    {idx}. {name:<20s} {icon} 失败')
+                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {"失败":>6}')
             else:
                 icon = ' '
-                lines.append(f'    {idx}. {name:<20s} {icon} {dur.rjust(8)}')
-        lines.append('  ' + '─' * 30)
+                lines.append(f'  {idx:<4} {name:<20} {icon:<6} {dur:>8}')
+
+        lines.append('  ' + '─' * 42)
         m, s = divmod(int(total), 60)
-        lines.append(f'    {"总耗时":<20s} {total:.1f}s ({m}m{s:02d}s)')
+        total_str = f'{total:.1f}s ({m}m{s:02d}s)'
+        lines.append(f'  {"":4} {"总耗时":<20} {"":6} {total_str:>8}')
         lines.append('═' * W)
         print('\n'.join(lines))
 
@@ -1234,7 +1239,7 @@ def _gh_release(version, release_title, release_notes, progress=None):
 
     def _sub(msg):
         """子步骤报告：同时打印和更新进度表"""
-        print(f"    {msg}")
+        print(f"    {msg}", flush=True)
         if progress:
             progress.sub(msg)
 
