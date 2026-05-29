@@ -1632,15 +1632,27 @@ def _local_build_outputs():
 
 
 def _build_input_files():
-    """Return files that affect the PyInstaller output."""
-    files = [
-        "bossmaster.py", "gui_main.py", "filtering.py", "llm_eval.py",
-        "storage.py", "doc_parser.py", "security.py", "constants.py",
-        "paths.py", "icons.py", "updater.py", "migrate_keys.py",
-        "build.py", "requirements.txt", "job_config.json",
+    """Return files that affect the PyInstaller output.
+
+    Auto-scan all .py files in project root (excluding test files),
+    plus config files. This avoids missing newly added modules.
+    """
+    # 扫描项目根目录的所有 .py 文件
+    py_files = []
+    for f in BASE_DIR.glob("*.py"):
+        # 排除测试文件
+        if f.name.startswith("test_") or f.name.endswith("_test.py"):
+            continue
+        py_files.append(f.name)
+
+    # 配置文件（影响打包内容）
+    config_files = [
+        "requirements.txt", "job_config.json",
         "api_config.json", "selectors.json", "CHANGELOG.md",
     ]
-    return [BASE_DIR / f for f in files if (BASE_DIR / f).exists()]
+
+    all_files = py_files + config_files
+    return [BASE_DIR / f for f in all_files if (BASE_DIR / f).exists()]
 
 
 def _build_fingerprint(pyinstaller_cmd):
