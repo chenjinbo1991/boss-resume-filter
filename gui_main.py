@@ -2035,11 +2035,27 @@ class BossFilterGUI:
         row1 = ttk.Frame(input_frame, style='TFrame')
         row1.pack(fill="x")
 
+        # 服务商显示名称映射（内部键 -> 显示名称）
+        self.PROVIDER_DISPLAY = {
+            "qwen": "通义千问 (Qwen)",
+            "deepseek": "DeepSeek",
+            "kimi": "Kimi (月之暗面)",
+            "zhipu": "智谱 (Zhipu)",
+            "minimax": "MiniMax",
+            "xiaomi": "小米 (Xiaomi)",
+            "stepfun": "阶跃星辰 (StepFun)",
+            "openai": "OpenAI",
+            "anthropic": "Anthropic (Claude)",
+            "custom": "自定义 (Custom)"
+        }
+        # 反向映射（显示名称 -> 内部键），用于加载配置时转换
+        self.DISPLAY_TO_KEY = {v: k for k, v in self.PROVIDER_DISPLAY.items()}
+
         ttk.Label(row1, text="服务商:", font=self.font_label, width=UI_CONFIG['label_width_provider']).pack(side="left")
-        self.api_provider_var = tk.StringVar(value="qwen")
+        self.api_provider_var = tk.StringVar(value=self.PROVIDER_DISPLAY["qwen"])
         self.api_provider_combo = ttk.Combobox(row1, textvariable=self.api_provider_var,
-                                               values=["qwen", "deepseek", "kimi", "zhipu", "minimax", "xiaomi", "stepfun", "openai", "anthropic", "custom"],
-                                               width=15, font=self.font_label)
+                                               values=list(self.PROVIDER_DISPLAY.values()),
+                                               width=18, font=self.font_label)
         self.api_provider_combo.pack(side="left", padx=(int(5 * self.dpi_scale * self.zoom_factor), int(20 * self.dpi_scale * self.zoom_factor)))
         self.api_provider_combo.bind("<<ComboboxSelected>>", self.on_api_provider_changed)
 
@@ -2166,7 +2182,10 @@ class BossFilterGUI:
         if not hasattr(self, 'api_provider_var'):
             return
 
-        self.api_provider_var.set(self.api_config.get("api_provider", "qwen"))
+        # 将内部键转换为显示名称（兼容旧配置）
+        provider_key = self.api_config.get("api_provider", "qwen")
+        provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
+        self.api_provider_var.set(provider_display)
         self.api_key_var.set(self.api_config.get("api_key", ""))
         self.api_base_url_var.set(self.api_config.get("base_url", ""))
         self.api_model_var.set(self.api_config.get("model", ""))
@@ -2213,10 +2232,12 @@ class BossFilterGUI:
 
         for model_config in saved_models:
             name = model_config.get("model", "")
-            provider = model_config.get("api_provider", "")
+            provider_key = model_config.get("api_provider", "")
+            # 将内部键转换为显示名称
+            provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
             base_url = model_config.get("base_url", "")
             is_current = "✓ 使用中" if name == current_model else ""
-            self.model_list_tree.insert("", "end", values=(name, provider, base_url), tags=('current' if is_current else ''))
+            self.model_list_tree.insert("", "end", values=(name, provider_display, base_url), tags=('current' if is_current else ''))
 
         # 设置使用中标记的样式
         self.model_list_tree.tag_configure('current', foreground=self.colors['success'])
@@ -3732,7 +3753,7 @@ class BossFilterGUI:
                 self.api_config["api_key"] = ""
                 self.api_config["base_url"] = ""
                 # 清空 UI 输入
-                self.api_provider_var.set("qwen")
+                self.api_provider_var.set(self.PROVIDER_DISPLAY["qwen"])
                 self.api_key_var.set("")
                 self.api_base_url_var.set("")
                 self.api_model_var.set("")
@@ -3759,7 +3780,9 @@ class BossFilterGUI:
         # 获取选中的模型信息
         item = self.model_list_tree.item(selection[0])
         model_name = item['values'][0]
-        provider = item['values'][1]
+        provider_display = item['values'][1]
+        # 将显示名称转换为内部键
+        provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
 
         # 查找对应的配置
         model_config = None
@@ -3770,7 +3793,7 @@ class BossFilterGUI:
 
         if model_config:
             # 从系统钥匙串读取该服务商的 API Key
-            saved_api_key = get_api_key(provider)
+            saved_api_key = get_api_key(provider_key)
 
             if not saved_api_key:
                 messagebox.showwarning("警告",
@@ -3782,7 +3805,7 @@ class BossFilterGUI:
                 return
 
             # 更新当前使用的模型配置（包括 API Key）
-            self.api_provider_var.set(provider)
+            self.api_provider_var.set(provider_display)
             self.api_key_var.set(saved_api_key)
             self.api_base_url_var.set(model_config.get("base_url", ""))
             self.api_model_var.set(model_name)
@@ -3814,7 +3837,9 @@ class BossFilterGUI:
     def save_api_config(self):
         """保存 API 配置 - API Key 按服务商加密存储到系统钥匙串"""
         try:
-            provider = self.api_provider_var.get().strip()
+            provider_display = self.api_provider_var.get().strip()
+            # 将显示名称转换为内部键（兼容旧配置）
+            provider = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
             model_name = self.api_model_var.get().strip()
             api_key = self.api_key_var.get().strip()
             base_url = self.api_base_url_var.get().strip()
@@ -3885,7 +3910,9 @@ class BossFilterGUI:
 
     def on_api_provider_changed(self, event):
         """API 服务商改变时更新默认配置"""
-        provider = self.api_provider_var.get()
+        display_name = self.api_provider_var.get()
+        # 将显示名称转换为内部键（兼容旧配置）
+        provider = self.DISPLAY_TO_KEY.get(display_name, display_name)
 
         # 主流服务商默认配置
         provider_defaults = {
@@ -3906,8 +3933,8 @@ class BossFilterGUI:
                 "model": "glm-4"
             },
             "minimax": {
-                "base_url": "https://api.minimax.chat/v1",
-                "model": "abab6.5s-chat"
+                "base_url": "https://api.minimaxi.com/v1",
+                "model": "MiniMax-M2.5"
             },
             "xiaomi": {
                 "base_url": "https://api.ai.xiaomi.com/v1",
