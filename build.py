@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -769,6 +770,84 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
+def _asset_digest_sha256(asset_info):
+    """Extract a sha256 digest from release asset metadata when available."""
+    for key in ("digest", "sha256"):
+        value = asset_info.get(key) if asset_info else None
+        if not value:
+            continue
+        value = str(value)
+        if value.startswith("sha256:"):
+            value = value.split(":", 1)[1]
+        if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+            return value.lower()
+    return None
+
+
+def _remote_file_sha256(url, token=None):
+    """Download a remote file stream and return its SHA256 digest."""
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    session = _gitee_session()
+    resp = session.get(url, headers=headers, stream=True, timeout=600)
+    resp.raise_for_status()
+    digest = hashlib.sha256()
+    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+        if chunk:
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _github_asset_matches_local(tag, local_path, remote_asset):
+    """Return True when a GitHub Release asset has identical file content."""
+    local_size = local_path.stat().st_size
+    remote_size = int(remote_asset.get("size") or 0)
+    if remote_size != local_size:
+        return False, f"大小不一致 (本地 {local_size} vs 远端 {remote_size})"
+
+    local_sha = _sha256_file(local_path)
+    remote_sha = _asset_digest_sha256(remote_asset)
+    if remote_sha:
+        if remote_sha == local_sha:
+            return True, f"SHA256 一致 ({local_size} bytes)"
+        return False, "SHA256 不一致"
+
+    compare_dir = Path(tempfile.mkdtemp(prefix="gh_asset_compare_"))
+    try:
+        remote_path = _download_from_github_release(tag, local_path.name, compare_dir)
+        remote_sha = _sha256_file(remote_path)
+        if remote_sha == local_sha:
+            return True, f"SHA256 一致 ({local_size} bytes)"
+        return False, "SHA256 不一致"
+    finally:
+        shutil.rmtree(compare_dir, ignore_errors=True)
+
+
+def _gitee_asset_matches_local(local_path, remote_asset, owner, repo, tag, token=None):
+    """Return True when a Gitee Release asset has identical file content."""
+    local_size = local_path.stat().st_size
+    remote_size = int(remote_asset.get("size") or 0)
+    if remote_size != local_size:
+        return False, f"大小不一致 (本地 {local_size} vs 远端 {remote_size})"
+
+    local_sha = _sha256_file(local_path)
+    remote_sha = _asset_digest_sha256(remote_asset)
+    if remote_sha:
+        if remote_sha == local_sha:
+            return True, f"SHA256 一致 ({local_size} bytes)"
+        return False, "SHA256 不一致"
+
+    url = _gitee_asset_url(owner, repo, tag, local_path.name)
+    try:
+        remote_sha = _remote_file_sha256(url, token=token)
+    except requests.exceptions.RequestException as e:
+        return False, f"远端校验失败 ({e})"
+    if remote_sha == local_sha:
+        return True, f"SHA256 一致 ({local_size} bytes)"
+    return False, "SHA256 不一致"
+
+
 def _release_asset_key(path_or_name):
     """Map release artifact filename to latest.json assets key."""
     name = Path(path_or_name).name
@@ -779,6 +858,13 @@ def _release_asset_key(path_or_name):
     if name == "BOSS_ResumeFilter.dmg":
         return "macos_dmg"
     return None
+
+
+def _current_platform_update_artifact_names():
+    """Return artifact names whose changes require rebuilding the opposite platform."""
+    if IS_MAC:
+        return {"BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"}
+    return {"BOSS_ResumeFilter.exe"}
 
 
 def _release_asset_metadata(extra_paths=None):
@@ -1116,24 +1202,14 @@ def _gh_release(version, release_title, release_notes, progress=None):
         print("[错误] gh CLI 未安装或未登录，请先运行 gh auth login")
         sys.exit(1)
 
-    _sub('清理 GitHub Release 旧资源...')
-    # 删除 Release 中已有的当前平台资源（保留对端产物，由 _trigger_cross_platform_ci 处理）
+    _sub('检查 GitHub Release 旧资源...')
     existing = subprocess.run(["gh", "release", "view", tag, "--json", "assets"],
                               capture_output=True, text=True, cwd=BASE_DIR)
+    remote_assets = {}
     if existing.returncode == 0 and existing.stdout.strip():
         import json
         assets = json.loads(existing.stdout).get("assets", [])
-        # 只删当前平台产物，保留对端（Windows 保留 DMG/ZIP，macOS 保留 EXE）
-        if IS_MAC:
-            skip_names = {"BOSS_ResumeFilter.exe"}
-        else:
-            skip_names = {"BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"}
-        for a in assets:
-            if a['name'] in skip_names:
-                continue
-            _sub(f'删除旧资源: {a["name"]}')
-            subprocess.run(["gh", "release", "delete-asset", tag, a["name"], "-y"],
-                           cwd=BASE_DIR, check=True)
+        remote_assets = {a["name"]: a for a in assets}
 
     # 创建 Release（如果已存在则跳过创建步骤）
     r = subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=BASE_DIR)
@@ -1156,16 +1232,40 @@ def _gh_release(version, release_title, release_notes, progress=None):
         _notes_file.unlink(missing_ok=True)
 
     _sub(f'上传 {len(artifacts)} 个文件到 GitHub...')
+    uploaded_names = set()
     for f, label in artifacts:
         if f.exists():
-            subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
-                           cwd=BASE_DIR, check=True)
-            _sub(f'[OK] {f.name}')
+            remote_asset = remote_assets.get(f.name)
+            if remote_asset:
+                same, reason = _github_asset_matches_local(tag, f, remote_asset)
+                if same:
+                    _sub(f'[跳过] {f.name} 已一致: {reason}')
+                    continue
+                _sub(f'[更新] {f.name}: {reason}')
+            for attempt in range(3):
+                try:
+                    subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
+                                   cwd=BASE_DIR, check=True)
+                    uploaded_names.add(f.name)
+                    _sub(f'[OK] {f.name}')
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt < 2:
+                        _sub(f'[重试] {f.name} 上传失败 (attempt {attempt+1}/3), 5s 后重试...')
+                        time.sleep(5)
+                    else:
+                        _sub(f'[失败] {f.name} 上传失败: {e}')
+                        raise
         else:
             _sub(f'[跳过] {f.name}')
 
-    _sub('触发跨平台 CI 构建...')
-    need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
+    changed_update_artifacts = uploaded_names & _current_platform_update_artifact_names()
+    if changed_update_artifacts:
+        _sub(f'检查是否需要跨平台 CI 重建: {", ".join(sorted(changed_update_artifacts))}')
+        need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
+    else:
+        _sub('跳过跨平台 CI 检查：当前平台更新产物未变化')
+        need_ci, old_assets_info = False, {}
 
     # 获取 Gitee Release 缓存（一次 API 调用，两个上传函数复用）
     _sub('准备 Gitee Release 上传...')
@@ -1288,13 +1388,22 @@ def _delete_github_release_assets(tag, asset_names):
     """从 GitHub Release 删除指定产物。返回成功删除的文件名列表。"""
     deleted = []
     for name in asset_names:
-        r = subprocess.run(
-            ["gh", "release", "delete-asset", tag, name, "-y"],
-            capture_output=True, text=True, cwd=BASE_DIR,
-        )
-        if r.returncode == 0:
-            print(f"  [OK] 已删除旧产物: {name}")
-            deleted.append(name)
+        success = False
+        for attempt in range(3):
+            r = subprocess.run(
+                ["gh", "release", "delete-asset", tag, name, "-y"],
+                capture_output=True, text=True, cwd=BASE_DIR,
+            )
+            if r.returncode == 0:
+                print(f"  [OK] 已删除旧产物: {name}")
+                deleted.append(name)
+                success = True
+                break
+            if attempt < 2:
+                print(f"  [重试] 删除 {name} 失败 (attempt {attempt+1}/3), 5s 后重试...")
+                time.sleep(5)
+        if not success:
+            print(f"  [警告] 删除 {name} 失败: {r.stderr}")
     return deleted
 
 
@@ -1512,29 +1621,6 @@ def _gitee_fetch_assets(api_base, token, release_id, retry_fn=None):
         for a in resp.json()
     }
 
-
-def _local_file_newer(local_path: Path, remote_created_at: str, tolerance_seconds: int = 300) -> bool:
-    """判断本地文件是否比远端附件"显著"更新。
-
-    remote_created_at: Gitee 返回的 ISO 8601 时间戳（如 "2026-05-27T10:30:00+08:00"）。
-    tolerance_seconds: 容忍窗口（默认 300s = 5 分钟）。
-    本地 mtime 比远端创建时间新但在容忍窗口内 → 视为同一次构建产物，返回 False。
-    解析失败时保守返回 True（触发重传）。
-    """
-    if not remote_created_at:
-        return True  # 无时间戳，保守重传
-    try:
-        from datetime import datetime, timezone
-        remote_dt = datetime.fromisoformat(remote_created_at.replace("Z", "+00:00"))
-        local_mtime = local_path.stat().st_mtime
-        local_dt = datetime.fromtimestamp(local_mtime, tz=timezone.utc)
-        delta = (local_dt - remote_dt).total_seconds()
-        # 本地比远端新超过容忍窗口 → 显著更新
-        return delta > tolerance_seconds
-    except (ValueError, OSError):
-        return True  # 解析失败，保守重传
-
-
 def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
     """上传单个文件到 Gitee Release，带重试。返回 (文件名, 响应JSON)。
 
@@ -1684,24 +1770,19 @@ def _gitee_upload_local(version, release_title, release_notes, release_cache=Non
         failed = []
 
         def _process_and_upload(files, label):
-            """增量上传：大小一致且本地未更新的跳过，其余删旧后上传。"""
+            """增量上传：文件内容一致则跳过，其余删旧后上传。"""
             if not files:
                 return
             to_upload = []
             for f in files:
                 if f.name in existing:
                     remote = existing[f.name]
-                    remote_size = remote["size"]
-                    local_size = f.stat().st_size
-                    if remote_size == local_size and not _local_file_newer(f, remote.get("created_at", "")):
+                    same, reason = _gitee_asset_matches_local(f, remote, owner, repo, tag, token=token)
+                    if same:
                         url = _gitee_asset_url(owner, repo, tag, f.name)
                         downloads_cn[_downloads_cn_key(f.name)] = url
-                        print(f"  [跳过] Gitee 已有且一致: {f.name} ({local_size} bytes)")
+                        print(f"  [跳过] Gitee 已有且一致: {f.name} ({reason})")
                         continue
-                    if remote_size != local_size:
-                        reason = f"大小不一致 (本地 {local_size} vs 远端 {remote_size})"
-                    else:
-                        reason = f"本地更新 (远端 {remote.get('created_at', '?')})"
                     print(f"  [更新] Gitee {reason}: {f.name}")
                     _gitee_delete_asset(api_base, token, release_id, remote["id"], f.name)
                 to_upload.append(f)
@@ -1923,24 +2004,19 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         failed = []
 
         def _upload_batch(files, label):
-            """增量上传：大小一致且本地未更新的跳过，其余删旧后上传。"""
+            """增量上传：文件内容一致则跳过，其余删旧后上传。"""
             if not files:
                 return
             to_upload = []
             for f in files:
                 if f.name in existing:
                     remote = existing[f.name]
-                    remote_size = remote["size"]
-                    local_size = f.stat().st_size
-                    if remote_size == local_size and not _local_file_newer(f, remote.get("created_at", "")):
+                    same, reason = _gitee_asset_matches_local(f, remote, owner, repo, tag, token=token)
+                    if same:
                         url = _gitee_asset_url(owner, repo, tag, f.name)
                         downloads_cn[_downloads_cn_key(f.name)] = url
-                        print(f"  [跳过] Gitee 已有且一致: {f.name} ({local_size} bytes)")
+                        print(f"  [跳过] Gitee 已有且一致: {f.name} ({reason})")
                         continue
-                    if remote_size != local_size:
-                        reason = f"大小不一致 (本地 {local_size} vs 远端 {remote_size})"
-                    else:
-                        reason = f"本地更新 (远端 {remote.get('created_at', '?')})"
                     print(f"  [更新] Gitee {reason}: {f.name}")
                     _gitee_delete_asset(api_base, token, release_id, remote["id"], f.name)
                 to_upload.append(f)
