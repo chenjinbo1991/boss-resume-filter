@@ -1228,14 +1228,35 @@ def _git_push(version, auto=False):
             print("  已取消推送。tag 和提交保留在本地，可稍后手动推送。")
             sys.exit(0)
 
-    subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
-    print(f"  [OK] master 已推送")
+    # 推送 master，带重试
+    for attempt in range(3):
+        try:
+            subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
+            print(f"  [OK] master 已推送")
+            break
+        except subprocess.CalledProcessError as e:
+            if attempt < 2:
+                print(f"  [重试] 推送 master 失败 (attempt {attempt+1}/3), 5s 后重试...")
+                time.sleep(5)
+            else:
+                raise
 
     push_cmd = ["git", "push", "origin", tag]
     if tag_exists_remote:
         push_cmd.append("--force")
-    subprocess.run(push_cmd, cwd=BASE_DIR, check=True)
-    print(f"  [OK] {tag} 已推送")
+
+    # 推送 tag，带重试
+    for attempt in range(3):
+        try:
+            subprocess.run(push_cmd, cwd=BASE_DIR, check=True)
+            print(f"  [OK] {tag} 已推送")
+            break
+        except subprocess.CalledProcessError as e:
+            if attempt < 2:
+                print(f"  [重试] 推送 {tag} 失败 (attempt {attempt+1}/3), 5s 后重试...")
+                time.sleep(5)
+            else:
+                raise
 
 
 def _print_progress(step, total, message, start_time=None):
@@ -1293,15 +1314,35 @@ def _gh_release(version, release_title, release_notes, progress=None):
     _notes_file.write_text(release_notes, encoding="utf-8")
     try:
         if r.returncode != 0:
-            subprocess.run(
-                ["gh", "release", "create", tag, "--title", release_title, "--notes-file", str(_notes_file)],
-                cwd=BASE_DIR, check=True)
-            _sub(f'GitHub Release 已创建: {tag}')
+            # 创建 Release，带重试
+            for attempt in range(3):
+                try:
+                    subprocess.run(
+                        ["gh", "release", "create", tag, "--title", release_title, "--notes-file", str(_notes_file)],
+                        cwd=BASE_DIR, check=True)
+                    _sub(f'GitHub Release 已创建: {tag}')
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt < 2:
+                        _sub(f'[重试] 创建 Release 失败 (attempt {attempt+1}/3), 5s 后重试...')
+                        time.sleep(5)
+                    else:
+                        raise
         else:
             _sub(f'GitHub Release 已存在: {tag}')
-            subprocess.run(
-                ["gh", "release", "edit", tag, "--title", release_title, "--notes-file", str(_notes_file)],
-                cwd=BASE_DIR, check=True)
+            # 更新 Release，带重试
+            for attempt in range(3):
+                try:
+                    subprocess.run(
+                        ["gh", "release", "edit", tag, "--title", release_title, "--notes-file", str(_notes_file)],
+                        cwd=BASE_DIR, check=True)
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt < 2:
+                        _sub(f'[重试] 更新 Release 失败 (attempt {attempt+1}/3), 5s 后重试...')
+                        time.sleep(5)
+                    else:
+                        raise
     finally:
         _notes_file.unlink(missing_ok=True)
 
@@ -1923,13 +1964,20 @@ def _download_from_github_release(tag, asset_name, dest_dir):
     )
     # 使用 gh CLI 下载更可靠（自动认证）
     dest = Path(dest_dir) / asset_name
-    r = subprocess.run(
-        ["gh", "release", "download", tag, "-p", asset_name, "-D", str(dest_dir), "--clobber"],
-        capture_output=True, text=True, cwd=BASE_DIR,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"gh download 失败: {r.stderr.strip()}")
-    return dest
+
+    # 重试机制：下载失败时等待 5s 后重试，最多 3 次
+    for attempt in range(3):
+        r = subprocess.run(
+            ["gh", "release", "download", tag, "-p", asset_name, "-D", str(dest_dir), "--clobber"],
+            capture_output=True, text=True, cwd=BASE_DIR,
+        )
+        if r.returncode == 0:
+            return dest
+        if attempt < 2:
+            print(f"  [重试] 下载 {asset_name} 失败 (attempt {attempt+1}/3), 5s 后重试...")
+            time.sleep(5)
+
+    raise RuntimeError(f"gh download 失败 (3 次重试后): {r.stderr.strip()}")
 
 
 def _wait_for_github_release_assets(tag, asset_names, max_wait=600, poll_interval=30):
@@ -2405,8 +2453,18 @@ def main():
         subprocess.run(["git", "add", "latest.json"], cwd=BASE_DIR, check=True)
         subprocess.run(["git", "commit", "-m", "chore: 更新自动更新清单"],
                        cwd=BASE_DIR, check=True)
-        subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
-        progress.sub('latest.json 已自动提交并推送')
+        # 推送 latest.json，带重试
+        for attempt in range(3):
+            try:
+                subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
+                progress.sub('latest.json 已自动提交并推送')
+                break
+            except subprocess.CalledProcessError as e:
+                if attempt < 2:
+                    progress.sub(f'[重试] 推送 latest.json 失败 (attempt {attempt+1}/3), 5s 后重试...')
+                    time.sleep(5)
+                else:
+                    raise
         progress.end_step()
 
         # 最终汇总表
