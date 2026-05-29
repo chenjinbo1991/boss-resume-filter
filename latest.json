@@ -10,19 +10,19 @@
   },
   "assets": {
     "windows": {
-      "size": 50982802,
-      "sha256": "aacbebdff74ad35c690e935adb1305f7f302e9ce1e9aa15ef941c502045fcc4a"
+      "size": 61147342,
+      "sha256": "085b62c0579bafe66b3b8dc264492a8157111b2af6652cbd05fcacee38a49c21"
     },
     "macos": {
-      "size": 48330402,
-      "sha256": "116feb60c5addb469f89429995deec41e9224d8d58b77e992becb10350429df1"
+      "size": 48333375,
+      "sha256": "9082028e86b436d66bf95b144ae3bd1ea1dd22f6c68756233a00ff84df69bf44"
     },
     "macos_dmg": {
-      "size": 44187039,
-      "sha256": "ad48eb38b37dad2c0418ce70d46579f4bbbc1ca301e9820120f7388e6ec11ff8"
+      "size": 44176793,
+      "sha256": "415db0bce7dc5a1581ebe91576a21585f66bcb1950afe1f7a2d548bd809856f8"
     }
   },
-  "release_notes": "### 体验优化\n- **筛选结果日期默认一周**：日期过滤默认显示最近一周的结果（起始一周前、终止今天），重置按钮也恢复为这个范围，减少手动选日期的操作\n\n### 问题修复\n- **弹窗背景色统一**：修复\"选择模型\"和\"清空候选人\"弹窗在 macOS 上文字和按钮出现白色方块的问题；Windows 不受影响",
+  "release_notes": "### 体验优化\n- **筛选结果日期默认一周**：日期过滤默认显示最近一周的结果（起始一周前、终止今天），重置按钮也恢复为这个范围，减少手动选日期的操作\n\n### 问题修复\n- **弹窗背景色统一**：修复\"选择模型\"和\"清空候选人\"弹窗在 macOS 上文字和按钮出现白色方块的问题；Windows 不受影响\n- **升级后启动兼容**：修复部分电脑升级后因日历控件缺失导致 App 启动报错的问题；打包前也会提前检查日历依赖是否完整，并校验依赖清单没有遗漏",
   "downloads_cn": {
     "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/job_config.json",
     "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.8.12/README.md",
