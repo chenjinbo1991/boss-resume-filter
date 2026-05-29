@@ -30,8 +30,159 @@ if sys.platform == 'win32':
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except (AttributeError, OSError):
         pass  # Python < 3.7 或不支持 reconfigure
+
+# Windows 终端启用 ANSI 转义码（光标控制、颜色），用于实时进度表重绘
+if sys.platform == 'win32':
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+
+class ReleaseProgress:
+    """实时进度表：每次状态变化时重绘整张表，用户一目了然。"""
+
+    def __init__(self, version, step_names):
+        self.version = version
+        self.step_names = step_names
+        self.steps = [{'status': 'pending', 'duration': None, 'subs': []} for _ in step_names]
+        self.current = -1
+        self.start_time = time.time()
+        self._lines_printed = 0
+        # 检测终端是否支持 ANSI
+        self._ansi = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+
+    def start_step(self, idx):
+        """开始第 idx 步（0-based）"""
+        self.current = idx
+        self.steps[idx]['status'] = 'running'
+        self.steps[idx]['start'] = time.time()
+        self._render()
+
+    def end_step(self):
+        """结束当前步骤"""
+        step = self.steps[self.current]
+        step['status'] = 'done'
+        step['duration'] = time.time() - step['start']
+        self._render()
+
+    def sub(self, msg):
+        """当前步骤的子步骤输出"""
+        if self.current >= 0:
+            self.steps[self.current]['subs'].append(msg)
+        self._render()
+
+    def skip_step(self, idx, reason=''):
+        """跳过某步骤"""
+        self.steps[idx]['status'] = 'skipped'
+        self.steps[idx]['duration'] = 0
+        if reason:
+            self.steps[idx]['subs'].append(reason)
+        self._render()
+
+    def fail_step(self, msg=''):
+        """当前步骤失败"""
+        step = self.steps[self.current]
+        step['status'] = 'failed'
+        step['duration'] = time.time() - step.get('start', time.time())
+        if msg:
+            step['subs'].append(msg)
+        self._render()
+
+    def _fmt_duration(self, d):
+        if d is None:
+            return '—'
+        if d < 1:
+            return f'{d:.1f}s'
+        if d < 60:
+            return f'{d:.0f}s'
+        m, s = divmod(int(d), 60)
+        return f'{m}m{s}s'
+
+    def _render(self):
+        """重绘整张进度表"""
+        if not self._ansi:
+            return  # 非终端环境不重绘，由调用方 fallback 打印
+        # 光标上移到表头位置
+        if self._lines_printed > 0:
+            sys.stdout.write(f'\033[{self._lines_printed}A\033[J')
+        lines = self._build_lines()
+        for line in lines:
+            sys.stdout.write(line + '\n')
+        sys.stdout.flush()
+        self._lines_printed = len(lines)
+
+    def _build_lines(self):
+        from datetime import datetime
+        W = 60
+        elapsed = time.time() - self.start_time
+        lines = []
+        # 表头
+        lines.append('═' * W)
+        ts = datetime.now().strftime('%H:%M:%S')
+        lines.append(f'  Release v{self.version}  ·  已开始 {ts}  ·  已用 {self._fmt_duration(elapsed)}')
+        lines.append('─' * W)
+        # 步骤
+        for i, (name, step) in enumerate(zip(self.step_names, self.steps)):
+            status = step['status']
+            dur = self._fmt_duration(step.get('duration'))
+            if status == 'done':
+                icon = '✓'
+                dur_str = dur.rjust(6)
+                lines.append(f'  [{i+1}/{len(self.step_names)}] {icon} {name:<24s} {dur_str}')
+            elif status == 'running':
+                running_elapsed = time.time() - step.get('start', time.time())
+                icon = '▶'
+                dur_str = self._fmt_duration(running_elapsed).rjust(6)
+                lines.append(f'  [{i+1}/{len(self.step_names)}] {icon} {name:<24s} {dur_str}  ← 进行中')
+                # 显示最近 3 条子步骤
+                for sub_msg in step['subs'][-3:]:
+                    lines.append(f'        │ {sub_msg}')
+            elif status == 'skipped':
+                icon = '–'
+                lines.append(f'  [{i+1}/{len(self.step_names)}] {icon} {name:<24s} 跳过')
+            elif status == 'failed':
+                icon = '✗'
+                dur_str = dur.rjust(6)
+                lines.append(f'  [{i+1}/{len(self.step_names)}] {icon} {name:<24s} {dur_str}')
+                for sub_msg in step['subs'][-2:]:
+                    lines.append(f'        │ {sub_msg}')
+            else:
+                lines.append(f'  [{i+1}/{len(self.step_names)}]   {name:<24s} —')
+        lines.append('─' * W)
+        return lines
+
+    def render_final(self, artifact_path, size_mb):
+        """最终汇总表（不再重绘，直接追加）"""
+        W = 60
+        total = time.time() - self.start_time
+        # 先清除进度表区域
+        if self._ansi and self._lines_printed > 0:
+            sys.stdout.write(f'\033[{self._lines_printed}A\033[J')
+            sys.stdout.flush()
+        lines = []
+        lines.append('═' * W)
+        lines.append(f'  ✓ v{self.version} 发布完成')
+        lines.append('═' * W)
+        lines.append(f'  产物: {artifact_path.name} ({size_mb:.1f} MB)')
+        lines.append('')
+        lines.append('  步骤耗时:')
+        for name, step in zip(self.step_names, self.steps):
+            dur = self._fmt_duration(step.get('duration'))
+            status = step['status']
+            if status == 'skipped':
+                lines.append(f'    {name:<20s} 跳过')
+            else:
+                lines.append(f'    {name:<20s} {dur.rjust(8)}')
+        lines.append('  ' + '─' * 30)
+        m, s = divmod(int(total), 60)
+        lines.append(f'    {"总耗时":<20s} {total:.1f}s ({m}m{s:02d}s)')
+        lines.append('═' * W)
+        print('\n'.join(lines))
 
 BASE_DIR = Path(__file__).parent.resolve()
 DIST_DIR = BASE_DIR / "dist"
@@ -884,12 +1035,18 @@ def _print_progress(step, total, message, start_time=None):
         print(f"\n[{step}/{total}] {message}")
 
 
-def _gh_release(version, release_title, release_notes):
+def _gh_release(version, release_title, release_notes, progress=None):
     """创建/更新 GitHub Release 并上传资源文件"""
     import time
     tag = f"v{version}"
     cfg = DIST_DIR / "job_config.json"
     readme = DIST_DIR / "README.md"
+
+    def _sub(msg):
+        """子步骤报告：同时打印和更新进度表"""
+        print(f"    {msg}")
+        if progress:
+            progress.sub(msg)
 
     # 按平台选择上传的文件
     if IS_MAC:
@@ -906,8 +1063,7 @@ def _gh_release(version, release_title, release_notes):
         print("[错误] gh CLI 未安装或未登录，请先运行 gh auth login")
         sys.exit(1)
 
-    step_start = time.time()
-    print(f"\n  [1/4] 清理 GitHub Release 旧资源...")
+    _sub('清理 GitHub Release 旧资源...')
     # 删除 Release 中已有的当前平台资源（保留对端产物，由 _trigger_cross_platform_ci 处理）
     existing = subprocess.run(["gh", "release", "view", tag, "--json", "assets"],
                               capture_output=True, text=True, cwd=BASE_DIR)
@@ -922,13 +1078,10 @@ def _gh_release(version, release_title, release_notes):
         for a in assets:
             if a['name'] in skip_names:
                 continue
-            print(f"    删除旧资源: {a['name']}")
+            _sub(f'删除旧资源: {a["name"]}')
             subprocess.run(["gh", "release", "delete-asset", tag, a["name"], "-y"],
                            cwd=BASE_DIR, check=True)
-    print(f"  [1/4] 清理完成 ({time.time() - step_start:.1f}s)")
 
-    step_start = time.time()
-    print(f"\n  [2/4] 创建/更新 GitHub Release...")
     # 创建 Release（如果已存在则跳过创建步骤）
     r = subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=BASE_DIR)
 
@@ -937,62 +1090,47 @@ def _gh_release(version, release_title, release_notes):
     _notes_file.write_text(release_notes, encoding="utf-8")
     try:
         if r.returncode != 0:
-            # Release 不存在，创建它
             subprocess.run(
                 ["gh", "release", "create", tag, "--title", release_title, "--notes-file", str(_notes_file)],
                 cwd=BASE_DIR, check=True)
-            print(f"    [OK] GitHub Release 已创建: {tag}")
+            _sub(f'GitHub Release 已创建: {tag}')
         else:
-            print(f"    [OK] GitHub Release 已存在: {tag}")
+            _sub(f'GitHub Release 已存在: {tag}')
             subprocess.run(
                 ["gh", "release", "edit", tag, "--title", release_title, "--notes-file", str(_notes_file)],
                 cwd=BASE_DIR, check=True)
-            print("    [OK] GitHub Release 标题和说明已同步")
     finally:
         _notes_file.unlink(missing_ok=True)
-    print(f"  [2/4] Release 创建/更新完成 ({time.time() - step_start:.1f}s)")
 
-    step_start = time.time()
-    print(f"\n  [3/4] 上传 {len(artifacts)} 个资源文件到 GitHub...")
-    # 上传资源
+    _sub(f'上传 {len(artifacts)} 个文件到 GitHub...')
     for f, label in artifacts:
         if f.exists():
             subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
                            cwd=BASE_DIR, check=True)
-            print(f"    [OK] 已上传: {f.name}")
+            _sub(f'[OK] {f.name}')
         else:
-            print(f"    [跳过] 文件不存在: {f.name}")
-    print(f"  [3/4] 上传完成 ({time.time() - step_start:.1f}s)")
+            _sub(f'[跳过] {f.name}')
 
-    step_start = time.time()
-    print(f"\n  [4/4] 触发跨平台 CI 构建...")
-    # 覆盖发布：删除对端产物 + 触发 CI 重建
+    _sub('触发跨平台 CI 构建...')
     need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
-    print(f"  [4/4] CI 触发完成 ({time.time() - step_start:.1f}s)")
 
     # 获取 Gitee Release 缓存（一次 API 调用，两个上传函数复用）
-    step_start = time.time()
-    print(f"\n>>> 准备 Gitee Release 上传...")
+    _sub('准备 Gitee Release 上传...')
     release_cache = _gitee_get_release_cache(version, release_title, release_notes)
 
     # 上传本地平台产物到 Gitee Release（国内下载源）
     downloads_cn = None
     if release_cache:
-        sub_start = time.time()
-        print(f"\n  [1/2] 上传本地产物到 Gitee...")
+        _sub('上传本地产物到 Gitee...')
         try:
             downloads_cn = _gitee_upload_local(version, release_title, release_notes, release_cache)
         except Exception as e:
-            print(f"  [警告] Gitee 本地产物上传失败: {e}")
-            print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
-        print(f"  [1/2] 本地产物上传完成 ({time.time() - sub_start:.1f}s)")
+            _sub(f'[警告] Gitee 本地产物上传失败: {e}')
 
-        # 等待 CI 完成，从 GitHub 下载对端产物并上传到 Gitee
-        sub_start = time.time()
         if need_ci:
-            print(f"\n  [2/2] 等待 CI 完成并同步对端产物到 Gitee...")
+            _sub('等待 CI 完成并同步对端产物到 Gitee...')
         else:
-            print(f"\n  [2/2] 同步对端产物到 Gitee（无需等待 CI）...")
+            _sub('同步对端产物到 Gitee...')
 
         try:
             gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
@@ -1001,12 +1139,9 @@ def _gh_release(version, release_title, release_notes):
                 downloads_cn = downloads_cn or {}
                 downloads_cn.update(gitee_sync)
         except Exception as e:
-            print(f"  [警告] Gitee 对端产物同步失败: {e}")
-            print(f"  可稍后手动执行: python build.py --gitee-upload {version}")
-        print(f"  [2/2] 对端产物同步完成 ({time.time() - sub_start:.1f}s)")
+            _sub(f'[警告] Gitee 对端产物同步失败: {e}')
 
-    print(f">>> Gitee 上传总计: {time.time() - step_start:.1f}s")
-
+    _sub('Release 发布完成')
     return downloads_cn
 
 
@@ -1038,48 +1173,42 @@ def _get_changed_files_since_tag():
 def _needs_cross_platform_rebuild(changed_files):
     """判断变更是否需要重建对端产物。
 
-    跨平台共享文件（改了需要重建）：
-    - 核心模块：gui_main.py, bossmaster.py, filtering.py, llm_eval.py, storage.py, doc_parser.py
-    - 基础设施：security.py, constants.py, paths.py, icons.py, updater.py
-    - 配置文件：selectors.json, job_config.json, api_config.json, requirements.txt
-
-    平台专属文件（改了只影响当前平台，不重建对端）：
-    - build.py（虽然有平台分支，但改动通常影响两个平台）
-
-    纯文档（不需要重建）：
-    - *.md 文件, latest.json
+    需要重建：核心模块、配置文件等影响构建产物的文件。
+    不需要重建：tests/、docs/、.md、脚本、CI 配置、build.py 等。
     """
     if changed_files is None:
         return True  # 无法判断，保守起见重建
 
-    # 跨平台共享文件
-    shared_files = {
-        'gui_main.py', 'bossmaster.py', 'filtering.py', 'llm_eval.py', 'storage.py',
-        'doc_parser.py', 'security.py', 'constants.py', 'paths.py', 'icons.py',
-        'updater.py', 'selectors.json', 'job_config.json', 'api_config.json',
-        'requirements.txt', 'build.py',
+    # 需要重建的文件（改了影响构建产物内容）
+    SHARED_BUILD_FILES = {
+        'gui_main.py', 'bossmaster.py', 'filtering.py', 'llm_eval.py',
+        'storage.py', 'doc_parser.py', 'security.py', 'constants.py',
+        'paths.py', 'icons.py', 'updater.py', 'selectors.json',
+        'job_config.json', 'api_config.json', 'requirements.txt',
     }
 
+    # 不需要重建的目录/文件前缀
+    SKIP_PREFIXES = (
+        'tests/', 'scripts/', 'docs/', '.github/', '.claude/',
+        'AGENTS.md', 'CHANGELOG.md', 'CLAUDE.md', 'DEPLOYMENT.md',
+        'GUI', 'PACKAGING.md', 'README', 'TODO.md',
+        'latest.json', '.gitignore', 'build.py',
+    )
+
     for f in changed_files:
-        # 跳过空字符串
         if not f.strip():
             continue
 
-        # 纯文档文件，不需要重建
-        if f.endswith('.md') or f == 'latest.json':
-            continue
-
-        # 测试文件，不需要重建
-        if f.startswith('tests/'):
-            continue
-
-        # 跨平台共享文件，需要重建
-        if f in shared_files:
+        # 明确需要重建
+        if f in SHARED_BUILD_FILES:
             return True
 
-        # 其他文件（如 .github/workflows/ 等），保守起见重建
-        print(f"  [信息] 发现未分类文件: {f}，默认重建")
-        return True
+        # 明确不需要重建（前缀匹配 + .md 后缀兜底）
+        if f.endswith('.md') or any(f.startswith(p) for p in SKIP_PREFIXES):
+            continue
+
+        # 未知文件：跳过（不保守触发 CI，避免每次发布都白等 CI）
+        print(f"  [信息] 未分类文件: {f}，跳过（不影响构建产物）")
 
     return False
 
@@ -1116,21 +1245,17 @@ def _delete_github_release_assets(tag, asset_names):
     return deleted
 
 
-def _verify_assets_deleted(tag, asset_names, retries=3, delay=5):
+def _verify_assets_deleted(tag, asset_names):
     """验证产物已从 GitHub Release 删除。
 
-    GitHub API 删除后可能有短暂延迟，轮询确认。
-    返回 True 表示全部已删除。
+    GitHub API 删除是同步操作，delete-asset 返回 0 即已删除。
+    只查询一次确认，不再轮询等待。
     """
-    for attempt in range(1, retries + 1):
-        current = _get_github_release_assets(tag)
-        still_present = [n for n in asset_names if n in current]
-        if not still_present:
-            return True
-        if attempt < retries:
-            print(f"  等待删除生效... ({attempt}/{retries})，仍存在: {', '.join(still_present)}")
-            time.sleep(delay)
-    print(f"  [警告] 删除未生效，仍存在: {', '.join(still_present)}")
+    current = _get_github_release_assets(tag)
+    still_present = [n for n in asset_names if n in current]
+    if not still_present:
+        return True
+    print(f"  [警告] 删除可能未生效，仍存在: {', '.join(still_present)}")
     return False
 
 
@@ -1360,7 +1485,7 @@ def _local_file_newer(local_path: Path, remote_created_at: str, tolerance_second
 def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
     """上传单个文件到 Gitee Release，带重试。返回 (文件名, 响应JSON)。
 
-    使用 Session 复用 TCP 连接，5 次重试（间隔 5/10/20/40s），总等待 75s。
+    只重试 5xx / 连接错误 / 超时。4xx 客户端错误直接抛出，不做无效重试。
     """
     session = _gitee_session()
     for attempt in range(max_retries):
@@ -1375,6 +1500,9 @@ def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
             resp.raise_for_status()
             return filepath.name, resp.json()
         except requests.exceptions.RequestException as e:
+            # 4xx 客户端错误不重试（参数错误、认证失败等）
+            if hasattr(e, 'response') and e.response is not None and 400 <= e.response.status_code < 500:
+                raise
             if attempt < max_retries - 1:
                 delay = 5 * (2 ** attempt)  # 5, 10, 20, 40
                 print(f"  [Gitee] {filepath.name} 上传失败 ({e})，{delay}s 后重试 ({attempt+1}/{max_retries})")
@@ -1895,22 +2023,24 @@ def main():
 ╚══════════════════════════════════════════════════════════════╝
 """)
 
-    # 定义发布流程步骤（用于进度显示）
-    total_steps = 7 if args.release else 2
-    current_step = 0
+    # 步骤名称定义（release 模式 6 步，纯打包模式 2 步）
+    if args.release:
+        step_names = ['发布前检查', 'PyInstaller 打包', 'Git 提交 + 打标签',
+                      '推送到远程仓库', 'Release 发布', 'latest.json 更新']
+    else:
+        step_names = ['发布前检查', 'PyInstaller 打包']
+    progress = ReleaseProgress(_read_version(), step_names)
 
-    # ---- 打包前：验证依赖、敏感路径、源码和测试 ----
-    current_step += 1
-    step_start = time.time()
-    print(f"\n[{current_step}/{total_steps}] 发布前检查（依赖、编译、测试）...")
+    # ---- 步骤 1：发布前检查 ----
+    progress.start_step(0)
     _preflight_checks(require_clean=not version_changed)
-    print(f"[{current_step}/{total_steps}] 发布前检查完成 ({time.time() - step_start:.1f}s)")
+    progress.end_step()
 
     clean_dist()
 
     tk_args, pyinstaller_env = _pyinstaller_tk_args()
     if tk_args:
-        print("  [OK] 将 Anaconda Tcl/Tk 运行库加入 PyInstaller")
+        progress.sub('将 Anaconda Tcl/Tk 运行库加入 PyInstaller')
 
     # CI 模式使用当前 Python，否则使用虚拟环境
     python_exe = sys.executable if args.ci else str(VENV_PYTHON)
@@ -1954,8 +2084,8 @@ def main():
         str(BASE_DIR / "gui_main.py")
     ]
 
-    current_step += 1
-    print(f"\n[{current_step}/{total_steps}] PyInstaller 打包（约 60-90 秒）...")
+    # ---- 步骤 2：PyInstaller 打包 ----
+    progress.start_step(1)
     os.chdir(BASE_DIR)
 
     # 使用 Popen 实时显示进度
@@ -1984,11 +2114,9 @@ def main():
         output_lines.append(line)
         elapsed = time.time() - start_time
 
-        # 每 2 秒更新一次进度显示
+        # 每 2 秒更新一次进度显示（PyInstaller spinner 在进度表下方输出）
         if elapsed - last_update >= 2:
-            # 解析 PyInstaller 输出的关键信息
             if 'INFO:' in line:
-                # 提取 INFO 后的关键步骤
                 if 'Building' in line:
                     step = '构建中'
                 elif 'Analyzing' in line:
@@ -2008,14 +2136,16 @@ def main():
     elapsed = time.time() - start_time
 
     if process.returncode != 0:
+        progress.fail_step(f'打包失败（{elapsed:.0f}s）')
         print(f"\n[错误] 打包失败（耗时 {elapsed:.0f}s）")
         print(">>> PyInstaller 输出:")
-        print(''.join(output_lines[-50:]))  # 显示最后 50 行
+        print(''.join(output_lines[-50:]))
         sys.exit(1)
 
-    print(f"\r[{current_step}/{total_steps}] PyInstaller 打包完成 ({elapsed:.0f}s) {' ' * 20}")
+    # 清掉 spinner 行
+    print(f"\r{' ' * 60}\r", end='')
 
-    print("\n  更新辅助文件...")
+    print("  更新辅助文件...")
     for file in ["README.md", "job_config.json"]:
         src = BASE_DIR / file
         dst = DIST_DIR / file
@@ -2036,39 +2166,30 @@ def main():
         release_title, release_notes = _extract_changelog_release(version)
         _check_readme_release(version)
 
-    # ---- Release 模式：提交 → 打 tag → 推送 → GitHub Release ----
+    progress.end_step()
+
+    # ---- Release 模式：提交 → 打 tag → 推送 → GitHub/Gitee Release → latest.json ----
     if args.release and not args.ci:
-        print(f"\n{'='*60}")
-        print(f"  Release 模式：v{version}")
-        print(f"{'='*60}")
 
-        release_start = time.time()
-
-        # 先提交源码/版本变更，latest.json 等 Release 资产齐全后再发布，避免自动更新读到半成品清单。
-        current_step += 1
-        step_start = time.time()
-        print(f"\n[{current_step}/{total_steps}] Git 提交和打标签...")
+        # ---- 步骤 3：Git 提交和打标签 ----
+        progress.start_step(2)
         allowed = ["gui_main.py"] if args.version else []
         _git_commit(version, allowed_paths=allowed)
         _git_tag(version)
-        print(f"[{current_step}/{total_steps}] Git 提交和打标签完成 ({time.time() - step_start:.1f}s)")
+        progress.end_step()
 
-        current_step += 1
-        step_start = time.time()
-        print(f"\n[{current_step}/{total_steps}] 推送到远程仓库...")
+        # ---- 步骤 4：推送到远程仓库 ----
+        progress.start_step(3)
         _git_push(version, auto=args.auto)
-        print(f"[{current_step}/{total_steps}] 推送完成 ({time.time() - step_start:.1f}s)")
+        progress.end_step()
 
-        current_step += 1
-        step_start = time.time()
-        print(f"\n[{current_step}/{total_steps}] 创建 GitHub Release 并上传产物...")
-        downloads_cn = _gh_release(version, release_title, release_notes)
-        print(f"[{current_step}/{total_steps}] GitHub Release 完成 ({time.time() - step_start:.1f}s)")
+        # ---- 步骤 5：Release 发布（GitHub + Gitee） ----
+        progress.start_step(4)
+        downloads_cn = _gh_release(version, release_title, release_notes, progress)
+        progress.end_step()
 
-        # Release 资产齐全后再发布 latest.json，确保自动更新拿到完整 size + SHA256。
-        current_step += 1
-        step_start = time.time()
-        print(f"\n[{current_step}/{total_steps}] 更新 latest.json 并提交...")
+        # ---- 步骤 6：latest.json 更新 ----
+        progress.start_step(5)
         asset_metadata = _collect_github_release_asset_metadata(
             version, existing_metadata=_release_asset_metadata())
         update_latest_json(
@@ -2082,14 +2203,11 @@ def main():
         subprocess.run(["git", "commit", "-m", "chore: 更新自动更新清单"],
                        cwd=BASE_DIR, check=True)
         subprocess.run(["git", "push", "origin", "master"], cwd=BASE_DIR, check=True)
-        print("  [OK] latest.json 已自动提交并推送（含完整校验信息）")
-        print(f"[{current_step}/{total_steps}] latest.json 更新完成 ({time.time() - step_start:.1f}s)")
+        progress.sub('latest.json 已自动提交并推送')
+        progress.end_step()
 
-        print(f"\n{'='*60}")
-        print(f"  ✓ v{version} 发布完成！")
-        print(f"  {artifact_path} ({size_mb:.1f} MB)")
-        print(f"  总耗时: {time.time() - release_start:.1f}s")
-        print(f"{'='*60}\n")
+        # 最终汇总表
+        progress.render_final(artifact_path, size_mb)
     elif args.release and args.ci:
         print(f"\n{'='*60}")
         print(f"  CI 打包完成：v{version}")
