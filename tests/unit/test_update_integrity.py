@@ -195,3 +195,109 @@ def test_update_latest_json_requires_complete_auto_update_metadata():
                     assert exc.code == 1
                 else:
                     raise AssertionError("missing macos metadata should block latest.json publication")
+
+
+def test_github_asset_matches_local_by_digest_without_download():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"MZsame-content")
+        asset = {
+            "size": path.stat().st_size,
+            "digest": f"sha256:{build._sha256_file(path)}",
+        }
+
+        same, reason = build._github_asset_matches_local("v9.9.9", path, asset)
+
+    assert same is True
+    assert "SHA256 一致" in reason
+
+
+def test_github_asset_size_mismatch_requires_upload():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"MZlocal")
+        asset = {"size": path.stat().st_size + 1}
+
+        same, reason = build._github_asset_matches_local("v9.9.9", path, asset)
+
+    assert same is False
+    assert "大小不一致" in reason
+
+
+def test_gitee_asset_matches_local_downloads_remote_hash_when_digest_missing():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "asset.exe"
+        path.write_bytes(b"MZsame-content")
+        original_remote_hash = build._remote_file_sha256
+        calls = []
+
+        def fake_remote_hash(url, token=None):
+            calls.append((url, token))
+            return build._sha256_file(path)
+
+        build._remote_file_sha256 = fake_remote_hash
+        try:
+            same, reason = build._gitee_asset_matches_local(
+                path,
+                {"size": path.stat().st_size},
+                "owner",
+                "repo",
+                "v9.9.9",
+                token="token",
+            )
+        finally:
+            build._remote_file_sha256 = original_remote_hash
+
+    assert same is True
+    assert "SHA256 一致" in reason
+    assert calls == [("https://gitee.com/owner/repo/releases/download/v9.9.9/asset.exe", "token")]
+
+
+def test_current_platform_update_artifact_names_windows():
+    original_is_mac = build.IS_MAC
+    try:
+        build.IS_MAC = False
+        assert build._current_platform_update_artifact_names() == {"BOSS_ResumeFilter.exe"}
+    finally:
+        build.IS_MAC = original_is_mac
+
+
+def test_current_platform_update_artifact_names_macos():
+    original_is_mac = build.IS_MAC
+    try:
+        build.IS_MAC = True
+        assert build._current_platform_update_artifact_names() == {
+            "BOSS_ResumeFilter.dmg",
+            "BOSS_ResumeFilter_mac.zip",
+        }
+    finally:
+        build.IS_MAC = original_is_mac
+
+
+def test_windows_update_script_resets_pyinstaller_runtime_env():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        current_exe = tmp_path / "BOSS_ResumeFilter.exe"
+        new_exe = tmp_path / "download" / "BOSS_ResumeFilter.exe"
+        new_exe.parent.mkdir()
+        current_exe.write_bytes(b"old")
+        new_exe.write_bytes(b"new")
+
+        original_popen = updater.subprocess.Popen
+
+        class FakeProcess:
+            pass
+
+        try:
+            updater.subprocess.Popen = lambda *args, **kwargs: FakeProcess()
+            ok, error = updater.update_windows(str(new_exe), str(current_exe))
+        finally:
+            updater.subprocess.Popen = original_popen
+
+        bat_content = (tmp_path / "update.bat").read_text(encoding="utf-8")
+
+    assert ok is True
+    assert error is None
+    assert 'set "PYINSTALLER_RESET_ENVIRONMENT=1"' in bat_content
+    assert "set _PYI_" in bat_content
+    assert "_MEI*" not in bat_content

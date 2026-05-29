@@ -80,7 +80,8 @@ boss-resume-filter/
 - `build.py` 会显式收集 Anaconda Python 的 Tcl/Tk 运行库，防止 EXE 启动时报 `No module named 'tkinter'`
 - `--release` 会从 `CHANGELOG.md` 对应版本段落提取 GitHub Release 标题和说明；缺少对应版本或未按"新增功能 / 体验优化 / 问题修复"顺序分类时直接中断
 - `--release` 使用 `--notes-file` + UTF-8 临时文件创建/更新 Release，避免 Windows 终端 GBK 编码导致中文乱码
-- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动从本地并行上传产物到 Gitee Release（ThreadPoolExecutor 3 路，需要 `GITEE_TOKEN` 环境变量）；上传顺序：配置文件/EXE/ZIP 优先，DMG 最后；CI 构建的对端产物从 GitHub 下载后再上传到 Gitee；增量上传：比较远端 size + created_at 与本地文件，大小一致且时间差 ≤5 分钟则跳过；4xx 客户端错误不重试
+- **Release 上传去重**：上传 GitHub/Gitee Release 文件前先比较远端同名附件；大小不同直接上传，大小相同再比较 SHA256，内容一致则跳过，避免重复上传相同产物；只有当前平台更新产物实际上传变化后，才继续检查是否需要触发跨平台 CI
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动从本地并行上传产物到 Gitee Release（ThreadPoolExecutor 3 路，需要 `GITEE_TOKEN` 环境变量）；上传顺序：配置文件/EXE/ZIP 优先，DMG 最后；CI 构建的对端产物从 GitHub 下载后再上传到 Gitee；4xx 客户端错误不重试
 - **Gitee 覆盖发布**：重新发布同一版本时，增量比对后只重传有变化的文件；同时同步 Release 标题和正文（均以 CHANGELOG 为准）；附件信息通过 `attach_files` API 获取（releases 列表 API 不返回 ID/size）
 - CHANGELOG 面向用户，避免技术细节：描述"做了什么"和"对用户的好处"，不描述实现原理、内部模块、函数名、技术栈；Bug 修复只写现象和结果，不写根因和修复方案；分类用用户视角（"体验优化"而非"行为优化/构建改进"）；功能归类要准确反映适用范围；只记录原始需求和原始 bug，不记录开发过程中自己引入又修掉的问题
 - **CHANGELOG 和 README 必须同步**：修改 CHANGELOG.md 的任何版本条目时，必须同步更新 README.md 中对应版本的条目。README 版本历史的条目数量、分类（新增功能/体验优化/问题修复）必须与 CHANGELOG 完全一致，不允许遗漏。build.py --release 的发布前检查会自动核对
@@ -275,12 +276,13 @@ qwen、deepseek、kimi、zhipu、minimax、xiaomi、stepfun、openai、anthropic
 - **下载链接**：`latest.json` 中 `downloads_cn` 字段存储 Gitee 国内下载链接，优先使用；无则回退到 GitHub
 - 有新版本时弹窗显示更新内容（从 Release body 读取），支持「立即更新」和「稍后提醒」
 - **Windows**：下载新 EXE（有元数据时校验文件大小和 SHA256，不匹配则报错）→ 生成 `update.bat` 脚本 → 启动脚本 → 退出当前程序 → 脚本替换 EXE 并重启；旧 EXE 保留为 `.old` 备份，新版本成功启动后自动清理（`cleanup_windows_update_backup()`，`gui_main.py` 启动后 10 秒触发）
+- Windows 更新脚本启动新 EXE 前必须清理 `_PYI_*` 环境变量并设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，避免 PyInstaller onefile 继承旧 `_MEI...` 解包目录导致 `python312.dll` 缺失；不要在更新脚本中主动删除 `%LOCALAPPDATA%\_MEI*`
 - **macOS**：
   - 从 .app 运行：下载 ZIP → 解压 → 生成 shell 脚本替换 .app → 重启应用
   - 从源码运行：执行 `git pull`（降级方案）
 - 手动检查更新：左下角版本号 → 更新日志页面 → 左侧「关于」→ 关于页面 → 「检查更新」按钮
 - `latest.json` 由 `build.py:update_latest_json()` 在发布时自动更新并提交，Gitee 镜像同步后即可供国内用户检测；`latest.json` 的 `assets` 字段记录产物元数据（`size`、`sha256`），Windows 记录 EXE，macOS 同时记录 ZIP 和 DMG
-- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；增量上传：比较远端 size + created_at 与本地文件，大小一致且时间差 ≤5 分钟则跳过；同时同步标题和正文（均以 CHANGELOG 为准）；4xx 客户端错误不重试；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
+- **Gitee Release 上传**：`build.py --release` 在 GitHub Release 上传后，自动将产物上传到 Gitee Release（需要 `GITEE_TOKEN` 环境变量）；增量上传：比较远端同名附件大小和 SHA256，内容一致则跳过，否则删旧重传；同时同步标题和正文（均以 CHANGELOG 为准）；4xx 客户端错误不重试；上传成功后自动更新 `latest.json` 的 `downloads_cn` 字段并提交推送
 - **Gitee Token 配置**：在 https://gitee.com/profile/personal_access_tokens 生成私人令牌（勾选 projects 权限），设置为环境变量 `GITEE_TOKEN`；未设置时跳过 Gitee 上传，不影响 GitHub Release
 - 实现位置：`updater.py`（独立模块），`gui_main.py:__init__()` 调用 `updater.auto_check_on_startup()`；`build.py:_gitee_upload_local()`、`build.py:_gitee_delete_asset()`、`build.py:_sync_gitee_from_github()`
 
