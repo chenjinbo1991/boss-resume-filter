@@ -74,7 +74,7 @@ class ReleaseProgress:
                     'status': step['status'],
                     'duration': round(step['duration'], 1) if step['duration'] is not None else None,
                     'sub_count': len(step['subs']),
-                    'last_sub': step['subs'][-1] if step['subs'] else None,
+                    'last_sub': step['subs'][-1]['msg'] if step['subs'] else None,
                 }
                 for name, step in zip(self.step_names, self.steps)
             ]
@@ -105,9 +105,9 @@ class ReleaseProgress:
         self._render()
 
     def sub(self, msg):
-        """当前步骤的子步骤输出"""
+        """当前步骤的子步骤输出（带时间戳，用于汇总表计算耗时）"""
         if self.current >= 0:
-            self.steps[self.current]['subs'].append(msg)
+            self.steps[self.current]['subs'].append({'msg': msg, 'time': time.time()})
         self._write_progress_file()
         if not self._ansi:
             print(f"  │ {msg}", flush=True)
@@ -118,7 +118,7 @@ class ReleaseProgress:
         self.steps[idx]['status'] = 'skipped'
         self.steps[idx]['duration'] = 0
         if reason:
-            self.steps[idx]['subs'].append(reason)
+            self.steps[idx]['subs'].append({'msg': reason, 'time': time.time()})
         self._write_progress_file()
         if not self._ansi:
             print(f"[{idx+1}/{len(self.step_names)}] – {self.step_names[idx]} 跳过", flush=True)
@@ -130,7 +130,7 @@ class ReleaseProgress:
         step['status'] = 'failed'
         step['duration'] = time.time() - step.get('start', time.time())
         if msg:
-            step['subs'].append(msg)
+            step['subs'].append({'msg': msg, 'time': time.time()})
         self._write_progress_file()
         if not self._ansi:
             print(f"[{self.current+1}/{len(self.step_names)}] ✗ {self.step_names[self.current]}: {msg}", flush=True)
@@ -183,8 +183,8 @@ class ReleaseProgress:
                 dur_str = self._fmt_duration(running_elapsed).rjust(6)
                 lines.append(f'  [{i+1}/{len(self.step_names)}] {icon} {name:<24s} {dur_str}  ← 进行中')
                 # 显示最近 3 条子步骤
-                for sub_msg in step['subs'][-3:]:
-                    lines.append(f'        │ {sub_msg}')
+                for sub in step['subs'][-3:]:
+                    lines.append(f'        │ {sub["msg"]}')
             elif status == 'skipped':
                 icon = '–'
                 lines.append(f'  [{i+1}/{len(self.step_names)}] {icon} {name:<24s} 跳过')
@@ -192,8 +192,8 @@ class ReleaseProgress:
                 icon = '✗'
                 dur_str = dur.rjust(6)
                 lines.append(f'  [{i+1}/{len(self.step_names)}] {icon} {name:<24s} {dur_str}')
-                for sub_msg in step['subs'][-2:]:
-                    lines.append(f'        │ {sub_msg}')
+                for sub in step['subs'][-2:]:
+                    lines.append(f'        │ {sub["msg"]}')
             else:
                 lines.append(f'  [{i+1}/{len(self.step_names)}]   {name:<24s} —')
         lines.append('─' * W)
@@ -250,6 +250,42 @@ class ReleaseProgress:
                 lines.append(f'  {_pad(f"{idx}.", COL_IDX)} {_pad(name, COL_NAME)} {_pad(icon, COL_STAT)} 失败')
             else:
                 lines.append(f'  {_pad(f"{idx}.", COL_IDX)} {_pad(name, COL_NAME)} {" " * COL_STAT} {dur}')
+
+            # 子步骤：从 subs 中提取阶段边界，计算耗时
+            subs = step.get('subs', [])
+            if len(subs) >= 3:
+                # 过滤掉细节日志和状态消息
+                skip_prefixes = ('[OK]', '[跳过]', '[更新]', '[重试]', '[失败]', '[信息]')
+                skip_contains = ('已存在', '已就绪', '已推送', '已同步', '已上传', '已删除', '已完成', '发布完成')
+                phases = []
+                for s in subs:
+                    msg = s['msg'] if isinstance(s, dict) else s
+                    if any(msg.startswith(p) for p in skip_prefixes):
+                        continue
+                    if any(kw in msg for kw in skip_contains):
+                        continue
+                    phases.append(s)
+                # 计算各阶段耗时
+                if len(phases) >= 2:
+                    step_start = step.get('start', phases[0]['time'] if isinstance(phases[0], dict) else 0)
+                    step_end = step_start + (step.get('duration') or 0)
+                    SUB_NAME_W = 28  # 子步骤名称列宽
+                    for j, phase in enumerate(phases):
+                        t = phase['time'] if isinstance(phase, dict) else step_start
+                        msg = phase['msg'] if isinstance(phase, dict) else phase
+                        if j + 1 < len(phases):
+                            next_t = phases[j+1]['time'] if isinstance(phases[j+1], dict) else step_end
+                            phase_dur = next_t - t
+                        else:
+                            phase_dur = step_end - t
+                        sub_label = f"{idx}.{j+1}"
+                        # 精简名称：去掉末尾省略号，截断
+                        clean = msg.rstrip('.').rstrip('。')
+                        max_w = SUB_NAME_W - 2
+                        while _dw(clean) > max_w and len(clean) > 4:
+                            clean = clean[:-1]
+                        sub_name = f"  {clean}"
+                        lines.append(f'  {_pad(sub_label, COL_IDX)} {_pad(sub_name, SUB_NAME_W)} {"":{COL_STAT}} {self._fmt_duration(phase_dur)}')
 
         lines.append('  ' + '─' * (COL_IDX + COL_NAME + COL_STAT + COL_DUR + 3))
         m, s = divmod(int(total), 60)
