@@ -214,11 +214,13 @@ class ReleaseProgress:
         lines.append('')
 
         # 表格格式的步骤耗时（CJK 字符算 2 列，ASCII 算 1 列）
+        import unicodedata
         def _dw(s):
-            """字符串的显示宽度"""
+            """字符串的显示宽度（使用 East Asian Width 标准）"""
             w = 0
             for ch in str(s):
-                w += 2 if '一' <= ch <= '鿿' or ' ' <= ch <= '〿' else 1
+                eaw = unicodedata.east_asian_width(ch)
+                w += 2 if eaw in ('F', 'W') else 1
             return w
 
         def _pad(s, width):
