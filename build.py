@@ -1323,6 +1323,15 @@ def _gh_release(version, release_title, release_notes, progress=None):
                     _sub(f'GitHub Release 已创建: {tag}')
                     break
                 except subprocess.CalledProcessError as e:
+                    # 检查是否因为 release 已存在而失败（并发场景）
+                    check_r = subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=BASE_DIR)
+                    if check_r.returncode == 0:
+                        # Release 已存在，切换到编辑模式
+                        _sub(f'GitHub Release 已存在: {tag}')
+                        subprocess.run(
+                            ["gh", "release", "edit", tag, "--title", release_title, "--notes-file", str(_notes_file)],
+                            cwd=BASE_DIR, check=True)
+                        break
                     if attempt < 2:
                         _sub(f'[重试] 创建 Release 失败 (attempt {attempt+1}/3), 5s 后重试...')
                         time.sleep(5)
