@@ -21,6 +21,18 @@ import tkinter as tk
 from paths import get_base_dir
 
 
+def _get_font_family():
+    """获取字体 - 与 gui_main.py 保持一致"""
+    if sys.platform == 'win32':
+        return 'Microsoft YaHei UI'
+    elif sys.platform == 'darwin':
+        return 'PingFang SC'
+    return 'Helvetica'
+
+
+_FONT_FAMILY = _get_font_family()
+
+
 def _place_dialog_centered(dialog, parent, width, height):
     """将更新弹窗相对父窗口居中，并限制在屏幕可见范围内。"""
     parent.update_idletasks()
@@ -413,7 +425,6 @@ def update_windows(new_exe_path, current_exe_path):
         bat_path = Path(current_exe_path).parent / "update.bat"
         temp_dir = Path(new_exe_path).parent
         marker_path = Path(current_exe_path).with_suffix(Path(current_exe_path).suffix + ".update_ok")
-        runtime_dir = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()))
         current_pid = os.getpid()
 
         bat_content = f"""@echo off
@@ -422,7 +433,6 @@ set "OLD_EXE={current_exe_path}"
 set "NEW_EXE={new_exe_path}"
 set "TEMP_DIR={temp_dir}"
 set "MARKER_FILE={marker_path}"
-set "RUNTIME_DIR={runtime_dir}"
 set "OLD_PID={current_pid}"
 set "LOG_FILE=%TEMP%\\boss_resume_filter_update.log"
 set "FAILED_FILE=%OLD_EXE%.update_failed.txt"
@@ -472,14 +482,16 @@ if not "%NEW_SIZE%"=="%OLD_SIZE%" (
 echo 等待文件系统刷盘...
 timeout /t 8 /nobreak >nul
 
-echo 清理残留运行时解包目录...
-for /d %%D in ("%RUNTIME_DIR%\\_MEI*") do rmdir /s /q "%%D" >> "%LOG_FILE%" 2>&1
+echo 准备干净的 PyInstaller 重启环境...
+echo [%date% %time%] Resetting PyInstaller runtime environment >> "%LOG_FILE%"
+set "PYINSTALLER_RESET_ENVIRONMENT=1"
+for /f "tokens=1 delims==" %%V in ('set _PYI_ 2^>nul') do set "%%V="
 
 echo 启动新版本...
 if exist "%MARKER_FILE%" del /f /q "%MARKER_FILE%" >> "%LOG_FILE%" 2>&1
 set "BOSS_UPDATE_MARKER=%MARKER_FILE%"
 set "NEW_PID="
-for /f %%P in ('powershell -NoProfile -Command "$p = Start-Process -FilePath $env:OLD_EXE -PassThru; $p.Id"') do set "NEW_PID=%%P"
+for /f %%P in ('powershell -NoProfile -Command "$p = Start-Process -FilePath $env:OLD_EXE -WorkingDirectory (Split-Path $env:OLD_EXE) -PassThru; $p.Id"') do set "NEW_PID=%%P"
 echo [%date% %time%] Started new process PID=%NEW_PID% >> "%LOG_FILE%"
 
 echo 等待新版本启动确认...
@@ -492,7 +504,6 @@ for /l %%i in (1,1,45) do (
 echo [%date% %time%] First startup marker not found, retrying once >> "%LOG_FILE%"
 if defined NEW_PID taskkill /f /pid %NEW_PID% >> "%LOG_FILE%" 2>&1
 timeout /t 5 /nobreak >nul
-for /d %%D in ("%RUNTIME_DIR%\\_MEI*") do rmdir /s /q "%%D" >> "%LOG_FILE%" 2>&1
 set "NEW_PID="
 for /f %%P in ('powershell -NoProfile -Command "$p = Start-Process -FilePath $env:OLD_EXE -WorkingDirectory (Split-Path $env:OLD_EXE) -PassThru; $p.Id"') do set "NEW_PID=%%P"
 echo [%date% %time%] Retried new process PID=%NEW_PID% >> "%LOG_FILE%"
@@ -826,7 +837,7 @@ def show_update_dialog(root, result):
     title_label = tk.Label(
         dialog,
         text=f"v{result['current']} → v{result['latest']}",
-        font=("Arial", 16, "bold")
+        font=(_FONT_FAMILY, 16, "bold")
     )
     title_label.pack(pady=(15, 5))
 
@@ -834,17 +845,20 @@ def show_update_dialog(root, result):
     release_info = result['release_info']
     body = release_info.get('body', '无更新说明')
 
-    content_frame = tk.LabelFrame(dialog, text="更新内容", padx=10, pady=10)
+    content_frame = tk.LabelFrame(dialog, text="更新内容", padx=10, pady=10,
+                                  font=(_FONT_FAMILY, 13))
     content_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-    content_text = tk.Text(content_frame, wrap="word", height=15)
+    content_text = tk.Text(content_frame, wrap="word", height=15,
+                           font=(_FONT_FAMILY, 12))
     content_text.insert("1.0", body)
     content_text.config(state="disabled")
     content_text.pack(fill="both", expand=True)
 
     # 进度条（初始隐藏）
     progress_frame = tk.Frame(dialog)
-    progress_label = tk.Label(progress_frame, text="下载中...")
+    progress_label = tk.Label(progress_frame, text="下载中...",
+                              font=(_FONT_FAMILY, 13))
     progress_label.pack(side="left", padx=5)
 
     from tkinter import ttk
@@ -1030,7 +1044,8 @@ def show_update_dialog(root, result):
         button_frame,
         text="稍后更新",
         command=on_cancel,
-        width=15
+        width=15,
+        font=(_FONT_FAMILY, 13)
     )
     cancel_btn.pack(side="left", padx=10)
 
@@ -1038,7 +1053,8 @@ def show_update_dialog(root, result):
         button_frame,
         text="立即更新",
         command=on_update,
-        width=15
+        width=15,
+        font=(_FONT_FAMILY, 13)
     )
     update_btn.pack(side="left", padx=10)
 
