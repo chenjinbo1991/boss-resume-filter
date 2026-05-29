@@ -1290,15 +1290,20 @@ def update_latest_json(version, release_notes, downloads_cn=None, quiet=False,
 
 
 def _git_tag(version):
-    """创建或更新本地 tag"""
+    """创建或更新本地 tag，返回旧 tag 指向的 commit（用于 CI 检查）"""
     tag = f"v{version}"
+    old_tag_commit = None
     existing = subprocess.run(["git", "tag", "-l", tag], capture_output=True, text=True, cwd=BASE_DIR)
     if existing.stdout.strip():
+        # 保存旧 tag 指向的 commit，用于后续 CI 检查时 diff
+        old_ref = subprocess.run(["git", "rev-list", "-n", "1", tag], capture_output=True, text=True, cwd=BASE_DIR)
+        old_tag_commit = old_ref.stdout.strip() if old_ref.returncode == 0 else None
         subprocess.run(["git", "tag", "-f", tag], cwd=BASE_DIR, check=True)
         print(f"  [OK] 已更新本地 tag: {tag}")
     else:
         subprocess.run(["git", "tag", tag], cwd=BASE_DIR, check=True)
         print(f"  [OK] 已创建本地 tag: {tag}")
+    return old_tag_commit
 
 
 def _git_push(version, auto=False):
@@ -1367,7 +1372,7 @@ def _print_progress(step, total, message, start_time=None):
 
 
 def _gh_release(version, release_title, release_notes, progress=None,
-                enable_gitee=True, enable_ci_sync=True):
+                enable_gitee=True, enable_ci_sync=True, old_tag_commit=None):
     """创建/更新 GitHub Release 并上传资源文件"""
     import time
     tag = f"v{version}"
@@ -1487,7 +1492,7 @@ def _gh_release(version, release_title, release_notes, progress=None,
         need_ci, old_assets_info = False, {}
     elif changed_update_artifacts:
         _sub(f'检查是否需要跨平台 CI 重建: {", ".join(sorted(changed_update_artifacts))}')
-        need_ci, old_assets_info = _trigger_cross_platform_ci(tag)
+        need_ci, old_assets_info = _trigger_cross_platform_ci(tag, old_tag_commit)
     else:
         _sub('跳过跨平台 CI 检查：当前平台更新产物未变化')
         need_ci, old_assets_info = False, {}
@@ -1530,26 +1535,43 @@ def _gh_release(version, release_title, release_notes, progress=None,
     return downloads_cn
 
 
-def _get_changed_files_since_tag():
-    """获取上次 tag 到当前 HEAD 之间变更的文件列表。"""
-    # 获取最近的 tag
+def _get_changed_files_since_tag(old_tag_commit=None):
+    """获取 tag 更新前的旧 commit 到当前 HEAD 之间变更的文件列表。
+
+    用于判断是否需要触发跨平台 CI 重建。传入 tag force 更新前的旧 commit，
+    对比当前 HEAD，只包含本次发布实际变更的文件。
+    如果没有旧 commit（首次发布），则用 git describe 查找上一个 tag。
+    """
+    import re as _re
+
+    base_ref = None
+    if old_tag_commit:
+        base_ref = old_tag_commit
+    else:
+        # 首次发布：查找上一个版本 tag
+        r = subprocess.run(
+            ["git", "tag", "-l", "v*"],
+            capture_output=True, text=True, cwd=BASE_DIR,
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            return None
+
+        tags = r.stdout.strip().split('\n')
+        if len(tags) >= 2:
+            def _version_key(tag):
+                m = _re.match(r'v?(\d+)\.(\d+)(?:\.(\d+))?', tag)
+                return tuple(int(x or 0) for x in m.groups()) if m else (0,)
+            tags.sort(key=_version_key)
+            base_ref = tags[-2]
+
+    if not base_ref:
+        return None
+
     r = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0", "HEAD^"],
+        ["git", "diff", "--name-only", f"{base_ref}..HEAD"],
         capture_output=True, text=True, cwd=BASE_DIR,
     )
     if r.returncode != 0:
-        print("  [警告] 无法获取上次 tag，默认需要重建")
-        return None  # 无法获取，保守起见重建
-
-    last_tag = r.stdout.strip()
-
-    # 获取变更文件列表
-    r = subprocess.run(
-        ["git", "diff", "--name-only", f"{last_tag}..HEAD"],
-        capture_output=True, text=True, cwd=BASE_DIR,
-    )
-    if r.returncode != 0:
-        print("  [警告] 无法获取变更文件列表，默认需要重建")
         return None
 
     return r.stdout.strip().split('\n') if r.stdout.strip() else []
@@ -1728,7 +1750,7 @@ def _verify_assets_deleted(tag, asset_names):
     return False
 
 
-def _trigger_cross_platform_ci(tag):
+def _trigger_cross_platform_ci(tag, old_tag_commit=None):
     """覆盖发布后，删除对端旧产物并触发 CI 重建。
 
     Windows 发布 → 删旧 DMG/ZIP → CI 自动构建 macOS
@@ -1754,7 +1776,7 @@ def _trigger_cross_platform_ci(tag):
         opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
 
     # 1. 判断是否需要重建对端（按需重建）
-    changed_files = _get_changed_files_since_tag()
+    changed_files = _get_changed_files_since_tag(old_tag_commit)
     if not _needs_cross_platform_rebuild(changed_files):
         print("  [跳过] 变更仅影响当前平台或纯文档，无需重建对端产物")
         if changed_files:
@@ -2639,7 +2661,7 @@ def main():
         progress.start_step(2)
         allowed = ["gui_main.py"] if args.version else []
         _git_commit(version, allowed_paths=allowed)
-        _git_tag(version)
+        old_tag_commit = _git_tag(version)
         progress.end_step()
 
         # ---- 步骤 4：推送到远程仓库 ----
@@ -2656,6 +2678,7 @@ def main():
             progress,
             enable_gitee=not args.no_gitee,
             enable_ci_sync=not args.no_ci_sync,
+            old_tag_commit=old_tag_commit,
         )
         progress.end_step()
 
