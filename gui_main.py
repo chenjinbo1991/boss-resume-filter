@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.8.12"
+__version__ = "2.9.0"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -16,6 +16,7 @@ import sys
 import os
 import re
 import shutil
+import math
 import icons
 import time
 import threading
@@ -1251,6 +1252,7 @@ class BossFilterGUI:
 
         # 岗位选择区域
         select_frame = ttk.Frame(config_container, style='TFrame')
+        self._config_select_frame = select_frame
         select_frame.pack(fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(int(25 * self.dpi_scale * self.zoom_factor), int(10 * self.dpi_scale * self.zoom_factor)))
 
         ttk.Label(select_frame, text="选择岗位:", font=self.font_label,
@@ -1260,14 +1262,89 @@ class BossFilterGUI:
         btn_del = ttk.Button(select_frame, image=icon_trash_small, text="删除", compound=tk.LEFT, command=self.delete_job)
         btn_del._icon_ref = icon_trash_small
         btn_del.pack(side="right", padx=(int(8 * self.dpi_scale * self.zoom_factor), 0))
-        icon_plus_small = self.icons.button('plus', self.colors['text_primary'])
+        icon_plus_small = self.icons.button('plus', self.colors['success'])
         btn_add = ttk.Button(select_frame, image=icon_plus_small, text="新建", compound=tk.LEFT, command=self.add_job)
         btn_add._icon_ref = icon_plus_small
         btn_add.pack(side="right", padx=int(8 * self.dpi_scale * self.zoom_factor))
-        # 下拉框填充剩余空间
-        self.config_job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=UI_CONFIG['combobox_width_job'], font=self.font_label)
+
+        # "点此新增岗位" 提示标签（忽隐忽现动画）
+        self.btn_add_hint = ttk.Label(select_frame, text="点此新增岗位→", foreground=self.colors['success'],
+                                       background=self.colors['bg_card'], font=self.font_label)
+        self.btn_add_hint.pack(side="right", padx=int(4 * self.dpi_scale * self.zoom_factor))
+
+        # 忽隐忽现动画（颜色渐变模拟透明度）
+
+        def hex_to_rgb(h):
+            h = h.lstrip('#')
+            return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+        def rgb_to_hex(r, g, b):
+            return f'#{int(r):02x}{int(g):02x}{int(b):02x}'
+
+        def _fade_hint(step=[0]):
+            if not hasattr(self, 'btn_add_hint') or not self.btn_add_hint.winfo_exists():
+                return
+
+            try:
+                # 解析颜色
+                target_rgb = hex_to_rgb(self.colors['success'])
+                bg_rgb = hex_to_rgb(self.colors['bg_card'])
+
+                # 使用正弦函数实现平滑渐变 (0-1 之间)
+                # step 从 0 到 59，对应一个完整的呼吸周期
+                phase = step[0] / 60.0 * 2 * math.pi  # 0 到 2π
+                alpha = 0.15 + 0.85 * (0.5 + 0.5 * math.sin(phase))  # 0.15 到 1.0 之间
+
+                # 颜色插值
+                r = target_rgb[0] * alpha + bg_rgb[0] * (1 - alpha)
+                g = target_rgb[1] * alpha + bg_rgb[1] * (1 - alpha)
+                b = target_rgb[2] * alpha + bg_rgb[2] * (1 - alpha)
+
+                self.btn_add_hint.config(foreground=rgb_to_hex(r, g, b))
+
+                step[0] = (step[0] + 1) % 60
+                self.root.after(50, _fade_hint)  # 50ms 一帧，约 3 秒一个周期
+            except tk.TclError:
+                pass
+
+        _fade_hint()
+        # 下拉框
+        self.config_job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=28, font=self.font_label)
         self.config_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.config_job_combo.bind("<<ComboboxSelected>>", self.on_job_selected)
+
+        # ===== 新建岗位步骤引导条 =====
+        _fs = self.dpi_scale * self.zoom_factor
+        self._job_step_bar = ttk.Frame(config_container, style='TFrame')
+        # 默认隐藏，add_job 时显示
+
+        self._job_step_labels: list[ttk.Label] = []
+        _step_texts = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"]
+        _step_font = (FONT_FAMILY, int(12 * self.font_scale))
+
+        # 标题行
+        _step_title = ttk.Label(self._job_step_bar, text="新建岗位流程",
+                                font=self.font_section,
+                                foreground=self.colors['primary'],
+                                background=self.colors['bg_card'])
+        _step_title.pack(anchor="w", padx=int(20 * _fs), pady=(int(12 * _fs), int(4 * _fs)))
+
+        # 步骤行
+        _steps_row = ttk.Frame(self._job_step_bar, style='TFrame')
+        _steps_row.pack(fill="x", padx=int(20 * _fs), pady=(0, int(12 * _fs)))
+
+        for i, text in enumerate(_step_texts):
+            if i > 0:
+                arrow = ttk.Label(_steps_row, text="→", font=_step_font,
+                                  foreground=self.colors['text_muted'],
+                                  background=self.colors['bg_card'])
+                arrow.pack(side="left", padx=int(6 * _fs))
+            lbl = ttk.Label(_steps_row, text=text, font=_step_font,
+                            background=self.colors['bg_card'])
+            lbl.pack(side="left", padx=int(2 * _fs))
+            self._job_step_labels.append(lbl)
+
+        self._job_step_active = -1  # -1 = 隐藏
 
         # ===== 需求文档解析区域 =====
         parse_frame = self._create_card(config_container, "需求文档解析（可选）",
@@ -2205,7 +2282,8 @@ class BossFilterGUI:
         current_provider = self.api_config.get("api_provider", "")
 
         if current_model:
-            display_text = f"{current_provider.upper()} / {current_model}"
+            provider_display = self.PROVIDER_DISPLAY.get(current_provider, current_provider)
+            display_text = f"{provider_display} / {current_model}"
             self.current_model_label.config(text=display_text, foreground=self.colors['primary'])
         else:
             self.current_model_label.config(text="未配置", foreground=self.colors['text_secondary'])
@@ -3668,7 +3746,8 @@ class BossFilterGUI:
                         "base_url": config.get("base_url", "https://api.deepseek.com"),
                         "model": config.get("model", "deepseek-chat"),
                         "saved_models": config.get("saved_models", []),
-                        "providers": config.get("providers", {})
+                        "providers": config.get("providers", {}),
+                        "fetched_models": config.get("fetched_models", {})
                     }
 
                     # 从 keyring 读取当前服务商的 API Key
@@ -3710,7 +3789,8 @@ class BossFilterGUI:
             "base_url": "https://api.deepseek.com",
             "model": "deepseek-chat",
             "saved_models": [],
-            "providers": {}
+            "providers": {},
+            "fetched_models": {}
         }
 
     def _sanitize_config_for_save(self, config):
@@ -3863,7 +3943,8 @@ class BossFilterGUI:
                 "base_url": base_url,
                 "model": model_name,
                 "saved_models": getattr(self, 'saved_models', []),
-                "providers": self.api_config.get("providers", {})
+                "providers": self.api_config.get("providers", {}),
+                "fetched_models": self.api_config.get("fetched_models", {})
             }
 
             # 检查当前模型是否已存在于列表
@@ -4050,6 +4131,21 @@ class BossFilterGUI:
                         models = sorted(list(set(chat_models)))
                         filtered_count = len(raw_models) - len(models)
 
+                        # 对比上次获取的模型列表，找出新增模型
+                        fetched_models_map = self.api_config.get("fetched_models", {})
+                        previous_models = set(fetched_models_map.get(provider, []))
+                        new_models = set(models) - previous_models
+
+                        # 更新已获取模型列表并持久化
+                        if "fetched_models" not in self.api_config:
+                            self.api_config["fetched_models"] = {}
+                        self.api_config["fetched_models"][provider] = models
+                        try:
+                            with open(API_CONFIG_PATH, 'w', encoding='utf-8') as _f:
+                                json.dump(self._sanitize_config_for_save(self.api_config), _f, ensure_ascii=False, indent=4)
+                        except Exception:
+                            pass  # 持久化失败不影响主流程
+
                         # 创建选择对话框
                         def show_model_dialog():
                             # 防止重复打开（可能在 after 调度期间再次触发）
@@ -4080,7 +4176,7 @@ class BossFilterGUI:
 
                             # 对话框大小
                             dialog_width = 750
-                            dialog_height = 680
+                            dialog_height = 800
                             dialog.resizable(True, True)
                             dialog.minsize(500, 400)
 
@@ -4101,7 +4197,50 @@ class BossFilterGUI:
                                                        font=(FONT_FAMILY, int(11 * self.font_scale)),
                                                        foreground=self.colors['warning'],
                                                        style='Dialog.TLabel')
-                                note_label.pack(pady=(4, 12))
+                                note_label.pack(pady=(4, 0))
+
+                            # 新增模型提醒（放在过滤说明和列表之间）
+                            if new_models:
+                                new_label = ttk.Label(dialog,
+                                    text=f"✦ 发现 {len(new_models)} 个新增模型（绿色标记）",
+                                    font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                    foreground=self.colors['success'],
+                                    style='Dialog.TLabel')
+                                new_label.pack(pady=(4, 0))
+
+                            # 列表前的间距（有提醒文字时加间距，没有时由列表自带间距）
+                            if filter_note or new_models:
+                                ttk.Frame(dialog, height=8).pack()
+
+                            # 搜索框
+                            search_frame = ttk.Frame(dialog)
+                            search_frame.pack(fill="x", padx=20, pady=(6, 0))
+
+                            search_var = tk.StringVar()
+                            search_entry = ttk.Entry(search_frame, textvariable=search_var,
+                                                     font=self.font_label)
+                            search_entry.pack(fill="x")
+
+                            # 占位文字
+                            _search_placeholder = "输入关键词搜索模型..."
+                            search_entry.config(foreground=self.colors['text_muted'])
+                            search_var.set(_search_placeholder)
+                            _search_active = [False]  # 用列表避免闭包问题
+
+                            def _on_search_focus_in(event=None):
+                                if not _search_active[0]:
+                                    _search_active[0] = True
+                                    search_var.set("")
+                                    search_entry.config(foreground=self.colors['text_primary'])
+
+                            def _on_search_focus_out(event=None):
+                                if not search_var.get():
+                                    _search_active[0] = False
+                                    search_var.set(_search_placeholder)
+                                    search_entry.config(foreground=self.colors['text_muted'])
+
+                            search_entry.bind("<FocusIn>", _on_search_focus_in)
+                            search_entry.bind("<FocusOut>", _on_search_focus_out)
 
                             # 模型列表框
                             listbox_frame = ttk.Frame(dialog)
@@ -4114,9 +4253,31 @@ class BossFilterGUI:
                             scrollbar.pack(side="right", fill="y")
                             listbox.pack(side="left", fill="both", expand=True)
 
-                            # 填充模型列表
-                            for model in models:
-                                listbox.insert("end", model)
+                            def _refresh_listbox(query=""):
+                                """根据搜索词刷新列表，保持新增模型绿色高亮"""
+                                listbox.delete(0, "end")
+                                q = query.lower()
+                                for model in models:
+                                    if not q or q in model.lower():
+                                        listbox.insert("end", model)
+                                # 新增模型绿色高亮
+                                if new_models:
+                                    for i in range(listbox.size()):
+                                        if listbox.get(i) in new_models:
+                                            listbox.itemconfig(i, foreground=self.colors['success'])
+                                # 自动选中第一项
+                                if listbox.size() > 0:
+                                    listbox.selection_set(0)
+                                    listbox.see(0)
+
+                            def _on_search_changed(*args):
+                                if _search_active[0]:
+                                    _refresh_listbox(search_var.get().strip())
+
+                            search_var.trace_add("write", _on_search_changed)
+
+                            # 初始填充
+                            _refresh_listbox()
 
                             # 按钮行
                             btn_frame = ttk.Frame(dialog)
@@ -4152,11 +4313,6 @@ class BossFilterGUI:
                             dialog.bind("<Return>", lambda e: on_select())
                             listbox.bind("<Double-Button-1>", on_double_click)
 
-                            # 默认选中第一个
-                            if models:
-                                listbox.selection_set(0)
-                                listbox.see(0)
-
                             _place_window_centered(dialog, dialog_width, dialog_height, parent=self.root)
                             dialog.deiconify()
                             dialog.grab_set()
@@ -4164,11 +4320,32 @@ class BossFilterGUI:
                             # 在 macOS 上与 Cocoa scroll hook 和浏览器轮询冲突导致崩溃。
                             # grab_set() 已提供模态行为，无需阻塞。
 
-                        self.root.after(0, lambda: self.api_status_label.config(
-                            text=f"✓ 找到 {len(models)} 个模型",
-                            foreground=self.colors['success']
-                        ))
-                        self.root.after(100, show_model_dialog)
+                        _new_count = len(new_models)
+                        _total_count = len(models)
+                        def _update_status():
+                            if _new_count > 0:
+                                self.api_status_label.config(
+                                    text=f"✓ 找到 {_total_count} 个模型（{_new_count} 个新增）",
+                                    foreground=self.colors['success']
+                                )
+                            else:
+                                self.api_status_label.config(
+                                    text=f"✓ 找到 {_total_count} 个模型",
+                                    foreground=self.colors['success']
+                                )
+                        self.root.after(0, _update_status)
+                        if new_models:
+                            def _show_new_models_alert():
+                                messagebox.showinfo(
+                                    "发现新增模型",
+                                    f"{provider} 新增 {len(new_models)} 个模型：\n\n"
+                                    + "\n".join(f"  • {m}" for m in sorted(new_models)[:10])
+                                    + (f"\n  …等共 {len(new_models)} 个" if len(new_models) > 10 else "")
+                                )
+                                self.root.after(100, show_model_dialog)
+                            self.root.after(0, _show_new_models_alert)
+                        else:
+                            self.root.after(100, show_model_dialog)
                     else:
                         self.root.after(0, lambda: self.api_status_label.config(
                             text="⚠️ 未找到模型列表",
@@ -4509,6 +4686,7 @@ class BossFilterGUI:
             rule = self.job_rules[job_name]
             self.load_job_to_form(rule)
             self.requirement_template_btn.state(['disabled'])
+            self._hide_job_step_bar()
             # 显示详细结果区域
             self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
@@ -4800,6 +4978,9 @@ class BossFilterGUI:
         self.requirement_text.tag_remove("placeholder", "1.0", tk.END)
         self._req_placeholder_active = False
         self.requirement_text.insert("1.0", template)
+        # 步骤推进：填入需求 → 解析文档
+        if self._job_step_active >= 0:
+            self._update_job_step(1)
 
     def _get_requirement_text(self):
         """获取需求输入框内容，占位提示视为空。"""
@@ -4928,9 +5109,75 @@ class BossFilterGUI:
             # 显示详细结果区域
             self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
+            # 步骤推进：解析成功，进入检查结果步骤
+            if self._job_step_active >= 0:
+                self._update_job_step(2)
+                self._bind_job_step_advance()
+
         except Exception as e:
             messagebox.showerror("解析失败", f"解析需求文档时出错：{e}")
             self.parse_result_label.config(text=f"✗ 解析失败：{e}", foreground=self.colors['danger'])
+
+    def _update_job_step(self, active_step: int):
+        """更新新建岗位步骤引导条，active_step: 0-3 表示当前步骤"""
+        if not hasattr(self, '_job_step_bar') or not self._job_step_labels:
+            return
+        self._job_step_active = active_step
+        # 显示步骤条（用 after 确保插入到岗位选择行之后，而非追加到末尾）
+        _fs = self.dpi_scale * self.zoom_factor
+        try:
+            self._job_step_bar.pack_info()
+        except tk.TclError:
+            # 尚未 pack，用 after 插入到正确位置
+            self._job_step_bar.pack(fill="x", after=self._config_select_frame,
+                padx=int(25 * _fs), pady=(int(5 * _fs), 0))
+        for i, lbl in enumerate(self._job_step_labels):
+            if i < active_step:
+                # 已完成：绿色 ✓
+                original = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"][i]
+                done_text = f"✓ {original[2:]}"  # 去掉数字圆圈，加 ✓
+                lbl.config(text=done_text, foreground=self.colors['success'])
+            elif i == active_step:
+                # 当前步骤：蓝色加粗效果
+                original = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"][i]
+                lbl.config(text=original, foreground=self.colors['primary'])
+            else:
+                # 未到：灰色
+                original = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"][i]
+                lbl.config(text=original, foreground=self.colors['text_muted'])
+
+    def _hide_job_step_bar(self):
+        """隐藏新建岗位步骤引导条"""
+        if hasattr(self, '_job_step_bar'):
+            self._job_step_bar.pack_forget()
+        self._job_step_active = -1
+
+    def _bind_job_step_advance(self):
+        """包装 canvas 的 yscrollcommand，滚动到底部时推进到保存配置步骤"""
+        self._job_step_edit_done = False
+
+        if hasattr(self, '_job_step_yscroll_wrapped'):
+            return  # 已包装，只需重置标志
+
+        self._job_step_yscroll_wrapped = True
+
+        # 找到与 canvas 同级的 Scrollbar，取其 .set 方法作为原始回调
+        _scrollbar_set = None
+        for sibling in self.config_canvas.master.winfo_children():
+            if isinstance(sibling, ttk.Scrollbar):
+                _scrollbar_set = sibling.set
+                break
+
+        def _wrapped_yscroll(top, bottom):
+            if _scrollbar_set:
+                _scrollbar_set(top, bottom)
+            if self._job_step_edit_done:
+                return
+            if self._job_step_active == 2 and float(bottom) >= 0.95:
+                self._job_step_edit_done = True
+                self._update_job_step(3)
+
+        self.config_canvas.configure(yscrollcommand=_wrapped_yscroll)
 
     def add_job(self):
         """新建岗位"""
@@ -4938,6 +5185,11 @@ class BossFilterGUI:
         self.job_name_var.set("新岗位")
         self.config_job_combo.set("")  # 清空岗位选择
         self.requirement_template_btn.state(['!disabled'])
+        self._update_job_step(0)  # 步骤1：填入需求
+
+        # 隐藏"点此新建"提示
+        if hasattr(self, 'btn_add_hint') and self.btn_add_hint.winfo_exists():
+            self.btn_add_hint.destroy()
 
     def delete_job(self):
         """删除岗位"""
@@ -4949,6 +5201,7 @@ class BossFilterGUI:
                 self.config_job_combo['values'] = list(self.job_rules.keys())
                 self.config_job_combo.set('')
                 self.reset_job_form()
+                self._hide_job_step_bar()
 
     def save_current_job(self):
         """保存当前岗位配置"""
@@ -5016,6 +5269,14 @@ class BossFilterGUI:
         self.save_config()
         self.config_job_combo['values'] = list(self.job_rules.keys())
         self.config_job_combo.set(normalized_job_name)
+        # 步骤完成：先显示全绿，800ms 后隐藏引导条
+        if self._job_step_active >= 0:
+            _step_texts = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"]
+            for i, lbl in enumerate(self._job_step_labels):
+                lbl.config(text=f"✓ {_step_texts[i][2:]}", foreground=self.colors['success'])
+            self.root.after(800, self._hide_job_step_bar)
+        else:
+            self._hide_job_step_bar()
         messagebox.showinfo("成功", "岗位配置已保存")
 
     def reset_job_form(self):
