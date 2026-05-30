@@ -31,7 +31,7 @@ jobs:
           fi
 
           if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$'; then
-            needs=$(echo "$needs" | jq -c '. + [{"os":"macos-latest","platform":"macos"}]')
+            needs=$(echo "$needs" | jq -c '. + [{"os":"macos-13","platform":"macos"}]')
           fi
 
           echo "needs=$needs" >> "$GITHUB_OUTPUT"
