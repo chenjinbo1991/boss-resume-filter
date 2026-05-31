@@ -835,6 +835,45 @@ def _write_version(version: str):
     print(f"  [OK] __version__ = \"{version}\"\n")
 
 
+def _validate_version_format(version: str):
+    """验证版本号格式是否符合项目惯例。
+
+    规范：
+    - 大版本：X.Y（如 2.9）
+    - 补丁版本：X.Y.Z（如 2.8.12）
+    - 禁止：大版本写成 X.Y.0（如 2.9.0）
+    """
+    parts = version.split(".")
+
+    # 检查是否为数字
+    if not all(p.isdigit() for p in parts):
+        print(f"[错误] 版本号格式错误：{version}")
+        print(f"  版本号只能包含数字和点号，例如：2.9 或 2.8.12")
+        sys.exit(1)
+
+    # 检查段数
+    if len(parts) not in (2, 3):
+        print(f"[错误] 版本号格式错误：{version}")
+        print(f"  版本号必须是 X.Y 或 X.Y.Z 格式，例如：2.9 或 2.8.12")
+        sys.exit(1)
+
+    # 检查大版本是否误写为 X.Y.0
+    if len(parts) == 2 and parts[1] == "0":
+        # X.0 是合法的（如 2.0）
+        pass
+    elif len(parts) == 3 and parts[2] == "0":
+        print(f"[错误] 版本号格式错误：{version}")
+        print(f"  大版本必须使用 X.Y 格式，禁止写成 X.Y.0")
+        print(f"  请改为：{'.'.join(parts[:2])}")
+        sys.exit(1)
+
+    # 检查补丁版本是否合理（Z 不能为 0）
+    if len(parts) == 3 and int(parts[2]) == 0:
+        print(f"[错误] 版本号格式错误：{version}")
+        print(f"  补丁版本的第三段不能为 0，请改为：{'.'.join(parts[:2])}")
+        sys.exit(1)
+
+
 def _check_version_consistency():
     """读取 __version__ 并与打包产物核对，返回 (version, artifact_path, size_mb)"""
     version = _read_version()
@@ -1186,6 +1225,101 @@ def _check_readme_release(version):
                     sys.exit(1)
 
             print(f"  [OK] README.md v{version} 条目数与 CHANGELOG 一致")
+
+
+def _check_version_history_integrity():
+    """验证 CHANGELOG 和 README 中所有历史版本都存在。"""
+    # 从 Git tags 获取所有历史版本
+    r = subprocess.run(
+        ["git", "tag", "-l", "v*"],
+        capture_output=True, text=True, cwd=BASE_DIR
+    )
+    if r.returncode != 0:
+        print("  [跳过] 版本历史检查：无法获取 Git tags")
+        return
+
+    all_tags = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    if not all_tags:
+        print("  [跳过] 版本历史检查：没有找到任何 tag")
+        return
+
+    # 过滤出有效的语义化版本标签（v1.0, v2.8.12 等）
+    version_pattern = re.compile(r"^v\d+\.\d+(\.\d+)?$")
+    versions = [tag[1:] for tag in all_tags if version_pattern.match(tag)]  # 去掉 'v' 前缀
+
+    if not versions:
+        print("  [跳过] 版本历史检查：没有找到有效的语义化版本")
+        return
+
+    # 检查 CHANGELOG
+    changelog_path = BASE_DIR / "CHANGELOG.md"
+    if not changelog_path.exists():
+        print("[错误] CHANGELOG.md 不存在")
+        sys.exit(1)
+
+    changelog_text = changelog_path.read_text(encoding="utf-8")
+
+    # 识别"已合并"的版本范围说明
+    # 例如：v2.8.1 至 v2.8.7 为内部修复版本，相关改进已合并至 v2.8.8 及后续版本
+    merged_versions = set()
+    merged_pattern = re.compile(r"v(\d+\.\d+\.\d+)\s*至\s*v(\d+\.\d+\.\d+)\s*为内部修复版本")
+    for match in merged_pattern.finditer(changelog_text):
+        start_ver = match.group(1)
+        end_ver = match.group(2)
+        # 解析版本号并生成范围内的所有版本
+        start_parts = [int(x) for x in start_ver.split('.')]
+        end_parts = [int(x) for x in end_ver.split('.')]
+        if start_parts[:2] == end_parts[:2]:  # 相同的主版本和次版本
+            for patch in range(start_parts[2], end_parts[2] + 1):
+                merged_versions.add(f"{start_parts[0]}.{start_parts[1]}.{patch}")
+
+    missing_in_changelog = []
+    for ver in versions:
+        pattern = rf"^##\s+v{re.escape(ver)}\b"
+        if not re.search(pattern, changelog_text, re.MULTILINE) and ver not in merged_versions:
+            missing_in_changelog.append(ver)
+
+    # 检查 README
+    readme_path = BASE_DIR / "README.md"
+    if not readme_path.exists():
+        print("[错误] README.md 不存在")
+        sys.exit(1)
+
+    readme_text = readme_path.read_text(encoding="utf-8")
+
+    # 在 README 中也识别"已合并"的版本范围说明
+    readme_merged_versions = set()
+    for match in merged_pattern.finditer(readme_text):
+        start_ver = match.group(1)
+        end_ver = match.group(2)
+        start_parts = [int(x) for x in start_ver.split('.')]
+        end_parts = [int(x) for x in end_ver.split('.')]
+        if start_parts[:2] == end_parts[:2]:
+            for patch in range(start_parts[2], end_parts[2] + 1):
+                readme_merged_versions.add(f"{start_parts[0]}.{start_parts[1]}.{patch}")
+
+    missing_in_readme = []
+    for ver in versions:
+        pattern = rf"^###\s+v{re.escape(ver)}\b"
+        if not re.search(pattern, readme_text, re.MULTILINE) and ver not in readme_merged_versions:
+            missing_in_readme.append(ver)
+
+    # 报告结果
+    if missing_in_changelog:
+        print(f"[错误] CHANGELOG.md 缺少以下 {len(missing_in_changelog)} 个历史版本：")
+        for ver in sorted(missing_in_changelog, key=lambda x: [int(n) for n in x.split('.')]):
+            print(f"  - v{ver}")
+        print("\n请从 Git 历史恢复这些版本的发布说明，或确认它们已被合并到其他版本。")
+        sys.exit(1)
+
+    if missing_in_readme:
+        print(f"[错误] README.md 缺少以下 {len(missing_in_readme)} 个历史版本：")
+        for ver in sorted(missing_in_readme, key=lambda x: [int(n) for n in x.split('.')]):
+            print(f"  - v{ver}")
+        print("\n请同步 CHANGELOG.md 中这些版本的内容到 README.md。")
+        sys.exit(1)
+
+    print(f"  [OK] 版本历史完整性检查通过：CHANGELOG 和 README 均包含全部 {len(versions)} 个历史版本")
 
 
 # ---------------------------------------------------------------------------
@@ -2441,12 +2575,17 @@ def main():
 
     # ---- 版本号更新（在打包之前） ----
     if args.version:
+        _validate_version_format(args.version)  # 校验新版本号格式
         old = _read_version()
         if args.version != old:
             _write_version(args.version)
             version_changed = True
         else:
             print(f"  [跳过] __version__ 已经是 \"{args.version}\"\n")
+
+    # 读取当前版本号并校验格式
+    current_version = _read_version()
+    _validate_version_format(current_version)
 
     if not args.ci:
         run_in_venv()
@@ -2662,6 +2801,7 @@ def main():
     if args.release:
         release_title, release_notes = _extract_changelog_release(version)
         _check_readme_release(version)
+        _check_version_history_integrity()
 
     if needs_rebuild:
         progress.end_step()
