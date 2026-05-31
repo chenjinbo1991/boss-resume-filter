@@ -1774,8 +1774,8 @@ def _build_input_files():
     # 扫描项目根目录的所有 .py 文件
     py_files = []
     for f in BASE_DIR.glob("*.py"):
-        # 排除测试文件
-        if f.name.startswith("test_") or f.name.endswith("_test.py"):
+        # 排除测试文件和打包脚本本身
+        if f.name.startswith("test_") or f.name.endswith("_test.py") or f.name == "build.py":
             continue
         py_files.append(f.name)
 
