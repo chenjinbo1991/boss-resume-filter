@@ -2041,7 +2041,8 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
         existing_assets = _gitee_fetch_assets(api_base, token, release_id, _retry_request)
         # 标题或正文有变化时同步更新（以 CHANGELOG 为准）
         new_name = release_title or tag
-        new_body = release_notes or ""
+        # 如果 release_notes 为空，保持 Gitee 原有 body 不变（避免传空字符串导致 400 错误）
+        new_body = release_notes if release_notes else release.get("body", "")
         old_name = release.get("name", "")
         old_body = release.get("body", "")
         if old_name != new_name or old_body != new_body:
@@ -2596,6 +2597,9 @@ def main():
 
     if args.gitee_upload:
         version = args.gitee_upload
+        # 移除可能的 'v' 前缀，避免 tag 变成 'vv2.9'
+        if version.startswith('v'):
+            version = version[1:]
         tag = f"v{version}"
         print(f"\n>>> 手动上传产物到 Gitee Release {tag}")
 
