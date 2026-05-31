@@ -405,3 +405,6 @@ Windows `vista` 主题的 `ttk.Button` 不尊重 `style.configure` 设置的 `fo
 
 ### Tk Canvas yscrollcommand 返回字符串
 `canvas.cget("yscrollcommand")` 返回 Tcl 命令字符串（如 `"::scrollbar1.set"`），不是 Python 可调用对象。需要包装 `yscrollcommand` 回调时，应遍历 canvas 父容器找到同级 `ttk.Scrollbar`，取其 `.set` 方法作为原始回调。回调参数 `(top, bottom)` 也是字符串，需 `float()` 转换后才能比较。
+
+### Gitee 上传参数处理
+`build.py --gitee-upload` 接受版本号参数时，需先移除用户可能输入的 `v` 前缀（如 `v2.9` → `2.9`），否则构建 tag 时会变成 `vv2.9` 导致找不到对应 release。另外，PATCH release 时如果 `release_notes` 为空，不能传空字符串（Gitee 返回 400 `"发行版的描述不能为空"`），应保留 Gitee 原有 body 不变。实现位置：`build.py:main()` 的 `--gitee-upload` 分支、`build.py:_gitee_find_or_create_release()`。
