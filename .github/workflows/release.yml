@@ -107,5 +107,7 @@ jobs:
             dist/BOSS_ResumeFilter.exe
             dist/BOSS_ResumeFilter.dmg
             dist/BOSS_ResumeFilter_mac.zip
+            dist/job_config.json
+            dist/README.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
