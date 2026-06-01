@@ -750,7 +750,7 @@ class BossFilterGUI:
             self.root.after(500, self._setup_cocoa_scroll_hook)
 
         # 启动时自动检查更新（延迟 3 秒，避免启动卡顿）
-        updater.auto_check_on_startup(self.root, delay_ms=3000)
+        updater.auto_check_on_startup(self.root, delay_ms=3000, gui=self)
         if getattr(sys, 'frozen', False):
             self.root.after(1000, updater.mark_update_success_and_cleanup)
 
@@ -7198,7 +7198,7 @@ class BossFilterGUI:
             return frame
 
         _icon_btn(btn_frame, icon_refresh, '检查更新',
-                  lambda: updater.check_and_update_gui(self.root, silent=False)
+                  lambda: updater.check_and_update_gui(self.root, silent=False, gui=self)
                   ).pack(side="left", padx=_pad)
 
         _icon_btn(btn_frame, icon_close, '关闭',
@@ -7290,59 +7290,82 @@ class BossFilterGUI:
         list_wrapper = tk.Frame(list_container, bg=sidebar_bg)
         list_wrapper.pack(fill="both", expand=True)
 
-        listbox_font = (FONT_FAMILY, int(13 * changelog_fs))
-        listbox = tk.Listbox(list_wrapper, font=listbox_font,
-                             bg=sidebar_bg, fg='#CBD5E0',
-                             selectbackground=self.colors['primary'],
-                             selectforeground='#FFFFFF',
-                             borderwidth=0, highlightthickness=0,
-                             activestyle='none',
-                             selectborderwidth=0,
-                             justify='left',
-                             relief='flat')
+        # Canvas + Label 方案（Listbox 不支持逐行字体）
+        canvas_bg = sidebar_bg
+        list_canvas = tk.Canvas(list_wrapper, bg=canvas_bg, highlightthickness=0, borderwidth=0)
+        list_inner = tk.Frame(list_canvas, bg=canvas_bg)
+        canvas_window_id = list_canvas.create_window(0, 0, window=list_inner, anchor='nw')
+        list_inner.bind('<Configure>', lambda e: list_canvas.configure(scrollregion=list_canvas.bbox('all')))
+        list_canvas.bind('<Configure>', lambda e: list_canvas.itemconfigure(canvas_window_id, width=e.width))
         list_scrollbar = tk.Scrollbar(list_wrapper, orient="vertical",
-                                      command=listbox.yview,
+                                      command=list_canvas.yview,
                                       width=max(8, int(8 * fs)),
                                       bg='#718096',
                                       activebackground='#CBD5E0',
                                       troughcolor='#1F2937',
-                                      borderwidth=0,
-                                      highlightthickness=0,
-                                      relief='flat')
-        listbox.configure(yscrollcommand=list_scrollbar.set)
-        listbox.pack(fill="y", expand=True)
-        # 滚动条仅在内容溢出时显示
-        list_scrollbar_visible = False
+                                      borderwidth=0, highlightthickness=0, relief='flat')
+        list_canvas.configure(yscrollcommand=list_scrollbar.set)
+        list_scrollbar.pack(side="right", fill="y")
+        list_canvas.pack(fill="both", expand=True)
 
-        def update_scrollbar_visibility():
-            nonlocal list_scrollbar_visible
-            # 检查是否需要滚动条
-            if listbox.size() > 0:
-                listbox.update_idletasks()
-                visible_lines = listbox.winfo_height() // listbox.tk.call('font', 'metrics', listbox_font, '-linespace')
-                needs_scroll = listbox.size() > visible_lines
-                if needs_scroll and not list_scrollbar_visible:
-                    list_scrollbar.pack(side="right", fill="y")
-                    list_scrollbar_visible = True
-                elif not needs_scroll and list_scrollbar_visible:
-                    list_scrollbar.pack_forget()
-                    list_scrollbar_visible = False
+        def _canvas_mousewheel(event):
+            list_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            return "break"
+        list_canvas.bind("<MouseWheel>", _canvas_mousewheel)
+        list_inner.bind("<MouseWheel>", _canvas_mousewheel)
+        if sys.platform != 'win32':
+            def _cb_scroll_up(e): list_canvas.yview_scroll(-1, "units"); return "break"
+            def _cb_scroll_down(e): list_canvas.yview_scroll(1, "units"); return "break"
+            list_canvas.bind("<Button-4>", _cb_scroll_up)
+            list_canvas.bind("<Button-5>", _cb_scroll_down)
+            list_inner.bind("<Button-4>", _cb_scroll_up)
+            list_inner.bind("<Button-5>", _cb_scroll_down)
+
+        row_frames = []
+        selected_row_idx = [0]
 
         for idx, (tag, title_line, _) in enumerate(versions):
-            display_text = f"  ▸ {tag}"
-            listbox.insert("end", display_text)
+            is_patch = tag.count('.') >= 2  # X.Y.Z 是补丁版本
+            prefix = "◇ " if is_patch else "● "
+            font_size = int(10 * changelog_fs) if is_patch else int(12 * changelog_fs)
             row_bg = '#243041' if idx % 2 == 0 else sidebar_bg
-            row_fg = '#F8FAFC' if idx == 0 else '#CBD5E0'
-            listbox.itemconfig(idx, background=row_bg, foreground=row_fg)
+            row_fg = '#F8FAFC' if idx == 0 else ('#718096' if is_patch else '#E2E8F0')
 
-        # 按内容最大宽度设置 listbox 宽度，使版本列表在侧栏居中
-        max_len = max((len(f"  ▸ {tag}") for tag, _, _ in versions), default=8)
-        listbox.configure(width=max_len + 2)
+            row_frame = tk.Frame(list_inner, bg=row_bg)
+            row_frame.pack(fill='x', pady=0)
+            lbl = tk.Label(row_frame, text=f"  {prefix}{tag}", bg=row_bg, fg=row_fg,
+                           font=(FONT_FAMILY, font_size), anchor='w')
+            lbl.pack(fill='x', ipady=int(2 * fs))
+            row_frames.append((row_frame, lbl, row_bg, row_fg, idx))
 
-        # 初始化后检查是否需要显示滚动条
-        dialog.after(100, update_scrollbar_visibility)
-        # 窗口大小变化时重新检查
-        dialog.bind('<Configure>', lambda e: update_scrollbar_visibility() if e.widget == dialog else None)
+            def make_select_handler(i):
+                def handler(event=None):
+                    select_version(i)
+                return handler
+            def _enter(e, rf=row_frame, lb=lbl):
+                if selected_row_idx[0] != rf._idx:
+                    rf.config(bg=self.colors['primary'])
+                    lb.config(bg=self.colors['primary'], fg='#FFFFFF')
+            def _leave(e, rf=row_frame, lb=lbl, rb=row_bg, rfg=row_fg):
+                if selected_row_idx[0] != rf._idx:
+                    rf.config(bg=rb)
+                    lb.config(bg=rb, fg=rfg)
+            row_frame._idx = idx
+            for widget in (row_frame, lbl):
+                widget.bind('<Button-1>', make_select_handler(idx))
+                widget.bind('<Enter>', _enter)
+                widget.bind('<Leave>', _leave)
+
+        def select_version(idx):
+            selected_row_idx[0] = idx
+            for rf, lb, orig_bg, orig_fg, i in row_frames:
+                if i == idx:
+                    rf.config(bg=self.colors['primary'])
+                    lb.config(bg=self.colors['primary'], fg='#FFFFFF')
+                else:
+                    rf.config(bg=orig_bg)
+                    lb.config(bg=orig_bg, fg=orig_fg)
+            show_version(idx)
 
         # 左侧边栏底部：关于链接
         about_label = tk.Label(left_frame, text="关于",
@@ -7494,30 +7517,8 @@ class BossFilterGUI:
             text_widget.yview_moveto(0)
             schedule_detail_scrollbar_refresh()
 
-        def on_select(event):
-            sel = listbox.curselection()
-            if sel:
-                show_version(sel[0])
-
-        def on_version_list_scroll(event):
-            if getattr(event, 'num', None) == 4:
-                direction = -1
-            elif getattr(event, 'num', None) == 5:
-                direction = 1
-            else:
-                direction = -1 if event.delta > 0 else 1
-            listbox.yview_scroll(direction, "units")
-            return "break"
-
-        listbox.bind("<<ListboxSelect>>", on_select)
-        listbox.bind("<MouseWheel>", on_version_list_scroll)
-        if sys.platform != 'win32':
-            listbox.bind("<Button-4>", on_version_list_scroll)
-            listbox.bind("<Button-5>", on_version_list_scroll)
-
         # 默认选中第一个版本（最新）
-        listbox.selection_set(0)
-        show_version(0)
+        select_version(0)
 
         # 内容创建完成后再按实际窗口尺寸复位一次，避免初始布局请求导致视觉中心偏移。
         dialog.update_idletasks()

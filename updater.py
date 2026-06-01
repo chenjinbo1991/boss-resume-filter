@@ -769,13 +769,14 @@ def exit_for_update(root):
     os._exit(0)
 
 
-def check_and_update_gui(root, silent=False, on_complete=None):
+def check_and_update_gui(root, silent=False, on_complete=None, gui=None):
     """
     GUI 版本的更新检查和执行
 
     Args:
         root: tkinter 根窗口
         silent: 是否静默检查（不显示"已是最新版本"提示）
+        gui: BossFilterGUI 实例（用于字体缩放和配色）
     """
     def do_check():
         # 优先尝试 Gitee（国内快）
@@ -791,6 +792,12 @@ def check_and_update_gui(root, silent=False, on_complete=None):
             if not gh['error'] and gh['has_update']:
                 print(f"[更新] GitHub 发现新版本 v{gh['latest']}，使用 GitHub 结果")
                 result = gh
+
+        # 后台获取远端 CHANGELOG 段落（避免主线程阻塞）
+        if result.get('has_update') and result.get('latest'):
+            changelog_body = _fetch_changelog_section(result['latest'])
+            if changelog_body:
+                result['changelog_body'] = changelog_body
 
         # 回到主线程处理结果
         root.after(0, lambda: handle_result(result))
@@ -815,7 +822,7 @@ def check_and_update_gui(root, silent=False, on_complete=None):
             return
 
         # 有新版本，显示更新对话框
-        show_update_dialog(root, result)
+        show_update_dialog(root, result, gui=gui)
         if on_complete:
             on_complete(result)
 
@@ -823,74 +830,189 @@ def check_and_update_gui(root, silent=False, on_complete=None):
     threading.Thread(target=do_check, daemon=True).start()
 
 
-def show_update_dialog(root, result):
-    """显示更新对话框"""
+def _fetch_changelog_section(target_version):
+    """从远端 CHANGELOG.md 提取目标版本段落，与主界面版本历史/README/Release 同源。
+    Gitee 优先（国内快），GitHub fallback。"""
+    urls = [
+        "https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/CHANGELOG.md",
+        "https://raw.githubusercontent.com/yaoyouzhong/boss-resume-filter/master/CHANGELOG.md",
+    ]
+    content = None
+    for url in urls:
+        try:
+            resp = requests.get(url, timeout=8)
+            resp.raise_for_status()
+            content = resp.text
+            break
+        except Exception:
+            continue
+    if not content:
+        return None
+
+    in_section = False
+    lines = []
+    for line in content.splitlines():
+        if line.startswith("## v"):
+            tag = line[3:].strip().split("—")[0].split("–")[0].split()[0].strip()
+            if tag == target_version:
+                in_section = True
+                continue
+            elif in_section:
+                break
+        elif in_section:
+            lines.append(line)
+    return "\n".join(lines) if lines else None
+
+
+def show_update_dialog(root, result, gui=None):
+    """显示更新对话框（使用 GUI 实例的字体缩放和配色方案）"""
+    from tkinter import ttk
+
+    # 缩放参数（有 gui 实例时用它，否则退化为 1.0）
+    font_scale = getattr(gui, 'font_scale', 1.0)
+    layout_scale = (getattr(gui, 'dpi_scale', 1.0)
+                    * getattr(gui, 'zoom_factor', 1.0))
+    font_family = getattr(gui, 'FONT_FAMILY', _FONT_FAMILY)
+    font_family_bold = getattr(gui, 'FONT_FAMILY_SEMIBOLD', _FONT_FAMILY)
+    colors = getattr(gui, 'colors', None) or {
+        'bg_card': '#FFFFFF', 'bg_main': '#F7F8FA', 'bg_hover': '#EDF2F7',
+        'text_primary': '#1A202C', 'text_secondary': '#4A5568',
+        'text_muted': '#A0AEC0', 'border': '#E2E8F0',
+        'primary': '#3182CE',
+    }
+
     dialog = tk.Toplevel(root)
     dialog.title("发现新版本")
     dialog.transient(root)
     dialog.grab_set()
+    dialog.configure(bg=colors['bg_card'])
 
-    # 居中显示
-    _place_dialog_centered(dialog, root, 600, 500)
+    # 居中显示（按缩放调整尺寸）
+    dw = int(700 * layout_scale)
+    dh = int(520 * layout_scale)
+    _place_dialog_centered(dialog, root, dw, dh)
 
-    # 标题行：v2.7 → v2.8
-    title_label = tk.Label(
+    pad = lambda v: int(v * layout_scale)
+    fs = lambda size: int(size * font_scale)
+
+    # 标题行（用 Semibold 字体族，不加 'bold' 修饰符，与主界面一致）
+    tk.Label(
         dialog,
         text=f"v{result['current']} → v{result['latest']}",
-        font=(_FONT_FAMILY, 16, "bold")
-    )
-    title_label.pack(pady=(15, 5))
+        font=(font_family_bold, fs(13)),
+        bg=colors['bg_card'], fg=colors['text_primary']
+    ).pack(pady=(pad(15), pad(5)))
 
-    # 更新内容（从 release body 读取）
-    release_info = result['release_info']
-    body = release_info.get('body', '无更新说明')
+    # 更新内容：后台预取的远端 CHANGELOG 段落优先（### 格式，与主界面版本历史一致），fallback 用 latest.json release_notes
+    target_version = result['latest']
+    body = result.get('changelog_body') or result.get('release_info', {}).get('body', '无更新说明')
 
-    content_frame = tk.LabelFrame(dialog, text="更新内容", padx=10, pady=10,
-                                  font=(_FONT_FAMILY, 13))
-    content_frame.pack(fill="both", expand=True, padx=20, pady=10)
+    content_frame = tk.LabelFrame(dialog, text="更新内容",
+                                  padx=pad(10), pady=pad(10),
+                                  font=(font_family, fs(10)),
+                                  bg=colors['bg_card'],
+                                  fg=colors['text_primary'])
+    content_frame.pack(fill="both", expand=True, padx=pad(20), pady=pad(10))
 
-    content_text = tk.Text(content_frame, wrap="word", height=15,
-                           font=(_FONT_FAMILY, 12))
-    content_text.insert("1.0", body)
+    content_text = tk.Text(content_frame, wrap="char", height=15,
+                           font=(font_family, fs(10)),
+                           bg=colors['bg_card'], fg=colors['text_primary'],
+                           padx=pad(12), pady=pad(12),
+                           spacing1=0, spacing2=1, spacing3=2,
+                           selectbackground=colors['primary'],
+                           borderwidth=0, highlightthickness=0,
+                           relief='flat')
+
+    # Markdown 渲染（与主界面版本历史完全一致的参数）
+    section_font = (font_family_bold, fs(11))
+    item_font = (font_family, fs(10))
+    item_bold_font = (font_family_bold, fs(10))
+    item_left_margin = pad(18)
+    item_wrap_margin = pad(36)
+
+    content_text.tag_configure("section_new", font=section_font, foreground=colors.get('success', '#48BB78'))
+    content_text.tag_configure("section_opt", font=section_font, foreground=colors['primary'])
+    content_text.tag_configure("section_ui", font=section_font, foreground=colors.get('purple', '#805AD5'))
+    content_text.tag_configure("section_fix", font=section_font, foreground=colors.get('danger', '#E53E3E'))
+    content_text.tag_configure("item", font=item_font, foreground=colors['text_secondary'],
+                               lmargin1=item_left_margin, lmargin2=item_wrap_margin)
+    content_text.tag_configure("item_bold", font=item_bold_font, foreground=colors['text_primary'])
+
+    section_map = {
+        '新增功能': 'section_new',
+        '体验优化': 'section_opt',
+        '行为优化': 'section_opt',
+        '性能优化': 'section_opt',
+        'UI 改进': 'section_ui',
+        'UI改进': 'section_ui',
+        '问题修复': 'section_fix',
+        'Bug 修复': 'section_fix',
+        'Bug修复': 'section_fix',
+    }
+
+    for line in body.splitlines():
+        # 兼容 ## 和 ### 作为分类标题（CHANGELOG 用 ###，latest.json release_notes 可能用 ##）
+        stripped = line.lstrip('#').strip()
+        header_level = len(line) - len(line.lstrip('#'))
+        is_section = (header_level in (2, 3)) and stripped and not stripped.startswith('v')
+
+        if line.startswith("## v"):
+            continue  # 跳过版本标题
+        elif is_section:
+            stag = section_map.get(stripped, 'section_opt')
+            content_text.insert("end", "\n" + stripped + "\n\n", stag)
+        elif line.startswith("- "):
+            text = line[2:]
+            if text.startswith("**"):
+                end_pos = text.find("**", 2)
+                if end_pos > 0:
+                    title_part = text[2:end_pos]
+                    rest = text[end_pos + 2:]
+                    full = "• " + title_part + rest + "\n"
+                    line_start = content_text.index("end")
+                    content_text.insert("end", full, "item")
+                    bold_start = f"{line_start} + 2 chars"
+                    bold_end = f"{line_start} + {2 + len(title_part)} chars"
+                    content_text.tag_add("item_bold", bold_start, bold_end)
+                else:
+                    content_text.insert("end", "• " + text + "\n", "item")
+            else:
+                content_text.insert("end", "• " + text + "\n", "item")
+
     content_text.config(state="disabled")
     content_text.pack(fill="both", expand=True)
 
     # 进度条（初始隐藏）
-    progress_frame = tk.Frame(dialog)
+    progress_frame = tk.Frame(dialog, bg=colors['bg_card'])
     progress_label = tk.Label(progress_frame, text="下载中...",
-                              font=(_FONT_FAMILY, 13))
-    progress_label.pack(side="left", padx=5)
+                              font=(font_family, fs(10)),
+                              bg=colors['bg_card'], fg=colors['text_primary'])
+    progress_label.pack(side="left", padx=pad(5))
 
-    from tkinter import ttk
-    progress_bar = ttk.Progressbar(progress_frame, length=200, mode='determinate')
-    progress_bar.pack(side="left", padx=5)
+    progress_bar = ttk.Progressbar(progress_frame, length=int(200 * layout_scale),
+                                   mode='determinate')
+    progress_bar.pack(side="left", padx=pad(5))
 
-    # 按钮
-    button_frame = tk.Frame(dialog)
-    button_frame.pack(pady=20)
+    # 按钮框
+    button_frame = tk.Frame(dialog, bg=colors['bg_card'])
+    button_frame.pack(pady=pad(20))
 
     def on_cancel():
         dialog.destroy()
 
     def on_update():
         """执行更新"""
-        # 隐藏按钮，显示进度
         button_frame.pack_forget()
-        progress_frame.pack(pady=20)
+        progress_frame.pack(pady=pad(20))
 
         def do_update():
             if sys.platform == 'win32':
-                # Windows: 下载并替换 EXE
                 download_url = result['download_url']
                 if not download_url:
                     root.after(0, lambda: messagebox.showerror(
-                        "更新失败",
-                        "未找到 Windows EXE 下载链接",
-                        parent=dialog
-                    ))
+                        "更新失败", "未找到 Windows EXE 下载链接", parent=dialog))
                     return
 
-                # 下载 EXE
                 temp_dir = Path(tempfile.mkdtemp(prefix="boss_update_download_"))
                 temp_exe = temp_dir / "BOSS_ResumeFilter_new.exe"
 
@@ -899,31 +1021,25 @@ def show_update_dialog(root, result):
                         percent = int(downloaded / total * 100)
                         root.after(0, lambda: progress_bar.config(value=percent))
                         root.after(0, lambda: progress_label.config(
-                            text=f"下载中... {percent}%"
-                        ))
+                            text=f"下载中... {percent}%"))
 
                 asset_info = result.get('asset_info', {})
                 success, error = download_and_verify_file(
                     str(download_url), temp_exe, asset_info, progress_callback)
 
                 if not success:
-                    # Gitee 下载失败，尝试 GitHub fallback
                     fallback_url = result.get('download_url_fallback')
                     if fallback_url and str(fallback_url) != str(download_url):
-                        root.after(0, lambda: progress_label.config(text="Gitee 下载失败，尝试 GitHub..."))
+                        root.after(0, lambda: progress_label.config(
+                            text="Gitee 下载失败，尝试 GitHub..."))
                         success, error = download_and_verify_file(
                             str(fallback_url), temp_exe, asset_info, progress_callback)
                     if not success:
                         root.after(0, lambda: messagebox.showerror(
-                            "下载失败",
-                            f"下载新版本失败: {error}",
-                            parent=dialog
-                        ))
+                            "下载失败", f"下载新版本失败: {error}", parent=dialog))
                         return
 
-                # 执行更新
                 root.after(0, lambda: progress_label.config(text="正在安装..."))
-
                 current_exe = sys.executable
                 success, error = update_windows(str(temp_exe), current_exe)
 
@@ -935,25 +1051,16 @@ def show_update_dialog(root, result):
                     ))
                 else:
                     root.after(0, lambda: messagebox.showerror(
-                        "更新失败",
-                        f"安装失败: {error}",
-                        parent=dialog
-                    ))
+                        "更新失败", f"安装失败: {error}", parent=dialog))
 
             else:
-                # macOS: 判断是否从 .app bundle 运行
                 if getattr(sys, 'frozen', False):
-                    # 从 .app 运行：下载 ZIP 并替换
                     download_url = result['download_url']
                     if not download_url:
                         root.after(0, lambda: messagebox.showerror(
-                            "更新失败",
-                            "未找到 macOS ZIP 下载链接",
-                            parent=dialog
-                        ))
+                            "更新失败", "未找到 macOS ZIP 下载链接", parent=dialog))
                         return
 
-                    # 下载 ZIP
                     temp_dir = Path(tempfile.mkdtemp(prefix="boss_update_download_"))
                     temp_zip = temp_dir / "BOSS_ResumeFilter_mac.zip"
 
@@ -962,49 +1069,37 @@ def show_update_dialog(root, result):
                             percent = int(downloaded / total * 100)
                             root.after(0, lambda: progress_bar.config(value=percent))
                             root.after(0, lambda: progress_label.config(
-                                text=f"下载中... {percent}%"
-                            ))
+                                text=f"下载中... {percent}%"))
 
                     asset_info = result.get('asset_info', {})
                     success, error = download_and_verify_file(
                         str(download_url), temp_zip, asset_info, progress_callback)
 
                     if not success:
-                        # Gitee 下载失败，尝试 GitHub fallback
                         fallback_url = result.get('download_url_fallback')
                         if fallback_url and str(fallback_url) != str(download_url):
-                            root.after(0, lambda: progress_label.config(text="Gitee 下载失败，尝试 GitHub..."))
+                            root.after(0, lambda: progress_label.config(
+                                text="Gitee 下载失败，尝试 GitHub..."))
                             success, error = download_and_verify_file(
                                 str(fallback_url), temp_zip, asset_info, progress_callback)
                         if not success:
                             root.after(0, lambda: messagebox.showerror(
-                                "下载失败",
-                                f"下载新版本失败: {error}",
-                                parent=dialog
-                            ))
+                                "下载失败", f"下载新版本失败: {error}", parent=dialog))
                             return
 
-                    # 执行更新
                     root.after(0, lambda: progress_label.config(text="正在安装..."))
-
-                    # 获取当前 .app 路径
-                    # sys.executable 在 .app 中指向 Python 二进制，需要向上找到 .app 目录
                     exe_path = Path(sys.executable).resolve()
-                    # 向上查找直到找到 .app 目录
                     current_app = exe_path
                     while current_app.suffix != '.app' and current_app != current_app.parent:
                         current_app = current_app.parent
 
                     if current_app.suffix != '.app':
                         root.after(0, lambda: messagebox.showerror(
-                            "更新失败",
-                            "无法定位当前 .app 路径",
-                            parent=dialog
-                        ))
+                            "更新失败", "无法定位当前 .app 路径", parent=dialog))
                         return
 
-                    success, message = update_macos_app(str(temp_zip), str(current_app))
-
+                    success, message = update_macos_app(
+                        str(temp_zip), str(current_app))
                     if success:
                         root.after(0, lambda: (
                             progress_label.config(text=message),
@@ -1013,62 +1108,69 @@ def show_update_dialog(root, result):
                         ))
                     else:
                         root.after(0, lambda: messagebox.showerror(
-                            "更新失败",
-                            f"安装失败: {message}",
-                            parent=dialog
-                        ))
+                            "更新失败", f"安装失败: {message}", parent=dialog))
                 else:
-                    # 从源码运行：git pull（降级方案）
                     success, message = update_macos()
-
                     if success:
                         root.after(0, lambda: (
                             messagebox.showinfo(
                                 "更新成功",
                                 message + "\n\n请手动重启应用以使用新版本",
-                                parent=dialog
-                            ),
+                                parent=dialog),
                             dialog.destroy()
                         ))
                     else:
                         root.after(0, lambda: messagebox.showerror(
-                            "更新失败",
-                            message,
-                            parent=dialog
-                        ))
+                            "更新失败", message, parent=dialog))
 
-        # 在后台线程执行更新
         threading.Thread(target=do_update, daemon=True).start()
+
+    # 按钮（用 tk.Button 原生控件，渲染质量比 Frame+Label 好）
+    btn_font = (font_family, fs(10))
 
     cancel_btn = tk.Button(
         button_frame,
         text="稍后更新",
         command=on_cancel,
-        width=15,
-        font=(_FONT_FAMILY, 13)
+        font=btn_font,
+        width=12,
+        bg=colors['bg_card'],
+        fg=colors['text_primary'],
+        activebackground=colors['bg_hover'],
+        activeforeground=colors['text_primary'],
+        relief='solid',
+        borderwidth=1,
+        cursor='hand2'
     )
-    cancel_btn.pack(side="left", padx=10)
+    cancel_btn.pack(side="left", padx=pad(6))
 
     update_btn = tk.Button(
         button_frame,
         text="立即更新",
         command=on_update,
-        width=15,
-        font=(_FONT_FAMILY, 13)
+        font=btn_font,
+        width=12,
+        bg=colors['primary'],
+        fg='#FFFFFF',
+        activebackground='#2B6CB0',
+        activeforeground='#FFFFFF',
+        relief='solid',
+        borderwidth=1,
+        cursor='hand2'
     )
-    update_btn.pack(side="left", padx=10)
+    update_btn.pack(side="left", padx=pad(6))
 
-    # ESC 关闭
     dialog.bind('<Escape>', lambda e: on_cancel())
 
 
-def auto_check_on_startup(root, delay_ms=3000):
+def auto_check_on_startup(root, delay_ms=3000, gui=None):
     """
     启动时自动检查更新（延迟执行），带 24 小时冷却机制
 
     Args:
         root: tkinter 根窗口
         delay_ms: 延迟毫秒数（默认 3 秒，避免启动时卡顿）
+        gui: BossFilterGUI 实例（用于字体缩放和配色）
     """
     # 检查冷却时间（24 小时内不重复检查）
     base_dir = get_base_dir()
@@ -1109,7 +1211,7 @@ def auto_check_on_startup(root, delay_ms=3000):
             except OSError:
                 pass
 
-        check_and_update_gui(root, silent=True, on_complete=record_result)
+        check_and_update_gui(root, silent=True, on_complete=record_result, gui=gui)
 
     root.after(delay_ms, _do_check_and_record)
 
