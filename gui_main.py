@@ -4296,7 +4296,7 @@ class BossFilterGUI:
                             listbox_frame = ttk.Frame(dialog)
                             listbox_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-                            listbox = tk.Listbox(listbox_frame, font=self.font_label, height=10)
+                            listbox = tk.Listbox(listbox_frame, font=self.font_label, height=10, selectmode=tk.MULTIPLE)
                             scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=listbox.yview)
                             listbox.configure(yscrollcommand=scrollbar.set)
 
@@ -4337,16 +4337,20 @@ class BossFilterGUI:
                             def _show_ctx_menu(event):
                                 idx = listbox.nearest(event.y)
                                 if idx >= 0:
-                                    listbox.selection_clear(0, "end")
-                                    listbox.selection_set(idx)
+                                    # 如果点击的项未选中，清除其他选择只选这一项
+                                    # 如果已选中，保持当前多选状态
+                                    if idx not in listbox.curselection():
+                                        listbox.selection_clear(0, "end")
+                                        listbox.selection_set(idx)
                                     _ctx_menu.tk_popup(event.x_root, event.y_root)
 
                             def _test_model_in_dialog():
-                                """在选择模型对话框中测试选中模型的连通性"""
+                                """在选择模型对话框中测试选中模型的连通性（支持多选并行测试）"""
                                 selection = listbox.curselection()
                                 if not selection:
                                     return
-                                test_model_name = listbox.get(selection[0])
+
+                                test_models = [listbox.get(idx) for idx in selection]
 
                                 # 获取 API Key 和 Base URL
                                 provider_key = self.DISPLAY_TO_KEY.get(provider, provider)
@@ -4362,8 +4366,21 @@ class BossFilterGUI:
                                     messagebox.showwarning("警告", "请先配置 Base URL", parent=dialog)
                                     return
 
-                                # 在后台线程测试
-                                def _do_test():
+                                # 在列表项中显示测试状态
+                                for idx in selection:
+                                    current_text = listbox.get(idx)
+                                    # 清除旧的状态标记（如果有）
+                                    if " [" in current_text:
+                                        current_text = current_text.split(" [")[0]
+                                    listbox.delete(idx)
+                                    listbox.insert(idx, f"{current_text} [测试中...]")
+
+                                # 测试结果收集
+                                results = {}
+                                results_lock = threading.Lock()
+
+                                def _test_single_model(model_name):
+                                    """测试单个模型"""
                                     import requests
                                     import certifi
                                     import time
@@ -4373,50 +4390,117 @@ class BossFilterGUI:
                                     try:
                                         resp = session.post(
                                             f"{test_base_url.rstrip('/')}/chat/completions",
-                                            json={"model": test_model_name, "messages": [{"role": "user", "content": "1"}], "max_tokens": 1, "stream": False},
+                                            json={"model": model_name, "messages": [{"role": "user", "content": "1"}], "max_tokens": 1, "stream": False},
                                             headers={"Content-Type": "application/json", "Authorization": f"Bearer {test_api_key}", "User-Agent": "BossResumeFilter/1.0", "Connection": "close"},
                                             timeout=(8, 30),
                                             verify=certifi.where()
                                         )
                                         elapsed = time.time() - start
                                         if resp.status_code == 200:
-                                            msg = f"模型 {test_model_name} 连通正常，响应时间 {elapsed:.1f} 秒"
-                                            self.root.after(0, lambda: messagebox.showinfo("测试成功", msg, parent=dialog))
+                                            result = {"status": "success", "time": elapsed}
                                         elif resp.status_code == 401:
-                                            self.root.after(0, lambda: messagebox.showerror("认证失败", f"API Key 无效或已过期（401）", parent=dialog))
+                                            result = {"status": "error", "msg": "认证失败"}
                                         elif resp.status_code == 404:
-                                            self.root.after(0, lambda: messagebox.showerror("接口不存在", f"模型 {test_model_name} 不存在（404）", parent=dialog))
+                                            result = {"status": "error", "msg": "模型不存在"}
                                         else:
-                                            err_msg = resp.text[:500] if resp.text else "无响应内容"
-                                            # 识别常见业务错误，给出友好提示
+                                            # 识别常见业务错误
                                             friendly = None
                                             try:
                                                 err_json = resp.json()
                                                 code = err_json.get("error", {}).get("code", "")
                                                 msg_text = err_json.get("error", {}).get("message", "")
                                                 if "not activated" in msg_text.lower():
-                                                    friendly = f"模型 {test_model_name} 未开通\n\n请在服务商控制台开通该模型后再试"
+                                                    friendly = "未开通"
                                                 elif "quota" in msg_text.lower() or "limit" in msg_text.lower():
-                                                    friendly = f"模型 {test_model_name} 配额超限\n\n{msg_text}"
+                                                    friendly = "配额超限"
                                                 elif "free tier" in msg_text.lower() or "allocationquota" in code.lower():
-                                                    friendly = f"模型 {test_model_name} 免费额度已用完\n\n如需继续使用，请在服务商控制台关闭「仅使用免费额度」选项，切换到付费模式"
+                                                    friendly = "免费额度已用完"
                                             except Exception:
                                                 pass
-                                            if friendly:
-                                                self.root.after(0, lambda: messagebox.showerror("请求失败", friendly, parent=dialog))
-                                            else:
-                                                self.root.after(0, lambda: messagebox.showerror("请求失败", f"HTTP {resp.status_code}\n\n{err_msg}", parent=dialog))
+                                            result = {"status": "error", "msg": friendly or f"HTTP {resp.status_code}"}
                                     except requests.exceptions.Timeout:
-                                        self.root.after(0, lambda: messagebox.showerror("超时", f"连接超时，请检查网络", parent=dialog))
+                                        result = {"status": "error", "msg": "连接超时"}
                                     except requests.exceptions.ConnectionError:
-                                        self.root.after(0, lambda: messagebox.showerror("连接失败", f"无法连接到服务器", parent=dialog))
+                                        result = {"status": "error", "msg": "无法连接"}
                                     except Exception as e:
-                                        self.root.after(0, lambda: messagebox.showerror("异常", str(e)[:200], parent=dialog))
+                                        result = {"status": "error", "msg": f"异常: {str(e)[:50]}"}
                                     finally:
                                         session.close()
 
-                                import threading
-                                threading.Thread(target=_do_test, daemon=True).start()
+                                    with results_lock:
+                                        results[model_name] = result
+
+                                    # 更新列表项状态
+                                    for idx in selection:
+                                        if listbox.get(idx).startswith(model_name):
+                                            # 清除旧状态
+                                            current_text = listbox.get(idx)
+                                            if " [" in current_text:
+                                                current_text = current_text.split(" [")[0]
+                                            # 设置新状态
+                                            if result["status"] == "success":
+                                                new_text = f"{current_text} [✓ {result['time']:.1f}s]"
+                                                self.root.after(0, lambda i=idx, t=new_text: (
+                                                    listbox.delete(i),
+                                                    listbox.insert(i, t),
+                                                    listbox.itemconfig(i, foreground=self.colors['success'])
+                                                ))
+                                            else:
+                                                new_text = f"{current_text} [✗ {result['msg']}]"
+                                                self.root.after(0, lambda i=idx, t=new_text: (
+                                                    listbox.delete(i),
+                                                    listbox.insert(i, t),
+                                                    listbox.itemconfig(i, foreground=self.colors['danger'])
+                                                ))
+                                            break
+
+                                # 启动所有测试线程
+                                threads = []
+                                for model_name in test_models:
+                                    t = threading.Thread(target=_test_single_model, args=(model_name,), daemon=True)
+                                    threads.append(t)
+                                    t.start()
+
+                                # 等待所有测试完成并显示汇总
+                                def _show_summary():
+                                    for t in threads:
+                                        t.join()
+
+                                    success_count = sum(1 for r in results.values() if r["status"] == "success")
+                                    fail_count = len(results) - success_count
+
+                                    if len(test_models) == 1:
+                                        # 单个模型测试，直接显示结果
+                                        model_name = test_models[0]
+                                        result = results[model_name]
+                                        if result["status"] == "success":
+                                            self.root.after(0, lambda: messagebox.showinfo(
+                                                "测试成功",
+                                                f"模型 {model_name} 连通正常，响应时间 {result['time']:.1f} 秒",
+                                                parent=dialog
+                                            ))
+                                        else:
+                                            self.root.after(0, lambda: messagebox.showerror(
+                                                "测试失败",
+                                                f"模型 {model_name}: {result['msg']}",
+                                                parent=dialog
+                                            ))
+                                    else:
+                                        # 多个模型测试，显示汇总
+                                        summary = f"测试完成：{success_count} 成功，{fail_count} 失败\n\n"
+                                        for model_name, result in results.items():
+                                            if result["status"] == "success":
+                                                summary += f"✓ {model_name} ({result['time']:.1f}s)\n"
+                                            else:
+                                                summary += f"✗ {model_name}: {result['msg']}\n"
+
+                                        self.root.after(0, lambda: messagebox.showinfo(
+                                            "批量测试结果",
+                                            summary,
+                                            parent=dialog
+                                        ))
+
+                                threading.Thread(target=_show_summary, daemon=True).start()
 
                             listbox.bind("<Button-3>", _show_ctx_menu)
 
