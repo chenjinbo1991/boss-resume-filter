@@ -12,14 +12,22 @@
     "windows": {
       "size": 61186465,
       "sha256": "f781be6dd1be81107b4dedb95a85308383ab97d66d8f250e001312d9624d2ed4"
+    },
+    "macos": {
+      "size": 48371421,
+      "sha256": "1739f40d9464f9d1f9090bad3987cd30c29b15141ecf2be39c7f4b495bc954ff"
+    },
+    "macos_dmg": {
+      "size": 44243358,
+      "sha256": "b26329931ef744f13512fe79b4d99b99c6a5fac8720f04638e2d735ffd51f678"
     }
   },
-  "release_notes": "### 新增功能\n- **模型下线检测**：获取模型列表时自动对比上次结果，检测已下线的模型并弹窗提醒\n- **批量连通性测试**：选择模型对话框支持多选（Ctrl+点击切换、Shift+点击范围、Ctrl+A 全选），右键菜单可批量测试连通性，多线程并行执行\n- **业务错误友好提示**：识别模型未开通、配额超限、免费额度用完等常见错误，给出人性化提示和解决方案\n\n### 体验优化\n- **更新弹窗重构**：适配 DPI 缩放，按钮使用原生控件，更新内容从远端 CHANGELOG 提取与主界面版本历史完全一致\n- **测试连接提示优化**：系统设置页测试连接也统一使用人性化提示，不再显示技术细节\n- **批量测试结果精简**：只显示汇总数（X 个可用，Y 个不可用），失败模型灰色显示不突兀\n\n### 问题修复\n- **Windows EXE 版本号修复**：修复打包时版本号显示为 2.9.0 的问题\n- **API Key 读取修复**：修复测试连通性时 provider 显示名称与内部键不一致导致 keyring 查不到 Key\n- **模型名称解析修复**：修复选择模型时连通性测试的状态后缀被当成模型名导致 API 调用失败",
+  "release_notes": "### 新增功能\r\n- **模型下线检测**：获取模型列表时自动对比上次结果，检测已下线的模型并弹窗提醒\r\n- **批量连通性测试**：选择模型对话框支持多选（Ctrl+点击切换、Shift+点击范围、Ctrl+A 全选），右键菜单可批量测试连通性，多线程并行执行\r\n- **业务错误友好提示**：识别模型未开通、配额超限、免费额度用完等常见错误，给出人性化提示和解决方案\r\n\r\n### 体验优化\r\n- **更新弹窗重构**：适配 DPI 缩放，按钮使用原生控件，更新内容从远端 CHANGELOG 提取与主界面版本历史完全一致\r\n- **测试连接提示优化**：系统设置页测试连接也统一使用人性化提示，不再显示技术细节\r\n- **批量测试结果精简**：只显示汇总数（X 个可用，Y 个不可用），失败模型灰色显示不突兀\r\n\r\n### 问题修复\r\n- **Windows EXE 版本号修复**：修复打包时版本号显示为 2.9.0 的问题\r\n- **API Key 读取修复**：修复测试连通性时 provider 显示名称与内部键不一致导致 keyring 查不到 Key\r\n- **模型名称解析修复**：修复选择模型时连通性测试的状态后缀被当成模型名导致 API 调用失败",
   "downloads_cn": {
+    "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/job_config.json",
+    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/README.md",
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/BOSS_ResumeFilter.exe",
     "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/BOSS_ResumeFilter.dmg",
-    "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/job_config.json",
-    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/README.md"
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.1/BOSS_ResumeFilter.dmg"
   }
 }
