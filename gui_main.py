@@ -4131,10 +4131,12 @@ class BossFilterGUI:
                         models = sorted(list(set(chat_models)))
                         filtered_count = len(raw_models) - len(models)
 
-                        # 对比上次获取的模型列表，找出新增模型
+                        # 对比上次获取的模型列表，找出新增和下线模型
                         fetched_models_map = self.api_config.get("fetched_models", {})
                         previous_models = set(fetched_models_map.get(provider, []))
-                        new_models = set(models) - previous_models
+                        current_models = set(models)
+                        new_models = current_models - previous_models
+                        removed_models = previous_models - current_models
 
                         # 更新已获取模型列表并持久化
                         if "fetched_models" not in self.api_config:
@@ -4207,6 +4209,14 @@ class BossFilterGUI:
                                     foreground=self.colors['success'],
                                     style='Dialog.TLabel')
                                 new_label.pack(pady=(4, 0))
+                            # 下线模型提醒
+                            if removed_models:
+                                removed_label = ttk.Label(dialog,
+                                    text=f"⚠ {len(removed_models)} 个模型已下线（灰色标记）",
+                                    font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                    foreground=self.colors['danger'],
+                                    style='Dialog.TLabel')
+                                removed_label.pack(pady=(4, 0))
 
                             # 列表前的间距（有提醒文字时加间距，没有时由列表自带间距）
                             if filter_note or new_models:
@@ -4321,29 +4331,39 @@ class BossFilterGUI:
                             # grab_set() 已提供模态行为，无需阻塞。
 
                         _new_count = len(new_models)
+                        _removed_count = len(removed_models)
                         _total_count = len(models)
                         def _update_status():
+                            parts = [f"找到 {_total_count} 个模型"]
                             if _new_count > 0:
-                                self.api_status_label.config(
-                                    text=f"✓ 找到 {_total_count} 个模型（{_new_count} 个新增）",
-                                    foreground=self.colors['success']
-                                )
-                            else:
-                                self.api_status_label.config(
-                                    text=f"✓ 找到 {_total_count} 个模型",
-                                    foreground=self.colors['success']
-                                )
+                                parts.append(f"{_new_count} 个新增")
+                            if _removed_count > 0:
+                                parts.append(f"{_removed_count} 个下线")
+                            status_text = f"✓ {parts[0]}（{', '.join(parts[1:])}）" if len(parts) > 1 else f"✓ {parts[0]}"
+                            self.api_status_label.config(
+                                text=status_text,
+                                foreground=self.colors['success']
+                            )
                         self.root.after(0, _update_status)
-                        if new_models:
-                            def _show_new_models_alert():
-                                messagebox.showinfo(
-                                    "发现新增模型",
-                                    f"{provider} 新增 {len(new_models)} 个模型：\n\n"
-                                    + "\n".join(f"  • {m}" for m in sorted(new_models)[:10])
-                                    + (f"\n  …等共 {len(new_models)} 个" if len(new_models) > 10 else "")
-                                )
+                        if new_models or removed_models:
+                            def _show_models_alert():
+                                if new_models:
+                                    messagebox.showinfo(
+                                        "发现新增模型",
+                                        f"{provider} 新增 {len(new_models)} 个模型：\n\n"
+                                        + "\n".join(f"  • {m}" for m in sorted(new_models)[:10])
+                                        + (f"\n  …等共 {len(new_models)} 个" if len(new_models) > 10 else "")
+                                    )
+                                if removed_models:
+                                    messagebox.showwarning(
+                                        "模型已下线",
+                                        f"{provider} 有 {len(removed_models)} 个模型已下线：\n\n"
+                                        + "\n".join(f"  • {m}" for m in sorted(removed_models)[:10])
+                                        + (f"\n  …等共 {len(removed_models)} 个" if len(removed_models) > 10 else "")
+                                        + "\n\n如正在使用这些模型，请尽快切换。"
+                                    )
                                 self.root.after(100, show_model_dialog)
-                            self.root.after(0, _show_new_models_alert)
+                            self.root.after(0, _show_models_alert)
                         else:
                             self.root.after(100, show_model_dialog)
                     else:
