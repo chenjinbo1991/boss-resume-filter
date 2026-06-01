@@ -4296,7 +4296,7 @@ class BossFilterGUI:
                             listbox_frame = ttk.Frame(dialog)
                             listbox_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-                            listbox = tk.Listbox(listbox_frame, font=self.font_label, height=10, selectmode=tk.MULTIPLE)
+                            listbox = tk.Listbox(listbox_frame, font=self.font_label, height=10, selectmode=tk.EXTENDED)
                             scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=listbox.yview)
                             listbox.configure(yscrollcommand=scrollbar.set)
 
