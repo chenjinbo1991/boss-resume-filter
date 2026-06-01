@@ -4872,38 +4872,65 @@ class BossFilterGUI:
                         ))
                         return
                     else:
-                        # 其他状态码，重试
+                        # 其他状态码，解析响应内容
                         session.close()
                         last_status = response.status_code
-                        if attempt < max_retries - 1:
+                        err_msg = response.text[:500] if response.text else "无响应内容"
+
+                        # 识别常见业务错误
+                        friendly = None
+                        try:
+                            err_json = response.json()
+                            code = err_json.get("error", {}).get("code", "")
+                            msg_text = err_json.get("error", {}).get("message", "")
+                            if "not activated" in msg_text.lower():
+                                friendly = "模型未开通\n\n请在服务商控制台开通该模型后再试"
+                            elif "quota" in msg_text.lower() or "limit" in msg_text.lower():
+                                friendly = "配额超限\n\n" + msg_text
+                            elif "free tier" in msg_text.lower() or "allocationquota" in code.lower():
+                                friendly = "免费额度已用完\n\n如需继续使用，请在服务商控制台关闭「仅使用免费额度」选项，切换到付费模式"
+                        except Exception:
+                            pass
+
+                        if attempt < max_retries - 1 and not friendly:
                             time.sleep(0.5)
                             self.root.after(0, lambda a=attempt+2: self._update_api_status(
-                                text=f"⏳ 重试中 ({a}/{max_retries})... 状态码:{response.status_code}",
+                                text=f"⏳ 重试中 ({a}/{max_retries})...",
                                 foreground=self.colors['warning']
                             ))
                             continue
-                        # 重试耗尽
+
+                        # 重试耗尽或业务错误
                         self.root.after(0, lambda: self._update_api_status(text="✗ 验证失败", foreground=self.colors['danger']))
-                        self.root.after(0, lambda s=response.status_code, m=response.text[:200]: messagebox.showerror(
-                            "连接测试失败",
-                            f"HTTP 状态码：{s}\n\n"
-                            f"响应：{m}"
-                        ))
+                        if friendly:
+                            self.root.after(0, lambda: messagebox.showerror("连接测试失败", friendly))
+                        else:
+                            self.root.after(0, lambda: messagebox.showerror(
+                                "连接测试失败",
+                                f"无法连接到 API 服务\n\nHTTP {response.status_code}"
+                            ))
                         return
 
                 except requests.exceptions.Timeout as e:
-                    last_error = f"Timeout: {str(e)[:100]}"
+                    last_error = "连接超时"
                     if attempt < max_retries - 1:
                         # 超时后重试，指数退避
                         wait_time = 1.0 * (attempt + 1)
                         time.sleep(wait_time)
-                        self.root.after(0, lambda a=attempt+2, w=wait_time: self._update_api_status(
-                            text=f"⏳ 重试中 ({a}/{max_retries})... 等待{w:.0f}s",
+                        self.root.after(0, lambda a=attempt+2: self._update_api_status(
+                            text=f"⏳ 重试中 ({a}/{max_retries})...",
                             foreground=self.colors['warning']
                         ))
                         continue
+                    # 重试耗尽
+                    self.root.after(0, lambda: self._update_api_status(text="✗ 连接超时", foreground=self.colors['danger']))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "连接测试失败",
+                        "连接超时，请检查网络连接"
+                    ))
+                    return
                 except requests.exceptions.ConnectionError as e:
-                    last_error = f"ConnectionError: {str(e)[:100]}"
+                    last_error = "无法连接服务器"
                     if attempt < max_retries - 1:
                         wait_time = 0.5 * (attempt + 1)
                         time.sleep(wait_time)
@@ -4912,15 +4939,20 @@ class BossFilterGUI:
                             foreground=self.colors['warning']
                         ))
                         continue
+                    # 重试耗尽
+                    self.root.after(0, lambda: self._update_api_status(text="✗ 无法连接", foreground=self.colors['danger']))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "连接测试失败",
+                        "无法连接到服务器，请检查网络和 Base URL"
+                    ))
+                    return
                 except requests.exceptions.SSLError as e:
                     # SSL 错误不重试，直接提示警告
-                    last_error = f"SSLError: {str(e)[:100]}"
+                    last_error = "SSL 证书错误"
                     self.root.after(0, lambda: self._update_api_status(text="⚠️ SSL 错误", foreground=self.colors['warning']))
-                    self.root.after(0, lambda m=str(e)[:200]: messagebox.showwarning(
+                    self.root.after(0, lambda: messagebox.showwarning(
                         "SSL 证书错误",
-                        f"SSL 证书验证失败\n\n"
-                        f"错误：{m}\n\n"
-                        f"可忽略此错误，保存配置后尝试实际使用"
+                        "SSL 证书验证失败，可忽略此错误，保存配置后尝试实际使用"
                     ))
                     return
                 except Exception as e:
@@ -4931,22 +4963,21 @@ class BossFilterGUI:
 
             # 所有重试失败
             session.close()
-            elapsed = time.time() - start_time
             self.root.after(0, lambda: self._update_api_status(text="✗ 验证失败", foreground=self.colors['danger']))
 
             # 根据最后错误类型给出针对性建议
             if last_status == 401:
-                msg = "API Key 无效或已过期"
-            elif "Timeout" in str(last_error):
-                msg = f"请求超时 ({elapsed:.1f}秒)\n\n可能原因：\n• 网络延迟高\n• API 服务器响应慢\n• 需要配置代理"
-            elif "Connection" in str(last_error):
-                msg = f"无法连接 API 服务器\n\n详情：{last_error}\n\n请检查：\n• Base URL 是否正确\n• 网络是否连通\n• 是否需要代理"
+                msg = "API Key 无效或已过期，请检查 API Key 是否正确"
+            elif "超时" in str(last_error):
+                msg = "连接超时，请检查网络连接"
+            elif "无法连接" in str(last_error):
+                msg = "无法连接到服务器，请检查网络和 Base URL"
             else:
-                msg = f"验证失败\n\n详情：{last_error or '未知错误'}"
+                msg = "连接测试失败，请稍后重试"
 
             self.root.after(0, lambda: messagebox.showerror(
                 "连接测试失败",
-                f"经过 {max_retries} 次尝试后仍无法连接\n\n{msg}"
+                msg
             ))
 
         # 启动测试线程
