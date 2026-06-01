@@ -4330,7 +4330,8 @@ class BossFilterGUI:
                             _refresh_listbox()
 
                             # 右键菜单 - 测试连通性
-                            _ctx_menu = tk.Menu(listbox, tearoff=0, font=model_menu_font)
+                            _ctx_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
+                            _ctx_menu = tk.Menu(listbox, tearoff=0, font=_ctx_menu_font)
                             _ctx_menu.add_command(label="测试连通性", command=lambda: _test_model_in_dialog())
 
                             def _show_ctx_menu(event):
