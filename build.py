@@ -1606,14 +1606,15 @@ def _gh_release(version, release_title, release_notes, progress=None,
             for attempt in range(3):
                 try:
                     subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
-                                   cwd=BASE_DIR, check=True)
+                                   cwd=BASE_DIR, check=True, timeout=600)
                     uploaded_names.add(f.name)
                     _sub(f'[OK] {f.name}')
                     break
-                except subprocess.CalledProcessError as e:
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                     if attempt < 2:
-                        _sub(f'[重试] {f.name} 上传失败 (attempt {attempt+1}/3), 5s 后重试...')
-                        time.sleep(5)
+                        wait = 10 * (attempt + 1)
+                        _sub(f'[重试] {f.name} 上传失败 (attempt {attempt+1}/3), {wait}s 后重试...')
+                        time.sleep(wait)
                     else:
                         _sub(f'[失败] {f.name} 上传失败: {e}')
                         raise
