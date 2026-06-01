@@ -4398,6 +4398,8 @@ class BossFilterGUI:
                                                     friendly = f"模型 {test_model_name} 未开通\n\n请在服务商控制台开通该模型后再试"
                                                 elif "quota" in msg_text.lower() or "limit" in msg_text.lower():
                                                     friendly = f"模型 {test_model_name} 配额超限\n\n{msg_text}"
+                                                elif "free tier" in msg_text.lower() or "allocationquota" in code.lower():
+                                                    friendly = f"模型 {test_model_name} 免费额度已用完\n\n如需继续使用，请在服务商控制台关闭「仅使用免费额度」选项，切换到付费模式"
                                             except Exception:
                                                 pass
                                             if friendly:
