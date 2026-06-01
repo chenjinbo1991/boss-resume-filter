@@ -4374,8 +4374,8 @@ class BossFilterGUI:
                                         resp = session.post(
                                             f"{test_base_url.rstrip('/')}/chat/completions",
                                             json={"model": test_model_name, "messages": [{"role": "user", "content": "1"}], "max_tokens": 1, "stream": False},
-                                            headers={"Content-Type": "application/json", "Authorization": f"Bearer {test_api_key}", "Connection": "close"},
-                                            timeout=(5, 15),
+                                            headers={"Content-Type": "application/json", "Authorization": f"Bearer {test_api_key}", "User-Agent": "BossResumeFilter/1.0", "Connection": "close"},
+                                            timeout=(8, 30),
                                             verify=certifi.where()
                                         )
                                         elapsed = time.time() - start
