@@ -257,7 +257,7 @@ def test_needs_local_rebuild_uses_build_fingerprint():
             fingerprint = build._build_fingerprint(cmd)
             build._write_build_state(fingerprint)
             needs, reason = build._needs_local_rebuild(cmd)
-            (tmp_path / "build.py").write_text("changed build script", encoding="utf-8")
+            (tmp_path / "gui_main.py").write_text("__version__ = \"9.9.10\"", encoding="utf-8")
             needs_after_change, reason_after_change = build._needs_local_rebuild(cmd)
 
     assert needs is False
@@ -413,3 +413,4 @@ def test_windows_update_script_resets_pyinstaller_runtime_env():
     assert 'set "PYINSTALLER_RESET_ENVIRONMENT=1"' in bat_content
     assert "set _PYI_" in bat_content
     assert "_MEI*" not in bat_content
+
