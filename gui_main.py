@@ -2211,14 +2211,16 @@ class BossFilterGUI:
             fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 模型列表 Treeview
-        model_columns = ("name", "provider", "base_url")
+        model_columns = ("name", "provider", "base_url", "status")
         self.model_list_tree = ttk.Treeview(model_list_card, columns=model_columns, show="headings")
         self.model_list_tree.heading("name", text="模型名称")
         self.model_list_tree.heading("provider", text="服务商")
         self.model_list_tree.heading("base_url", text="Base URL")
+        self.model_list_tree.heading("status", text="状态")
         self.model_list_tree.column("name", width=110, minwidth=100, anchor='center', stretch=True)
         self.model_list_tree.column("provider", width=60, minwidth=50, anchor='center', stretch=True)
-        self.model_list_tree.column("base_url", width=490, minwidth=100, anchor='center', stretch=True)
+        self.model_list_tree.column("base_url", width=420, minwidth=100, anchor='center', stretch=True)
+        self.model_list_tree.column("status", width=60, minwidth=50, anchor='center', stretch=False)
 
         # 已保存模型列表字体比表格字体小一号
         fs = self.dpi_scale * self.zoom_factor
@@ -2241,6 +2243,8 @@ class BossFilterGUI:
         model_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
         self.model_context_menu = tk.Menu(self.model_list_tree, tearoff=0, font=model_menu_font)
         self.model_context_menu.add_command(label="切换", command=self.use_selected_model)
+        self.model_context_menu.add_command(label="测试连通性", command=self.test_selected_model_connectivity)
+        self.model_context_menu.add_separator()
         self.model_context_menu.add_command(label="删除", command=self.delete_selected_model)
 
         def show_model_context_menu(event):
@@ -2319,7 +2323,7 @@ class BossFilterGUI:
             provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
             base_url = model_config.get("base_url", "")
             is_current = "✓ 使用中" if name == current_model else ""
-            self.model_list_tree.insert("", "end", values=(name, provider_display, base_url), tags=('current' if is_current else ''))
+            self.model_list_tree.insert("", "end", values=(name, provider_display, base_url, "—"), tags=('current' if is_current else ''))
 
         # 设置使用中标记的样式
         self.model_list_tree.tag_configure('current', foreground=self.colors['success'])
@@ -3925,10 +3929,108 @@ class BossFilterGUI:
             except Exception as e:
                 print(f"保存配置失败：{e}")
 
-            self._update_api_status(text=f"✓ 已切换到 {provider}/{model_name}", foreground=self.colors['success'])
-            messagebox.showinfo("切换成功", f"已切换到模型：\n\n{provider} / {model_name}")
+            self._update_api_status(text=f"✓ 已切换到 {provider_key}/{model_name}", foreground=self.colors['success'])
+            messagebox.showinfo("切换成功", f"已切换到模型：\n\n{provider_display} / {model_name}")
         else:
             messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
+
+    def test_selected_model_connectivity(self):
+        """测试选中模型的连通性 - 在后台线程运行，更新状态列"""
+        selection = self.model_list_tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择要测试的模型")
+            return
+
+        item_id = selection[0]
+        item = self.model_list_tree.item(item_id)
+        model_name = item['values'][0]
+        provider_display = item['values'][1]
+        provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
+
+        # 查找对应的配置
+        model_config = None
+        for saved in self.saved_models:
+            if saved.get("model") == model_name:
+                model_config = saved
+                break
+
+        if not model_config:
+            messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
+            return
+
+        # 从系统钥匙串读取 API Key
+        api_key = get_api_key(provider_key)
+        if not api_key:
+            self.model_list_tree.set(item_id, "status", "✗ 无Key")
+            messagebox.showwarning("警告",
+                f"模型 '{model_name}' 的 API Key 未在系统钥匙串中找到\n\n"
+                f"请先配置 API Key")
+            return
+
+        base_url = model_config.get("base_url", "")
+        if not base_url:
+            self.model_list_tree.set(item_id, "status", "✗ 无URL")
+            messagebox.showwarning("警告", f"模型 '{model_name}' 未配置 Base URL")
+            return
+
+        # 更新状态列为"测试中"
+        self.model_list_tree.set(item_id, "status", "⏳")
+
+        def test_thread():
+            import requests
+            import certifi
+            import time
+
+            start_time = time.time()
+            session = requests.Session()
+
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "BossResumeFilter/1.0",
+                "Connection": "close"
+            }
+
+            data = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": "1"}],
+                "max_tokens": 1,
+                "stream": False
+            }
+
+            url = f"{base_url.rstrip('/')}/chat/completions"
+
+            try:
+                response = session.post(
+                    url,
+                    json=data,
+                    headers=headers,
+                    timeout=(5, 15),
+                    verify=certifi.where()
+                )
+                elapsed = time.time() - start_time
+
+                if response.status_code == 200:
+                    status = f"✓ {elapsed:.1f}s"
+                    self.root.after(0, lambda: self.model_list_tree.set(item_id, "status", status))
+                elif response.status_code == 401:
+                    self.root.after(0, lambda: self.model_list_tree.set(item_id, "status", "✗ 认证"))
+                elif response.status_code == 404:
+                    self.root.after(0, lambda: self.model_list_tree.set(item_id, "status", "✗ 404"))
+                else:
+                    self.root.after(0, lambda: self.model_list_tree.set(item_id, "status", f"✗ {response.status_code}"))
+
+            except requests.exceptions.Timeout:
+                self.root.after(0, lambda: self.model_list_tree.set(item_id, "status", "✗ 超时"))
+            except requests.exceptions.ConnectionError:
+                self.root.after(0, lambda: self.model_list_tree.set(item_id, "status", "✗ 连接"))
+            except Exception:
+                self.root.after(0, lambda: self.model_list_tree.set(item_id, "status", "✗ 异常"))
+            finally:
+                session.close()
+
+        import threading
+        threading.Thread(target=test_thread, daemon=True).start()
 
     def save_api_config(self):
         """保存 API 配置 - API Key 按服务商加密存储到系统钥匙串"""
