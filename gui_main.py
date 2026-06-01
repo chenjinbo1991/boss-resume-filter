@@ -4499,6 +4499,13 @@ class BossFilterGUI:
 
                             listbox.bind("<Button-3>", _show_ctx_menu)
 
+                            def _select_all(event=None):
+                                listbox.selection_set(0, "end")
+                                return "break"
+
+                            listbox.bind("<Control-a>", _select_all)
+                            listbox.bind("<Control-A>", _select_all)
+
                             # 按钮行
                             btn_frame = ttk.Frame(dialog)
                             btn_frame.pack(fill="x", padx=25, pady=(10, 15))
