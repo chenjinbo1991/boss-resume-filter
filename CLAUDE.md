@@ -7,7 +7,7 @@ boss-resume-filter/
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.9）
+├── gui_main.py           # 图形界面主程序（v2.9.1）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -172,7 +172,9 @@ boss-resume-filter/
 - 新电脑部署：首次启动检测 API Key 缺失并引导重新配置
 
 ### 模型列表搜索与新增检测
-- 选择模型对话框内置搜索框；`fetched_models` 字段存储上次列表，对比找出新增模型（绿色高亮 + 弹窗提醒）
+- 选择模型对话框内置搜索框；`fetched_models` 字段存储上次列表，对比找出新增模型（绿色高亮 + 弹窗提醒）和下线模型（弹窗提醒）
+- 对话框支持 EXTENDED 多选（Ctrl+点击切换、Shift+点击范围、Ctrl+A 全选）；右键菜单可批量测试连通性
+- 连通性测试多线程并行，识别常见业务错误（未开通/配额超限/免费额度用完）给出人性化提示
 - 实现位置：`gui_main.py:fetch_model_list()`、`gui_main.py:show_model_dialog()`
 
 ## 自动更新
@@ -264,3 +266,9 @@ Windows `vista` 主题的 `ttk.Button` 不尊重 `foreground` 颜色。需要自
 
 ### Gitee 上传参数处理
 `build.py --gitee-upload` 接受版本号时需先移除 `v` 前缀（`v2.9` → `2.9`），否则 tag 变成 `vv2.9`。PATCH release 时 `release_notes` 为空不能传空字符串（Gitee 400），应保留原有 body。
+
+### provider 显示名称与内部键不一致
+GUI 中 `api_provider_var.get()` 返回显示名称（如「通义千问」），但 `get_api_key()` / keyring 存的是内部键（如 `qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换，否则 keyring 查不到 Key。
+
+### 更新弹窗必须使用 GUI 缩放参数
+`updater.py` 的 `show_update_dialog()` 接收 `gui` 参数，使用 `gui.font_scale`/`gui.dpi_scale`/`gui.zoom_factor` 计算字体和布局。不能硬编码字号，否则高 DPI 下字体模糊或过小。更新内容从远端 `CHANGELOG.md` 提取（Gitee → GitHub fallback），不用 `latest.json` 的 `release_notes`（后者可能是简化版）。Text 控件参数（`wrap="char"`、`lmargin1`、`lmargin2`、`spacing1/2/3`）必须与主界面版本历史一致，否则排版错乱。
