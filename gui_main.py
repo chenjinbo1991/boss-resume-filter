@@ -4510,10 +4510,17 @@ class BossFilterGUI:
                             btn_frame = ttk.Frame(dialog)
                             btn_frame.pack(fill="x", padx=25, pady=(10, 15))
 
+                            def _get_model_name(idx):
+                                """获取模型名称，去掉连通性测试的状态后缀"""
+                                text = listbox.get(idx)
+                                if " [" in text:
+                                    text = text.split(" [")[0]
+                                return text
+
                             def on_select(event=None):
                                 selection = listbox.curselection()
                                 if selection:
-                                    selected_model = listbox.get(selection[0])
+                                    selected_model = _get_model_name(selection[0])
                                     self.api_model_var.set(selected_model)
                                     self._update_api_status(
                                         text=f"✓ 已选择 {selected_model}",
@@ -4524,7 +4531,7 @@ class BossFilterGUI:
                             def on_double_click(event):
                                 selection = listbox.curselection()
                                 if selection:
-                                    selected_model = listbox.get(selection[0])
+                                    selected_model = _get_model_name(selection[0])
                                     self.api_model_var.set(selected_model)
                                     _close_dialog()
                                     self._update_api_status(text="⏳ 正在测试连接...", foreground=self.colors['warning'])
