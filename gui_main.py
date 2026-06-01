@@ -4450,7 +4450,7 @@ class BossFilterGUI:
                                                 self.root.after(0, lambda i=idx, t=new_text: (
                                                     listbox.delete(i),
                                                     listbox.insert(i, t),
-                                                    listbox.itemconfig(i, foreground=self.colors['danger'])
+                                                    listbox.itemconfig(i, foreground=self.colors['text_muted'])
                                                 ))
                                             break
 
@@ -4486,13 +4486,8 @@ class BossFilterGUI:
                                                 parent=dialog
                                             ))
                                     else:
-                                        # 多个模型测试，显示汇总
-                                        summary = f"测试完成：{success_count} 成功，{fail_count} 失败\n\n"
-                                        for model_name, result in results.items():
-                                            if result["status"] == "success":
-                                                summary += f"✓ {model_name} ({result['time']:.1f}s)\n"
-                                            else:
-                                                summary += f"✗ {model_name}: {result['msg']}\n"
+                                        # 多个模型测试，显示简要汇总
+                                        summary = f"测试完成：{success_count} 个可用，{fail_count} 个不可用"
 
                                         self.root.after(0, lambda: messagebox.showinfo(
                                             "批量测试结果",
