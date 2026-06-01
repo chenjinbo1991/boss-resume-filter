@@ -2196,11 +2196,15 @@ class BossFilterGUI:
         btn_test._icon_ref = icon_search_test
         btn_test.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
 
-        # API 配置状态提示
-        self.api_status_label = ttk.Label(config_card, text="",
+        # API 配置状态提示（改为 Frame 容器，支持多段可点击文本）
+        self.api_status_frame = ttk.Frame(config_card)
+        self.api_status_frame.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
+        self.api_status_label = ttk.Label(self.api_status_frame, text="",
                                          font=(FONT_FAMILY, int(11 * self.font_scale)),
                                          foreground=self.colors['success'])
-        self.api_status_label.pack(anchor="w", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
+        self.api_status_label.pack(side="left")
+        # 用于存放可点击的标签引用
+        self._status_clickable_labels = []
 
         # 3. 已保存模型列表
         model_list_card = self._create_card(api_container, "已保存模型（双击切换）",
@@ -3848,7 +3852,19 @@ class BossFilterGUI:
 
         # 刷新显示
         self.load_saved_models_to_tree()
-        self.api_status_label.config(text=f"✓ 已删除模型 {model_name}", foreground=self.colors['success'])
+        self._update_api_status(text=f"✓ 已删除模型 {model_name}", foreground=self.colors['success'])
+
+    def _update_api_status(self, text, foreground=None):
+        """更新 API 状态标签，同时清理之前的可点击标签"""
+        # 清理之前的可点击标签
+        for lbl in self._status_clickable_labels:
+            lbl.destroy()
+        self._status_clickable_labels.clear()
+        # 更新主标签
+        config = {"text": text}
+        if foreground is not None:
+            config["foreground"] = foreground
+        self.api_status_label.config(**config)
 
     def use_selected_model(self):
         """使用选中的模型 - 从系统钥匙串读取加密的 API Key（按服务商管理）"""
@@ -3909,7 +3925,7 @@ class BossFilterGUI:
             except Exception as e:
                 print(f"保存配置失败：{e}")
 
-            self.api_status_label.config(text=f"✓ 已切换到 {provider}/{model_name}", foreground=self.colors['success'])
+            self._update_api_status(text=f"✓ 已切换到 {provider}/{model_name}", foreground=self.colors['success'])
             messagebox.showinfo("切换成功", f"已切换到模型：\n\n{provider} / {model_name}")
         else:
             messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
@@ -3977,7 +3993,7 @@ class BossFilterGUI:
             # 更新当前模型显示
             self.update_current_model_display()
 
-            self.api_status_label.config(text="✓ 配置已保存并添加到列表", foreground=self.colors['success'])
+            self._update_api_status(text="✓ 配置已保存并添加到列表", foreground=self.colors['success'])
 
             # 保存成功后清除"API Key 未配置"警示卡片
             if getattr(self, 'reconfig_card', None) and self.reconfig_card.winfo_exists():
@@ -3986,7 +4002,7 @@ class BossFilterGUI:
 
             messagebox.showinfo("成功", f"API 配置已保存\n模型 {provider}/{model_name} 已添加到已保存模型列表\n\nAPI Key 已按服务商加密存储（同一服务商的模型共享）")
         except Exception as e:
-            self.api_status_label.config(text=f"✗ 保存失败：{e}", foreground=self.colors['danger'])
+            self._update_api_status(text=f"✗ 保存失败：{e}", foreground=self.colors['danger'])
             messagebox.showerror("错误", f"保存 API 配置失败：{e}")
 
     def on_api_provider_changed(self, event):
@@ -4075,7 +4091,7 @@ class BossFilterGUI:
             return
 
         # 显示加载中状态（不使用 update()，避免重入）
-        self.api_status_label.config(text="⏳ 正在获取模型列表...", foreground=self.colors['warning'])
+        self._update_api_status(text="⏳ 正在获取模型列表...", foreground=self.colors['warning'])
 
         def fetch_thread():
             try:
@@ -4212,7 +4228,7 @@ class BossFilterGUI:
                             # 下线模型提醒
                             if removed_models:
                                 removed_label = ttk.Label(dialog,
-                                    text=f"⚠ {len(removed_models)} 个模型已下线（灰色标记）",
+                                    text=f"⚠ {len(removed_models)} 个模型已下线（已从服务商移除）",
                                     font=(FONT_FAMILY, int(11 * self.font_scale)),
                                     foreground=self.colors['danger'],
                                     style='Dialog.TLabel')
@@ -4298,7 +4314,7 @@ class BossFilterGUI:
                                 if selection:
                                     selected_model = listbox.get(selection[0])
                                     self.api_model_var.set(selected_model)
-                                    self.api_status_label.config(
+                                    self._update_api_status(
                                         text=f"✓ 已选择 {selected_model}",
                                         foreground=self.colors['success']
                                     )
@@ -4310,7 +4326,7 @@ class BossFilterGUI:
                                     selected_model = listbox.get(selection[0])
                                     self.api_model_var.set(selected_model)
                                     _close_dialog()
-                                    self.api_status_label.config(text="⏳ 正在测试连接...", foreground=self.colors['warning'])
+                                    self._update_api_status(text="⏳ 正在测试连接...", foreground=self.colors['warning'])
                                     self.root.after(300, self.test_api_connection)
 
                             # 按钮布局（居中）
@@ -4333,41 +4349,107 @@ class BossFilterGUI:
                         _new_count = len(new_models)
                         _removed_count = len(removed_models)
                         _total_count = len(models)
+
+                        def _show_model_detail(detail_type):
+                            """点击状态栏数字时显示详细列表"""
+                            if detail_type == 'new' and new_models:
+                                messagebox.showinfo(
+                                    "新增模型列表",
+                                    f"{provider} 新增 {_new_count} 个模型：\n\n"
+                                    + "\n".join(f"  • {m}" for m in sorted(new_models)[:20])
+                                    + (f"\n  …等共 {_new_count} 个" if _new_count > 20 else "")
+                                )
+                            elif detail_type == 'removed' and removed_models:
+                                messagebox.showwarning(
+                                    "下线模型列表",
+                                    f"{provider} 有 {_removed_count} 个模型已下线：\n\n"
+                                    + "\n".join(f"  • {m}" for m in sorted(removed_models)[:20])
+                                    + (f"\n  …等共 {_removed_count} 个" if _removed_count > 20 else "")
+                                    + "\n\n如正在使用这些模型，请尽快切换。"
+                                )
+
                         def _update_status():
-                            parts = [f"找到 {_total_count} 个模型"]
-                            if _new_count > 0:
-                                parts.append(f"{_new_count} 个新增")
-                            if _removed_count > 0:
-                                parts.append(f"{_removed_count} 个下线")
-                            status_text = f"✓ {parts[0]}（{', '.join(parts[1:])}）" if len(parts) > 1 else f"✓ {parts[0]}"
-                            self.api_status_label.config(
-                                text=status_text,
-                                foreground=self.colors['success']
-                            )
+                            # 清理之前的可点击标签
+                            for lbl in self._status_clickable_labels:
+                                lbl.destroy()
+                            self._status_clickable_labels.clear()
+
+                            # 基础信息
+                            base_text = f"✓ 找到 {_total_count} 个模型"
+                            if _new_count == 0 and _removed_count == 0:
+                                # 无变更，只显示基础信息
+                                self._update_api_status(
+                                    text=base_text,
+                                    foreground=self.colors['success']
+                                )
+                            else:
+                                # 有变更，先清理旧标签，再分段显示
+                                for lbl in self._status_clickable_labels:
+                                    lbl.destroy()
+                                self._status_clickable_labels.clear()
+                                self.api_status_label.config(
+                                    text=base_text + "（",
+                                    foreground=self.colors['success']
+                                )
+
+                                # 新增数量（可点击）
+                                if _new_count > 0:
+                                    lbl_new = ttk.Label(self.api_status_frame, text=f"{_new_count} 个新增",
+                                                       font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                                       foreground=self.colors['success'],
+                                                       cursor="hand2")
+                                    lbl_new.pack(side="left")
+                                    lbl_new.bind("<Button-1>", lambda e: _show_model_detail('new'))
+                                    self._status_clickable_labels.append(lbl_new)
+
+                                # 分隔符
+                                if _new_count > 0 and _removed_count > 0:
+                                    lbl_sep = ttk.Label(self.api_status_frame, text="，",
+                                                       font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                                       foreground=self.colors['success'])
+                                    lbl_sep.pack(side="left")
+                                    self._status_clickable_labels.append(lbl_sep)
+
+                                # 下线数量（可点击）
+                                if _removed_count > 0:
+                                    lbl_removed = ttk.Label(self.api_status_frame, text=f"{_removed_count} 个下线",
+                                                           font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                                           foreground=self.colors['warning'],
+                                                           cursor="hand2")
+                                    lbl_removed.pack(side="left")
+                                    lbl_removed.bind("<Button-1>", lambda e: _show_model_detail('removed'))
+                                    self._status_clickable_labels.append(lbl_removed)
+
+                                # 右括号
+                                lbl_close = ttk.Label(self.api_status_frame, text="）",
+                                                     font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                                     foreground=self.colors['success'])
+                                lbl_close.pack(side="left")
+                                self._status_clickable_labels.append(lbl_close)
+
                         self.root.after(0, _update_status)
                         if new_models or removed_models:
                             def _show_models_alert():
+                                msg_parts = []
                                 if new_models:
-                                    messagebox.showinfo(
-                                        "发现新增模型",
-                                        f"{provider} 新增 {len(new_models)} 个模型：\n\n"
+                                    msg_parts.append(f"✦ 新增 {len(new_models)} 个模型：\n"
                                         + "\n".join(f"  • {m}" for m in sorted(new_models)[:10])
-                                        + (f"\n  …等共 {len(new_models)} 个" if len(new_models) > 10 else "")
-                                    )
+                                        + (f"\n  …等共 {len(new_models)} 个" if len(new_models) > 10 else ""))
                                 if removed_models:
-                                    messagebox.showwarning(
-                                        "模型已下线",
-                                        f"{provider} 有 {len(removed_models)} 个模型已下线：\n\n"
+                                    msg_parts.append(f"⚠ 下线 {len(removed_models)} 个模型：\n"
                                         + "\n".join(f"  • {m}" for m in sorted(removed_models)[:10])
                                         + (f"\n  …等共 {len(removed_models)} 个" if len(removed_models) > 10 else "")
-                                        + "\n\n如正在使用这些模型，请尽快切换。"
-                                    )
+                                        + "\n\n如正在使用这些模型，请尽快切换。")
+                                messagebox.showinfo(
+                                    "模型列表变更",
+                                    f"{provider} 模型列表有变更：\n\n" + "\n\n".join(msg_parts)
+                                )
                                 self.root.after(100, show_model_dialog)
                             self.root.after(0, _show_models_alert)
                         else:
                             self.root.after(100, show_model_dialog)
                     else:
-                        self.root.after(0, lambda: self.api_status_label.config(
+                        self.root.after(0, lambda: self._update_api_status(
                             text="⚠️ 未找到模型列表",
                             foreground=self.colors['warning']
                         ))
@@ -4376,7 +4458,7 @@ class BossFilterGUI:
                             f"API 返回的数据中没有模型列表\n\n响应内容：{json.dumps(data, ensure_ascii=False)[:500]}"
                         ))
                 elif response.status_code == 401:
-                    self.root.after(0, lambda: self.api_status_label.config(
+                    self.root.after(0, lambda: self._update_api_status(
                         text="✗ 认证失败",
                         foreground=self.colors['danger']
                     ))
@@ -4385,7 +4467,7 @@ class BossFilterGUI:
                         "API Key 无效或已过期\n\n请检查 API Key 是否正确"
                     ))
                 elif response.status_code == 404:
-                    self.root.after(0, lambda: self.api_status_label.config(
+                    self.root.after(0, lambda: self._update_api_status(
                         text="✗ 接口不存在",
                         foreground=self.colors['danger']
                     ))
@@ -4398,7 +4480,7 @@ class BossFilterGUI:
                         f"• 参考服务商文档获取可用模型"
                     ))
                 else:
-                    self.root.after(0, lambda: self.api_status_label.config(
+                    self.root.after(0, lambda: self._update_api_status(
                         text=f"✗ 请求失败 ({response.status_code})",
                         foreground=self.colors['danger']
                     ))
@@ -4409,7 +4491,7 @@ class BossFilterGUI:
                     ))
 
             except requests.exceptions.Timeout:
-                self.root.after(0, lambda: self.api_status_label.config(
+                self.root.after(0, lambda: self._update_api_status(
                     text="⏱️ 请求超时",
                     foreground=self.colors['warning']
                 ))
@@ -4422,7 +4504,7 @@ class BossFilterGUI:
                     "• 需要配置代理"
                 ))
             except requests.exceptions.ConnectionError as e:
-                self.root.after(0, lambda: self.api_status_label.config(
+                self.root.after(0, lambda: self._update_api_status(
                     text="✗ 连接失败",
                     foreground=self.colors['danger']
                 ))
@@ -4432,7 +4514,7 @@ class BossFilterGUI:
                     f"错误详情：{m}"
                 ))
             except Exception as e:
-                self.root.after(0, lambda: self.api_status_label.config(
+                self.root.after(0, lambda: self._update_api_status(
                     text="✗ 请求失败",
                     foreground=self.colors['danger']
                 ))
@@ -4476,7 +4558,7 @@ class BossFilterGUI:
             return
 
         # 显示测试中状态
-        self.api_status_label.config(text="⏳ 正在验证...", foreground=self.colors['warning'])
+        self._update_api_status(text="⏳ 正在验证...", foreground=self.colors['warning'])
 
         def test_thread():
             import socket
@@ -4498,7 +4580,7 @@ class BossFilterGUI:
                 # DNS 解析成功，继续
             except socket.gaierror:
                 elapsed = time.time() - start_time
-                self.root.after(0, lambda: self.api_status_label.config(text="✗ DNS 解析失败", foreground=self.colors['danger']))
+                self.root.after(0, lambda: self._update_api_status(text="✗ DNS 解析失败", foreground=self.colors['danger']))
                 self.root.after(0, lambda: messagebox.showerror(
                     "DNS 解析失败",
                     f"无法解析域名：{hostname}\n\n"
@@ -4563,7 +4645,7 @@ class BossFilterGUI:
 
                     if response.status_code == 200:
                         session.close()
-                        self.root.after(0, lambda: self.api_status_label.config(
+                        self.root.after(0, lambda: self._update_api_status(
                             text=f"✓ 验证成功 ({elapsed:.1f}s)",
                             foreground=self.colors['success']
                         ))
@@ -4577,7 +4659,7 @@ class BossFilterGUI:
                         return
                     elif response.status_code == 401:
                         session.close()
-                        self.root.after(0, lambda: self.api_status_label.config(text="✗ 认证失败", foreground=self.colors['danger']))
+                        self.root.after(0, lambda: self._update_api_status(text="✗ 认证失败", foreground=self.colors['danger']))
                         self.root.after(0, lambda: messagebox.showerror(
                             "认证失败",
                             f"API Key 无效或已过期\n\n"
@@ -4587,7 +4669,7 @@ class BossFilterGUI:
                         return
                     elif response.status_code == 429:
                         session.close()
-                        self.root.after(0, lambda: self.api_status_label.config(text="⚠️ 请求受限", foreground=self.colors['warning']))
+                        self.root.after(0, lambda: self._update_api_status(text="⚠️ 请求受限", foreground=self.colors['warning']))
                         self.root.after(0, lambda: messagebox.showwarning(
                             "请求限额",
                             f"API 请求超限额\n\n"
@@ -4601,13 +4683,13 @@ class BossFilterGUI:
                         last_status = response.status_code
                         if attempt < max_retries - 1:
                             time.sleep(0.5)
-                            self.root.after(0, lambda a=attempt+2: self.api_status_label.config(
+                            self.root.after(0, lambda a=attempt+2: self._update_api_status(
                                 text=f"⏳ 重试中 ({a}/{max_retries})... 状态码:{response.status_code}",
                                 foreground=self.colors['warning']
                             ))
                             continue
                         # 重试耗尽
-                        self.root.after(0, lambda: self.api_status_label.config(text="✗ 验证失败", foreground=self.colors['danger']))
+                        self.root.after(0, lambda: self._update_api_status(text="✗ 验证失败", foreground=self.colors['danger']))
                         self.root.after(0, lambda s=response.status_code, m=response.text[:200]: messagebox.showerror(
                             "连接测试失败",
                             f"HTTP 状态码：{s}\n\n"
@@ -4621,7 +4703,7 @@ class BossFilterGUI:
                         # 超时后重试，指数退避
                         wait_time = 1.0 * (attempt + 1)
                         time.sleep(wait_time)
-                        self.root.after(0, lambda a=attempt+2, w=wait_time: self.api_status_label.config(
+                        self.root.after(0, lambda a=attempt+2, w=wait_time: self._update_api_status(
                             text=f"⏳ 重试中 ({a}/{max_retries})... 等待{w:.0f}s",
                             foreground=self.colors['warning']
                         ))
@@ -4631,7 +4713,7 @@ class BossFilterGUI:
                     if attempt < max_retries - 1:
                         wait_time = 0.5 * (attempt + 1)
                         time.sleep(wait_time)
-                        self.root.after(0, lambda a=attempt+2: self.api_status_label.config(
+                        self.root.after(0, lambda a=attempt+2: self._update_api_status(
                             text=f"⏳ 重试中 ({a}/{max_retries})...",
                             foreground=self.colors['warning']
                         ))
@@ -4639,7 +4721,7 @@ class BossFilterGUI:
                 except requests.exceptions.SSLError as e:
                     # SSL 错误不重试，直接提示警告
                     last_error = f"SSLError: {str(e)[:100]}"
-                    self.root.after(0, lambda: self.api_status_label.config(text="⚠️ SSL 错误", foreground=self.colors['warning']))
+                    self.root.after(0, lambda: self._update_api_status(text="⚠️ SSL 错误", foreground=self.colors['warning']))
                     self.root.after(0, lambda m=str(e)[:200]: messagebox.showwarning(
                         "SSL 证书错误",
                         f"SSL 证书验证失败\n\n"
@@ -4656,7 +4738,7 @@ class BossFilterGUI:
             # 所有重试失败
             session.close()
             elapsed = time.time() - start_time
-            self.root.after(0, lambda: self.api_status_label.config(text="✗ 验证失败", foreground=self.colors['danger']))
+            self.root.after(0, lambda: self._update_api_status(text="✗ 验证失败", foreground=self.colors['danger']))
 
             # 根据最后错误类型给出针对性建议
             if last_status == 401:
