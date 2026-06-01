@@ -4387,8 +4387,23 @@ class BossFilterGUI:
                                         elif resp.status_code == 404:
                                             self.root.after(0, lambda: messagebox.showerror("接口不存在", f"模型 {test_model_name} 不存在（404）", parent=dialog))
                                         else:
-                                            resp_text = resp.text[:300] if resp.text else "无响应内容"
-                                            self.root.after(0, lambda: messagebox.showerror("请求失败", f"HTTP {resp.status_code}\n\n{resp_text}", parent=dialog))
+                                            err_msg = resp.text[:500] if resp.text else "无响应内容"
+                                            # 识别常见业务错误，给出友好提示
+                                            friendly = None
+                                            try:
+                                                err_json = resp.json()
+                                                code = err_json.get("error", {}).get("code", "")
+                                                msg_text = err_json.get("error", {}).get("message", "")
+                                                if "not activated" in msg_text.lower():
+                                                    friendly = f"模型 {test_model_name} 未开通\n\n请在服务商控制台开通该模型后再试"
+                                                elif "quota" in msg_text.lower() or "limit" in msg_text.lower():
+                                                    friendly = f"模型 {test_model_name} 配额超限\n\n{msg_text}"
+                                            except Exception:
+                                                pass
+                                            if friendly:
+                                                self.root.after(0, lambda: messagebox.showerror("请求失败", friendly, parent=dialog))
+                                            else:
+                                                self.root.after(0, lambda: messagebox.showerror("请求失败", f"HTTP {resp.status_code}\n\n{err_msg}", parent=dialog))
                                     except requests.exceptions.Timeout:
                                         self.root.after(0, lambda: messagebox.showerror("超时", f"连接超时，请检查网络", parent=dialog))
                                     except requests.exceptions.ConnectionError:
