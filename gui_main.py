@@ -4349,12 +4349,13 @@ class BossFilterGUI:
                                 test_model_name = listbox.get(selection[0])
 
                                 # 获取 API Key 和 Base URL
-                                test_api_key = get_api_key(provider)
+                                provider_key = self.DISPLAY_TO_KEY.get(provider, provider)
+                                test_api_key = get_api_key(provider_key)
                                 test_base_url = self.api_base_url_var.get().strip()
 
                                 if not test_api_key:
                                     messagebox.showwarning("警告",
-                                        f"请先配置 {self.PROVIDER_DISPLAY.get(provider, provider)} 的 API Key",
+                                        f"请先配置 {self.PROVIDER_DISPLAY.get(provider_key, provider)} 的 API Key",
                                         parent=dialog)
                                     return
                                 if not test_base_url:
