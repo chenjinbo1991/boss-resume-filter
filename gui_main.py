@@ -4387,7 +4387,8 @@ class BossFilterGUI:
                                         elif resp.status_code == 404:
                                             self.root.after(0, lambda: messagebox.showerror("接口不存在", f"模型 {test_model_name} 不存在（404）", parent=dialog))
                                         else:
-                                            self.root.after(0, lambda: messagebox.showerror("请求失败", f"HTTP {resp.status_code}", parent=dialog))
+                                            resp_text = resp.text[:300] if resp.text else "无响应内容"
+                                            self.root.after(0, lambda: messagebox.showerror("请求失败", f"HTTP {resp.status_code}\n\n{resp_text}", parent=dialog))
                                     except requests.exceptions.Timeout:
                                         self.root.after(0, lambda: messagebox.showerror("超时", f"连接超时，请检查网络", parent=dialog))
                                     except requests.exceptions.ConnectionError:
