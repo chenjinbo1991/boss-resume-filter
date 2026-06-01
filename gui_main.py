@@ -4219,20 +4219,44 @@ class BossFilterGUI:
 
                             # 新增模型提醒（放在过滤说明和列表之间）
                             if new_models:
-                                new_label = ttk.Label(dialog,
-                                    text=f"✦ 发现 {len(new_models)} 个新增模型（绿色标记）",
+                                new_frame = ttk.Frame(dialog, style='Dialog.TFrame')
+                                new_frame.pack(pady=(4, 0))
+                                ttk.Label(new_frame, text="✦ 发现 ",
                                     font=(FONT_FAMILY, int(11 * self.font_scale)),
                                     foreground=self.colors['success'],
+                                    style='Dialog.TLabel').pack(side="left")
+                                new_num_label = ttk.Label(new_frame,
+                                    text=f"{len(new_models)}",
+                                    font=(FONT_FAMILY, int(11 * self.font_scale), 'bold'),
+                                    foreground=self.colors['success'],
+                                    cursor="hand2",
                                     style='Dialog.TLabel')
-                                new_label.pack(pady=(4, 0))
+                                new_num_label.pack(side="left")
+                                new_num_label.bind("<Button-1>", lambda e: _show_model_detail('new'))
+                                ttk.Label(new_frame, text=" 个新增模型（绿色标记）",
+                                    font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                    foreground=self.colors['success'],
+                                    style='Dialog.TLabel').pack(side="left")
                             # 下线模型提醒
                             if removed_models:
-                                removed_label = ttk.Label(dialog,
-                                    text=f"⚠ {len(removed_models)} 个模型已下线（已从服务商移除）",
+                                removed_frame = ttk.Frame(dialog, style='Dialog.TFrame')
+                                removed_frame.pack(pady=(4, 0))
+                                ttk.Label(removed_frame, text="⚠ ",
                                     font=(FONT_FAMILY, int(11 * self.font_scale)),
                                     foreground=self.colors['danger'],
+                                    style='Dialog.TLabel').pack(side="left")
+                                removed_num_label = ttk.Label(removed_frame,
+                                    text=f"{len(removed_models)}",
+                                    font=(FONT_FAMILY, int(11 * self.font_scale), 'bold'),
+                                    foreground=self.colors['danger'],
+                                    cursor="hand2",
                                     style='Dialog.TLabel')
-                                removed_label.pack(pady=(4, 0))
+                                removed_num_label.pack(side="left")
+                                removed_num_label.bind("<Button-1>", lambda e: _show_model_detail('removed'))
+                                ttk.Label(removed_frame, text=" 个模型已下线（已从服务商移除）",
+                                    font=(FONT_FAMILY, int(11 * self.font_scale)),
+                                    foreground=self.colors['danger'],
+                                    style='Dialog.TLabel').pack(side="left")
 
                             # 列表前的间距（有提醒文字时加间距，没有时由列表自带间距）
                             if filter_note or new_models:
