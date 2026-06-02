@@ -7667,17 +7667,15 @@ class BossFilterGUI:
 
         for idx, (tag, title_line, _) in enumerate(versions):
             is_patch = tag.count('.') >= 2  # X.Y.Z 是补丁版本
-            prefix = "• " if is_patch else "▸ "
             font_size = int(10 * changelog_fs) if is_patch else int(12 * changelog_fs)
             row_bg = '#243041' if idx % 2 == 0 else sidebar_bg
             row_fg = '#F8FAFC' if idx == 0 else ('#718096' if is_patch else '#E2E8F0')
 
             row_frame = tk.Frame(list_inner, bg=row_bg)
             row_frame.pack(fill='x', pady=0)
-            left_pad = int(16 * fs) if is_patch else int(4 * fs)
-            lbl = tk.Label(row_frame, text=f"{prefix}{tag}", bg=row_bg, fg=row_fg,
+            lbl = tk.Label(row_frame, text=f"  {tag}", bg=row_bg, fg=row_fg,
                            font=(FONT_FAMILY, font_size), anchor='w')
-            lbl.pack(fill='x', ipady=int(2 * fs), padx=(left_pad, 0))
+            lbl.pack(fill='x', ipady=int(2 * fs))
             row_frames.append((row_frame, lbl, row_bg, row_fg, idx))
 
             def make_select_handler(i):
