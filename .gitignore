@@ -39,6 +39,7 @@ debug_*.log
 build_log*.txt
 *.html
 .last_update_check
+.last_update_check_failed
 .build_progress.json
 .build_state.json
 
