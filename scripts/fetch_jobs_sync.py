@@ -127,7 +127,7 @@ def open_manual_login_browser():
             # 关闭当前页面但保留浏览器
             try:
                 page.close()
-            except:
+            except Exception:
                 pass
 
             # 不要关闭浏览器，让用户继续操作

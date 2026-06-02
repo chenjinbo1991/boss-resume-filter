@@ -90,10 +90,10 @@ def extract_jobs():
                                     target_page.goto("https://www.zhipin.com/web/geek/jobs", timeout=10000)
                                     print("已尝试导航到职位管理页面")
                                     time.sleep(3)
-                                except:
+                                except Exception:
                                     print("导航失败，继续使用当前页面")
                             break
-                    except:
+                    except Exception:
                         continue
 
             # 如果仍然没有找到页面，创建新页面
@@ -103,7 +103,7 @@ def extract_jobs():
                 try:
                     target_page.goto("https://www.zhipin.com/web/geek/jobs", timeout=10000)
                     print("已导航到职位管理页面")
-                except:
+                except Exception:
                     target_page.goto("https://www.zhipin.com/", timeout=10000)
                     print("已导航到BOSS直聘主页，但不在职位管理页面")
 
@@ -119,7 +119,7 @@ def extract_jobs():
                 # 检查页面标题
                 title = page.title()
                 print(f"页面标题: {title}")
-            except:
+            except Exception:
                 print("无法获取页面标题")
 
             # 尝试等待页面的主要内容加载
@@ -127,7 +127,7 @@ def extract_jobs():
                 # 等待主要容器加载
                 page.wait_for_selector('div, ul, li, .job, .position', timeout=5000)
                 print("页面主要内容已开始加载")
-            except:
+            except Exception:
                 print("警告：页面主要内容可能还未加载")
 
             # 尝试提取职位信息
@@ -290,7 +290,7 @@ def extract_jobs():
 
                                         if len(job_data) >= 5:  # 找到5个就足够了
                                             break
-                        except:
+                        except Exception:
                             continue
                 except Exception as link_err:
                     print(f"处理链接时出错: {link_err}")
@@ -323,11 +323,11 @@ def extract_jobs():
 
                                         if len(job_data) >= 3:
                                             break
-                            except:
+                            except Exception:
                                 continue
                         if job_data:
                             break
-                    except:
+                    except Exception:
                         continue
 
             # 构造输出结果
@@ -388,7 +388,7 @@ def extract_job_from_element_advanced(element, index):
                     if is_meaningful_job_title(title_text):
                         potential_titles.insert(0, title_text)  # 优先使用找到的标题
                         break
-            except:
+            except Exception:
                 continue
 
         # 使用第一个有效的职位名称
@@ -405,7 +405,7 @@ def extract_job_from_element_advanced(element, index):
                 if attr_val:
                     job_info['job_id'] = attr_val
                     break
-            except:
+            except Exception:
                 continue
 
         return job_info if 'job_name' in job_info and job_info['job_name'] else None
@@ -482,7 +482,7 @@ def extract_job_id_from_href(href):
             match = re.search(pattern, href)
             if match:
                 return match.group(1)
-    except:
+    except Exception:
         pass
 
     return None

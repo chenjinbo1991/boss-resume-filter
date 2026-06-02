@@ -19,6 +19,13 @@ from pathlib import Path
 from tkinter import messagebox
 import tkinter as tk
 from paths import get_base_dir
+from constants import (
+    UPDATE_TIMEOUT_GITEE,
+    UPDATE_TIMEOUT_GITHUB,
+    UPDATE_TIMEOUT_DOWNLOAD,
+    UPDATE_TIMEOUT_CHANGELOG,
+    UPDATE_TIMEOUT_GIT_PULL,
+)
 
 
 def _get_font_family():
@@ -151,7 +158,7 @@ def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
         api_url = f"https://api.github.com/repos/{repo}/releases/latest"
         headers = {'Accept': 'application/vnd.github.v3+json'}
 
-        response = requests.get(api_url, headers=headers, timeout=10)
+        response = requests.get(api_url, headers=headers, timeout=UPDATE_TIMEOUT_GITHUB)
         response.raise_for_status()
 
         release = response.json()
@@ -223,7 +230,7 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
     }
 
     try:
-        response = requests.get(latest_json_url, timeout=8)  # 8秒超时，国内一般够用
+        response = requests.get(latest_json_url, timeout=UPDATE_TIMEOUT_GITEE)
         response.raise_for_status()
 
         data = response.json()
@@ -350,7 +357,7 @@ def download_file(url, dest_path, progress_callback=None):
         progress_callback: 进度回调函数 callback(downloaded, total)
     """
     try:
-        response = requests.get(url, stream=True, timeout=30)
+        response = requests.get(url, stream=True, timeout=UPDATE_TIMEOUT_DOWNLOAD)
         response.raise_for_status()
 
         total_size = int(response.headers.get('content-length', 0))
@@ -571,7 +578,7 @@ def update_macos():
             cwd=base_dir,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=UPDATE_TIMEOUT_GIT_PULL
         )
 
         if result.returncode != 0:
@@ -840,7 +847,7 @@ def _fetch_changelog_section(target_version):
     content = None
     for url in urls:
         try:
-            resp = requests.get(url, timeout=8)
+            resp = requests.get(url, timeout=UPDATE_TIMEOUT_CHANGELOG)
             resp.raise_for_status()
             content = resp.text
             break

@@ -79,7 +79,7 @@ try:
     # 尝试解码
     decoded = test_content.encode('utf-8').decode('utf-8')
     print("UTF-8 decode successful")
-except:
+except Exception:
     print("UTF-8 decode failed")
 
 # 查看具体部分

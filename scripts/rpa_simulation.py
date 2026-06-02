@@ -45,7 +45,7 @@ def simulate_human_behavior():
 
     try:
         input()  # 等待用户手动操作完成
-    except:
+    except Exception:
         pass  # 避免在自动化环境中挂起
 
     print("开始监控页面数据...")

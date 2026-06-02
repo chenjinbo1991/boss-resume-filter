@@ -65,7 +65,7 @@ def extract_jobs_safe():
                     page = tab
                     print(f"找到职位管理页面: {url}")
                     break
-            except:
+            except Exception:
                 continue
 
         if not page:

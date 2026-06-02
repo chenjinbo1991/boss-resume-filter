@@ -2,6 +2,8 @@
 BOSS 直聘候选人智能提取工具 v2.9.1
 支持 Excel 导出
 """
+from __future__ import annotations
+
 import time
 import json
 import re
@@ -10,6 +12,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable, Optional
 from DrissionPage import ChromiumPage
 import os
 from filtering import (
@@ -38,7 +41,7 @@ class StopRequested(Exception):
     pass
 
 
-def _human_delay(center, spread=0.3):
+def _human_delay(center: float, spread: float = 0.3) -> float:
     """模拟人类操作延迟，在 center ± spread/2 范围内随机抖动，降低行为指纹风险"""
     return center + random.uniform(-spread / 2, spread / 2)
 
@@ -61,7 +64,7 @@ except ImportError:
 _SELECTORS_CACHE = None
 
 
-def load_selectors():
+def load_selectors() -> dict[str, Any]:
     """加载 selectors.json 选择器配置（首次调用后缓存）"""
     global _SELECTORS_CACHE
     if _SELECTORS_CACHE is not None:
@@ -75,13 +78,13 @@ def load_selectors():
     return _SELECTORS_CACHE
 
 
-def _sel(group, key, default=""):
+def _sel(group: str, key: str, default: str = "") -> str:
     """从 selectors.json 获取选择器值，找不到则返回 default"""
     s = load_selectors()
     return s.get(group, {}).get(key, default)
 
 
-def load_job_config():
+def load_job_config() -> tuple[dict[str, Any], dict[str, Any]]:
     """从外部配置文件加载职位要求（支持多岗位）
     返回：(job_requirements, default_rule)
         - job_requirements: 各岗位的配置（不包含 default）
@@ -145,7 +148,7 @@ def load_job_config():
 JOB_RULES = load_job_config()
 
 
-def extract_summary_info(text):
+def extract_summary_info(text: str) -> dict[str, Any]:
     """从候选人摘要中提取结构化信息"""
     info = {
         'salary': '',
@@ -206,7 +209,7 @@ def extract_summary_info(text):
     return info
 
 
-def export_to_excel(candidates, filename):
+def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
     """将候选人数据导出为 Excel - 增强版
 
     功能：
@@ -355,7 +358,7 @@ def export_to_excel(candidates, filename):
         return False
 
 
-def get_iframe(page):
+def get_iframe(page: ChromiumPage):
     """获取包含推荐列表的 iframe"""
     try:
         frames = page.eles(_sel('iframe', 'selector', 'tag:iframe'))
@@ -370,7 +373,7 @@ def get_iframe(page):
     return None
 
 
-def extract_name_from_card(card_element):
+def extract_name_from_card(card_element: Any) -> str:
     """从候选人卡片中提取姓名"""
     try:
         # 方法 1: 查找 class=name 的独立元素
@@ -419,7 +422,7 @@ def extract_name_from_card(card_element):
     return "未知"
 
 
-def scroll_in_frame(frame, scroll_amount=800):
+def scroll_in_frame(frame: Any, scroll_amount: int = 800) -> None:
     """在 iframe 内部滚动"""
     try:
         frame.run_js(f'window.scrollBy(0, {scroll_amount})')
@@ -429,7 +432,7 @@ def scroll_in_frame(frame, scroll_amount=800):
         return False
 
 
-def get_frame_scroll_info(frame):
+def get_frame_scroll_info(frame: Any) -> dict[str, Any]:
     """获取 iframe 内部的滚动信息"""
     try:
         scroll_top = frame.run_js('return document.documentElement.scrollTop || document.body.scrollTop || 0')
@@ -805,7 +808,7 @@ def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_
 
 
 
-def _detect_limit_popup(page):
+def _detect_limit_popup(page: ChromiumPage) -> bool:
     """
     检测是否弹出了 BOSS 直聘沟通次数上限/升级套餐弹窗（极速版）
 
@@ -846,7 +849,7 @@ def _detect_limit_popup(page):
         return False, ""
 
 
-def _detect_captcha(page):
+def _detect_captcha(page: ChromiumPage) -> bool:
     """
     检测是否弹出了 BOSS 直聘安全验证弹窗（滑块/图形验证码等）
 
@@ -979,7 +982,7 @@ def _wait_for_captcha_resolution(page, stop_event=None, max_wait=300, captcha_ca
     return False
 
 
-def verify_greeting_success(page, geek_id, debug=False):
+def verify_greeting_success(page: ChromiumPage, geek_id: str, debug: bool = False) -> bool:
     """
     验证打招呼是否成功（快速版 - 直接检查按钮文本）
     """
@@ -1015,7 +1018,7 @@ def verify_greeting_success(page, geek_id, debug=False):
         return True, "点击已执行"
 
 
-def check_selectors_health(page):
+def check_selectors_health(page: ChromiumPage) -> dict[str, Any]:
     """选择器健康检查：逐一测试 selectors.json 中的关键选择器，返回诊断报告。
 
     返回: list[dict]，每项包含:

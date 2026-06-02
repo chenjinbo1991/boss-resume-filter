@@ -91,7 +91,7 @@ def extract_job_info_from_page(page):
                     job_name = title_element.text.strip()
                     if job_name and len(job_name) > 2:
                         break
-            except:
+            except Exception:
                 continue
 
         # 如果通过选择器没找到，尝试从页面其他地方获取
@@ -106,7 +106,7 @@ def extract_job_info_from_page(page):
                         if any(keyword in part for keyword in ['工程师', '经理', '总监', '主管', '专员', '助理', '顾问', '设计师', '推荐']):
                             job_name = part
                             break
-            except:
+            except Exception:
                 pass
 
         # 如果还是没找到，尝试从URL路径获取
@@ -128,7 +128,7 @@ def extract_job_info_from_page(page):
                     if len(text) > 2 and len(text) < 20:
                         job_name = text
                         break
-            except:
+            except Exception:
                 pass
 
         # 如果仍未找到，使用URL中的有用部分

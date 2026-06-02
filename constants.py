@@ -26,6 +26,19 @@ CHINESE_NUMERALS = {
 # ========== HTTP ==========
 USER_AGENT = "BossResumeFilter/1.0"
 
+# ========== LLM API 参数 ==========
+LLM_MAX_TOKENS = 256               # 最大返回 token 数
+LLM_TEMPERATURE = 0.3              # 采样温度（低 = 更确定）
+LLM_TIMEOUT = (8, 30)              # HTTP 超时（连接秒, 读取秒）
+LLM_MAX_RETRIES = 3                # API 调用最大重试次数
+
+# ========== 自动更新超时（秒） ==========
+UPDATE_TIMEOUT_GITEE = 8           # Gitee latest.json 请求
+UPDATE_TIMEOUT_GITHUB = 10         # GitHub Releases API 请求
+UPDATE_TIMEOUT_DOWNLOAD = 30       # 文件下载（含国内镜像）
+UPDATE_TIMEOUT_CHANGELOG = 8       # 远端 CHANGELOG.md 获取
+UPDATE_TIMEOUT_GIT_PULL = 30       # git pull subprocess 超时
+
 # ========== 城市列表 ==========
 # 中国主要城市列表（按长度降序，优先匹配长名如"哈尔滨"）
 MAJOR_CITIES = sorted([

@@ -55,7 +55,7 @@ def inspect_page():
                     target_page = p
                     print(f"找到职位管理页面")
                     break
-            except:
+            except Exception:
                 continue
 
         if not target_page:
@@ -97,7 +97,7 @@ def inspect_page():
                                 text = elem.inner_text().strip()[:100]  # 只取前100个字符
                                 classes = elem.get_attribute('class')
                                 print(f"  [{i}] 类: {classes}, 文本: {text}")
-                            except:
+                            except Exception:
                                 continue
 
                 except Exception as e:
@@ -117,7 +117,7 @@ def inspect_page():
                     elements = page.query_selector_all(f"text={keyword}")
                     if elements:
                         print(f"关键词 '{keyword}': 找到 {len(elements)} 个元素")
-                except:
+                except Exception:
                     # 如果text选择器不支持，尝试其他方式
                     try:
                         all_elements = page.query_selector_all('*')
@@ -127,11 +127,11 @@ def inspect_page():
                                 text = elem.inner_text().lower()
                                 if keyword.lower() in text:
                                     count += 1
-                            except:
+                            except Exception:
                                 continue
                         if count > 0:
                             print(f"关键词 '{keyword}': 在页面中出现约 {count} 次")
-                    except:
+                    except Exception:
                         continue
 
         except Exception as e:

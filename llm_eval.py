@@ -8,7 +8,16 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
-from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG, USER_AGENT
+from constants import (
+    SCORE_THRESHOLD_PASS,
+    SCORE_THRESHOLD_RECOMMEND,
+    SCORE_THRESHOLD_STRONG,
+    USER_AGENT,
+    LLM_MAX_TOKENS,
+    LLM_TEMPERATURE,
+    LLM_TIMEOUT,
+    LLM_MAX_RETRIES,
+)
 
 import requests
 
@@ -133,13 +142,12 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str) -> LLMEvalResu
     body = {
         "model": model,
         "messages": messages,
-        "max_tokens": 256,
-        "temperature": 0.3,
+        "max_tokens": LLM_MAX_TOKENS,
+        "temperature": LLM_TEMPERATURE,
         "stream": False,
     }
-    timeout = (8, 30)
-
-    max_retries = 3
+    timeout = LLM_TIMEOUT
+    max_retries = LLM_MAX_RETRIES
     last_error = None
 
     for attempt in range(max_retries):

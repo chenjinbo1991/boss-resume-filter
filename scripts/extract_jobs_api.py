@@ -68,7 +68,7 @@ def extract_jobs_via_api():
                     page = tab
                     print(f"找到职位管理页面: {url}")
                     break
-            except:
+            except Exception:
                 continue
 
         if not page:
@@ -205,7 +205,7 @@ def extract_jobs_via_api():
                 for i in range(5):  # 滚动5次
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(2)
-            except:
+            except Exception:
                 pass
 
             # 再次尝试获取数据
