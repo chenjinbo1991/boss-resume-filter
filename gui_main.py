@@ -7674,9 +7674,10 @@ class BossFilterGUI:
 
             row_frame = tk.Frame(list_inner, bg=row_bg)
             row_frame.pack(fill='x', pady=0)
-            lbl = tk.Label(row_frame, text=f"  {prefix}{tag}", bg=row_bg, fg=row_fg,
+            left_pad = int(16 * fs) if is_patch else int(4 * fs)
+            lbl = tk.Label(row_frame, text=f"{prefix}{tag}", bg=row_bg, fg=row_fg,
                            font=(FONT_FAMILY, font_size), anchor='w')
-            lbl.pack(fill='x', ipady=int(2 * fs))
+            lbl.pack(fill='x', ipady=int(2 * fs), padx=(left_pad, 0))
             row_frames.append((row_frame, lbl, row_bg, row_fg, idx))
 
             def make_select_handler(i):
