@@ -7667,7 +7667,7 @@ class BossFilterGUI:
 
         for idx, (tag, title_line, _) in enumerate(versions):
             is_patch = tag.count('.') >= 2  # X.Y.Z 是补丁版本
-            prefix = "◇ " if is_patch else "● "
+            prefix = "• " if is_patch else "▸ "
             font_size = int(10 * changelog_fs) if is_patch else int(12 * changelog_fs)
             row_bg = '#243041' if idx % 2 == 0 else sidebar_bg
             row_fg = '#F8FAFC' if idx == 0 else ('#718096' if is_patch else '#E2E8F0')
