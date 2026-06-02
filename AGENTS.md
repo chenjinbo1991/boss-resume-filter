@@ -27,8 +27,8 @@ boss-resume-filter/
 ├── gui.bat               # GUI 启动脚本
 ├── install.bat           # 安装脚本
 ├── requirements.txt      # Python 依赖
-├── CLAUDE.md             # Claude 专用项目规范
-├── AGENTS.md             # 本文件（Codex 专用项目规范）
+├── CLAUDE.md             # 本文件（Claude 专用项目规范）
+├── AGENTS.md             # Codex 专用项目规范（内容与本文件一致）
 ├── README.md             # 项目主文档
 ├── CHANGELOG.md          # 更新日志
 ├── GUI 使用说明.md        # 图形界面详细说明
@@ -238,6 +238,12 @@ boss-resume-filter/
 ### CHANGELOG 分类校验
 
 `build.py` 的 `_check_changelog()` 要求至少有一个分类（新增功能/体验优化/问题修复），且存在的分类按规范顺序排列。
+
+**分类原则**：
+
+- **新增功能**：用户可感知的新能力
+- **体验优化**：现有功能的改进，包括新功能开发过程中产生的问题修复（不算 bug）
+- **问题修复**：**仅指旧版本中已存在且影响用户的 bug**，不包括当前版本新功能引入的问题
 
 ### DMG 安装后配置文件缺失
 
