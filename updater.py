@@ -1163,53 +1163,90 @@ def show_update_dialog(root, result, gui=None):
     dialog.bind('<Escape>', lambda e: on_cancel())
 
 
+def _read_cooldown(base_dir: Path) -> dict:
+    """读取更新检查冷却状态，返回 {timestamp, result, fail_count}。
+
+    兼容旧版纯时间戳格式（自动升级）。文件不存在或损坏时返回空状态。
+    """
+    cooldown_file = base_dir / ".last_update_check"
+    if not cooldown_file.exists():
+        return {"timestamp": 0, "result": None, "fail_count": 0}
+
+    try:
+        content = cooldown_file.read_text().strip()
+        state = json.loads(content)
+        if isinstance(state, dict):
+            return {
+                "timestamp": state.get("timestamp", 0),
+                "result": state.get("result"),
+                "fail_count": state.get("fail_count", 0),
+            }
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    # 旧版格式：纯时间戳，自动升级
+    try:
+        return {
+            "timestamp": float(cooldown_file.read_text().strip()),
+            "result": None,
+            "fail_count": 0,
+        }
+    except (ValueError, OSError):
+        return {"timestamp": 0, "result": None, "fail_count": 0}
+
+
+def _write_cooldown(base_dir: Path, result: str, fail_count: int = 0) -> None:
+    """写入更新检查冷却状态。"""
+    cooldown_file = base_dir / ".last_update_check"
+    state = {"timestamp": time.time(), "result": result, "fail_count": fail_count}
+    try:
+        cooldown_file.write_text(json.dumps(state))
+    except OSError:
+        pass
+
+
+def _adaptive_cooldown(result: str, fail_count: int) -> float:
+    """计算自适应冷却时间（秒）。
+
+    - 发现新版本: 24h（用户已看到弹窗，避免重复打扰）
+    - 无更新: 4h
+    - 检查失败: 15min 起，指数退避（30min → 1h）
+    """
+    if result == "found":
+        return 24 * 3600
+    if result == "no_update":
+        return 4 * 3600
+    # result == "failed": 指数退避
+    return 900 * (2 ** min(fail_count, 2))
+
+
 def auto_check_on_startup(root, delay_ms=3000, gui=None):
     """
-    启动时自动检查更新（延迟执行），带 4 小时冷却机制
+    启动时自动检查更新（延迟执行），自适应冷却机制
 
     Args:
         root: tkinter 根窗口
         delay_ms: 延迟毫秒数（默认 3 秒，避免启动时卡顿）
         gui: BossFilterGUI 实例（用于字体缩放和配色）
     """
-    # 检查冷却时间（4 小时内不重复检查）
     base_dir = get_base_dir()
-    cooldown_file = base_dir / ".last_update_check"
-    failed_cooldown_file = base_dir / ".last_update_check_failed"
-    cooldown_hours = 4
-    failed_cooldown_hours = 0.25
+    state = _read_cooldown(base_dir)
 
-    try:
-        if cooldown_file.exists():
-            last_check = float(cooldown_file.read_text().strip())
-            hours_since = (time.time() - last_check) / 3600
-            if hours_since < cooldown_hours:
-                print(f"[更新] 距离上次检查仅 {hours_since:.1f} 小时，跳过自动检查")
-                return
-    except (ValueError, OSError):
-        pass  # 文件损坏或读取失败，继续检查
+    hours_since = (time.time() - state["timestamp"]) / 3600
+    cooldown_hours = _adaptive_cooldown(state["result"], state["fail_count"]) / 3600
 
-    try:
-        if failed_cooldown_file.exists():
-            last_failed = float(failed_cooldown_file.read_text().strip())
-            hours_since_failed = (time.time() - last_failed) / 3600
-            if hours_since_failed < failed_cooldown_hours:
-                print(f"[更新] 距离上次失败仅 {hours_since_failed:.1f} 小时，暂缓自动检查")
-                return
-    except (ValueError, OSError):
-        pass
+    if hours_since < cooldown_hours:
+        return
 
     def _do_check_and_record():
-        """执行检查并记录时间戳"""
+        """执行检查并记录结果"""
         def record_result(result):
-            try:
-                if result.get('error'):
-                    failed_cooldown_file.write_text(str(time.time()))
-                else:
-                    cooldown_file.write_text(str(time.time()))
-                    failed_cooldown_file.unlink(missing_ok=True)
-            except OSError:
-                pass
+            if result.get("error"):
+                _write_cooldown(base_dir, "failed", state["fail_count"] + 1)
+            elif result.get("has_update"):
+                _write_cooldown(base_dir, "found", 0)
+            else:
+                _write_cooldown(base_dir, "no_update", 0)
 
         check_and_update_gui(root, silent=True, on_complete=record_result, gui=gui)
 

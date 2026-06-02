@@ -178,7 +178,8 @@ boss-resume-filter/
 - 实现位置：`gui_main.py:fetch_model_list()`、`gui_main.py:show_model_dialog()`
 
 ## 自动更新
-- 启动时延迟 3 秒检查，**4 小时冷却**；Gitee 优先 → GitHub fallback（Gitee "无更新"时 GitHub 复核防漏报）
+
+- 启动时延迟 3 秒检查，**自适应冷却**（发现新版本 24h / 无更新 4h / 失败 15min 指数退避）；Gitee 优先 → GitHub fallback（Gitee "无更新"时 GitHub 复核防漏报）
 - **Gitee 源**（8s 超时）：`latest.json`；**GitHub 源**（10s 超时）：GitHub Releases API
 - 下载链接：`latest.json` 的 `downloads_cn` 优先（国内快）；弹窗支持「立即更新」和「稍后提醒」
 - **Windows**：下载 EXE → 校验 SHA256 → `update.bat` 替换重启；脚本须清理 `_PYI_*` 环境变量 + `PYINSTALLER_RESET_ENVIRONMENT=1` 防 DLL 缺失
