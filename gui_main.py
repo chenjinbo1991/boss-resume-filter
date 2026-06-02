@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from security import save_api_key, get_api_key, delete_api_key
 import updater
-from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
+from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG, USER_AGENT
 from storage import save_candidates_all
 
 # ========== 路径常量 - 解决相对路径问题 ==========
@@ -4101,7 +4101,7 @@ class BossFilterGUI:
 
                 headers = {
                     "Authorization": f"Bearer {api_key}",
-                    "User-Agent": "BossResumeFilter/1.0"
+                    "User-Agent": USER_AGENT
                 }
 
                 # 发送请求，超时 15 秒
@@ -4391,7 +4391,7 @@ class BossFilterGUI:
                                         resp = session.post(
                                             f"{test_base_url.rstrip('/')}/chat/completions",
                                             json={"model": model_name, "messages": [{"role": "user", "content": "1"}], "max_tokens": 1, "stream": False},
-                                            headers={"Content-Type": "application/json", "Authorization": f"Bearer {test_api_key}", "User-Agent": "BossResumeFilter/1.0", "Connection": "close"},
+                                            headers={"Content-Type": "application/json", "Authorization": f"Bearer {test_api_key}", "User-Agent": USER_AGENT, "Connection": "close"},
                                             timeout=(8, 30),
                                             verify=certifi.where()
                                         )
@@ -4813,7 +4813,7 @@ class BossFilterGUI:
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
-                "User-Agent": "BossResumeFilter/1.0",
+                "User-Agent": USER_AGENT,
                 "Connection": "close"  # 强制关闭连接，不复用
             }
 

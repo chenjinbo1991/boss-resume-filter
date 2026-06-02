@@ -1,6 +1,20 @@
 """Pure candidate filtering rules for BOSS resume screening."""
+from __future__ import annotations
+
 import re
-from constants import MAJOR_CITIES, SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
+from typing import Any, Optional
+
+from constants import (
+    MAJOR_CITIES,
+    SCORE_BASE,
+    SCORE_SKILL_MAX,
+    SCORE_EXP_MAX,
+    SCORE_THRESHOLD_PASS,
+    SCORE_THRESHOLD_RECOMMEND,
+    SCORE_THRESHOLD_STRONG,
+    CHINESE_NUMERALS,
+    NON_REGULAR_EDU,
+)
 
 
 _major_cities_set = set(MAJOR_CITIES)
@@ -24,12 +38,8 @@ def _extract_city(text: str) -> str:
     return ""
 
 
-def parse_experience_years(text):
+def parse_experience_years(text: str) -> Optional[int]:
     """从文本中解析工作年限，支持阿拉伯数字和中文数字。"""
-    chinese_numerals = {
-        '零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
-        '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
-    }
 
     text = text.replace(' ', '')
 
@@ -44,30 +54,30 @@ def parse_experience_years(text):
         if chinese_num == '十':
             return 10
         elif chinese_num.startswith('十') and len(chinese_num) > 1:
-            return 10 + chinese_numerals.get(chinese_num[1], 0)
+            return 10 + CHINESE_NUMERALS.get(chinese_num[1], 0)
         elif chinese_num.endswith('十') and len(chinese_num) > 1:
-            return chinese_numerals.get(chinese_num[0], 0) * 10
+            return CHINESE_NUMERALS.get(chinese_num[0], 0) * 10
         elif len(chinese_num) == 2:
-            first = chinese_numerals.get(chinese_num[0], 0)
-            second = chinese_numerals.get(chinese_num[1], 0)
+            first = CHINESE_NUMERALS.get(chinese_num[0], 0)
+            second = CHINESE_NUMERALS.get(chinese_num[1], 0)
             if first >= 2 and first <= 9:
                 return first * 10 + second
             else:
                 return first + second
-        elif chinese_num in chinese_numerals:
-            return chinese_numerals[chinese_num]
+        elif chinese_num in CHINESE_NUMERALS:
+            return CHINESE_NUMERALS[chinese_num]
 
         result = 0
         for char in chinese_num:
-            if char in chinese_numerals:
-                result += chinese_numerals[char]
+            if char in CHINESE_NUMERALS:
+                result += CHINESE_NUMERALS[char]
         if result > 0:
             return result
 
     return None
 
 
-def _parse_candidate_salary_range(text):
+def _parse_candidate_salary_range(text: str) -> tuple[Optional[int], Optional[int]]:
     """从候选人 summary 第一行提取期望薪资范围，单位 K。"""
     if not text:
         return None, None
@@ -84,7 +94,7 @@ def _parse_candidate_salary_range(text):
     return None, None
 
 
-def _keyword_found(text, keyword):
+def _keyword_found(text: str, keyword: str) -> bool:
     """检查关键词是否在文本中作为独立词出现，避免英文子串误匹配。"""
     if any('一' <= c <= '鿿' for c in keyword):
         return keyword.lower() in text.lower()
@@ -94,7 +104,7 @@ def _keyword_found(text, keyword):
         return keyword.lower() in text.lower()
 
 
-def _calc_edu_bonus(text):
+def _calc_edu_bonus(text: str) -> int:
     """计算学历加分（0~10）"""
     bonus = 0
     has_985211 = any(mark in text for mark in ['985', '211', '双一流'])
@@ -112,13 +122,10 @@ def _calc_edu_bonus(text):
     return bonus
 
 
-def filter_candidate(candidate_text, rule):
+def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, int, dict[str, Any]]:
     """候选人筛选逻辑，返回 (passed, score, details)。"""
     try:
-        skill_max = 50
-        exp_max = 15
-
-        details = {
+        details: dict[str, Any] = {
             'exp_matched': True,
             'edu_matched': True,
             'required_conditions_matched': True,
@@ -137,12 +144,10 @@ def filter_candidate(candidate_text, rule):
             required_edu = edu_keywords.get(rule.get("edu", "不限"), 0)
 
             if rule.get("edu") == "本科":
-                non_regular = ["自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
-                               "专升本", "电大", "远程教育", "成人高考", "成人教育", "脱产", "业余"]
                 if candidate_edu_level >= 5:
                     pass
                 elif candidate_edu_level == 4:
-                    is_non_regular = any(ne in candidate_text for ne in non_regular)
+                    is_non_regular = any(ne in candidate_text for ne in NON_REGULAR_EDU)
                     if is_non_regular:
                         if re.search(r'(统招|全日制)\s*本科', candidate_text):
                             pass
@@ -162,7 +167,7 @@ def filter_candidate(candidate_text, rule):
             if exp_years is not None:
                 if min_exp > exp_years:
                     return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
-                details['exp_bonus'] = min((exp_years - min_exp) * 3, exp_max)
+                details['exp_bonus'] = min((exp_years - min_exp) * 3, SCORE_EXP_MAX)
 
         max_age = rule.get("max_age")
         if max_age is not None:
@@ -222,18 +227,18 @@ def filter_candidate(candidate_text, rule):
             details['skill_total'] = total_possible_weight
 
         if total_possible_weight > 0:
-            skill_score_normalized = int((skill_score / total_possible_weight) * skill_max)
+            skill_score_normalized = int((skill_score / total_possible_weight) * SCORE_SKILL_MAX)
         else:
-            skill_score_normalized = skill_max
+            skill_score_normalized = SCORE_SKILL_MAX
 
-        score = 25 + skill_score_normalized + details['exp_bonus'] + details['edu_bonus']
+        score = SCORE_BASE + skill_score_normalized + details['exp_bonus'] + details['edu_bonus']
         return True, score, details
 
     except Exception as e:
         return False, 0, {"reason": f"筛选异常: {str(e)[:50]}"}
 
 
-def check_required_condition(candidate_text, condition):
+def check_required_condition(candidate_text: str, condition: str | dict[str, Any]) -> dict[str, Any]:
     """检查单个必要条件。"""
     if isinstance(condition, str):
         if condition == "统招本科":
@@ -244,9 +249,7 @@ def check_required_condition(candidate_text, condition):
 
             has_regular_mark = "985" in candidate_text or "211" in candidate_text
             has_bachelor = "本科" in candidate_text
-            non_regular = ["自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
-                           "专升本", "电大", "远程教育", "成人高考", "成人教育", "脱产", "业余"]
-            is_non_regular = any(ne in candidate_text for ne in non_regular)
+            is_non_regular = any(ne in candidate_text for ne in NON_REGULAR_EDU)
             if has_regular_mark and has_bachelor and not is_non_regular:
                 return {"passed": True, "reason": ""}
             if is_non_regular:
@@ -281,7 +284,7 @@ def check_required_condition(candidate_text, condition):
     return {"passed": True, "reason": ""}
 
 
-def evaluate_candidate(candidate_text, rule):
+def evaluate_candidate(candidate_text: str, rule: dict[str, Any]) -> bool:
     """兼容旧版本的布尔筛选接口。"""
     passed, score, details = filter_candidate(candidate_text, rule)
     return passed

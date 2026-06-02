@@ -9,8 +9,8 @@ import json
 import re
 import os
 import unicodedata
-from typing import Dict, List
-from constants import MAJOR_CITIES
+from typing import Dict
+from constants import MAJOR_CITIES, CHINESE_NUMERALS
 
 
 _major_cities_set = set(MAJOR_CITIES)
@@ -308,18 +308,13 @@ def parse_job_requirements(text: str) -> Dict:
     # === 3. 提取经验要求 ===
     exp_value = 0
 
-    # 中文数字 → 阿拉伯数字映射
-    _cn_num_map = {
-        '零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
-        '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
-    }
-    # 数字匹配组：阿拉伯数字 OR 中文数字
+    # 中文数字 → 阿拉伯数字映射（来自 constants.CHINESE_NUMERALS）
     _num = r'(?:\d+|[零一二两三四五六七八九十])'
 
     def _to_int(s: str) -> int:
         """将阿拉伯数字或中文数字转为 int"""
-        if s in _cn_num_map:
-            return _cn_num_map[s]
+        if s in CHINESE_NUMERALS:
+            return CHINESE_NUMERALS[s]
         try:
             return int(s)
         except ValueError:

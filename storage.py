@@ -1,8 +1,12 @@
 """Candidate persistence helpers for BOSS resume screening."""
+from __future__ import annotations
+
 import json
 import os
 import shutil
 from pathlib import Path
+from typing import Any, Optional
+
 from constants import SCORE_THRESHOLD_PASS
 
 
@@ -10,12 +14,12 @@ CANDIDATES_FILE = "candidates_all.json"
 BACKUP_FILE = CANDIDATES_FILE + ".bak"
 
 
-def _candidate_paths(path=None):
+def _candidate_paths(path: Optional[str] = None) -> tuple[Path, Path]:
     candidate_path = Path(path) if path is not None else Path(CANDIDATES_FILE)
     return candidate_path, Path(str(candidate_path) + ".bak")
 
 
-def load_candidates_all(path=None):
+def load_candidates_all(path: Optional[str] = None) -> list[dict[str, Any]]:
     """加载候选人数据；主文件损坏时自动尝试从 .bak 恢复。"""
     candidate_path, backup_path = _candidate_paths(path)
     if candidate_path.exists():
@@ -35,7 +39,7 @@ def load_candidates_all(path=None):
     return []
 
 
-def _load_candidates_backup(path=None):
+def _load_candidates_backup(path: Optional[str] = None) -> Optional[list[dict[str, Any]]]:
     """加载备份文件；不存在或损坏时返回 None。"""
     _, backup_path = _candidate_paths(path)
     if not backup_path.exists():
@@ -48,12 +52,12 @@ def _load_candidates_backup(path=None):
         return None
 
 
-def get_greeted_geek_ids(candidates_all):
+def get_greeted_geek_ids(candidates_all: list[dict[str, Any]]) -> set[str]:
     """从 candidates_all 中提取已打招呼的 geek_id 集合。"""
     return set(c['geek_id'] for c in candidates_all if c.get('greet_sent') is True)
 
 
-def save_candidates_all(candidates_all, path=None):
+def save_candidates_all(candidates_all: list[dict[str, Any]], path: Optional[str] = None) -> None:
     """保存 candidates_all.json，支持去重、中断恢复和 .bak 备份。"""
     candidate_path, backup_path = _candidate_paths(path)
     unique_candidates = _dedupe_candidates(candidates_all)
@@ -78,9 +82,9 @@ def save_candidates_all(candidates_all, path=None):
     print(f"已更新 {candidate_path} (共 {len(unique_candidates)} 个唯一候选人)")
 
 
-def _dedupe_candidates(candidates_all):
+def _dedupe_candidates(candidates_all: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """按 (geek_id, job_name) 去重，并合并打招呼状态。"""
-    seen = {}
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
 
     for c in candidates_all:
         geek_id = c.get('geek_id')
@@ -107,7 +111,12 @@ def _dedupe_candidates(candidates_all):
     return unique_candidates
 
 
-def is_already_greeted(candidates_all, geek_id, job_name=None, greeted_index=None):
+def is_already_greeted(
+    candidates_all: list[dict[str, Any]],
+    geek_id: str,
+    job_name: Optional[str] = None,
+    greeted_index: Optional[set[tuple[str, str]]] = None,
+) -> bool:
     """检查是否已打过招呼，支持 (geek_id, job_name) 复合键。
 
     可通过 greeted_index 参数传入预建的 set[(geek_id, job_name)] 索引，
@@ -129,7 +138,7 @@ def is_already_greeted(candidates_all, geek_id, job_name=None, greeted_index=Non
     return False
 
 
-def build_greeted_index(candidates_all):
+def build_greeted_index(candidates_all: list[dict[str, Any]]) -> set[tuple[str, str]]:
     """构建 (geek_id, job_name) 打招呼索引，O(n) 一次构建，后续查询 O(1)。"""
     return set(
         (c.get('geek_id'), c.get('job_name', ''))

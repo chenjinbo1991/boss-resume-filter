@@ -1165,14 +1165,14 @@ def show_update_dialog(root, result, gui=None):
 
 def auto_check_on_startup(root, delay_ms=3000, gui=None):
     """
-    启动时自动检查更新（延迟执行），带 24 小时冷却机制
+    启动时自动检查更新（延迟执行），带 4 小时冷却机制
 
     Args:
         root: tkinter 根窗口
         delay_ms: 延迟毫秒数（默认 3 秒，避免启动时卡顿）
         gui: BossFilterGUI 实例（用于字体缩放和配色）
     """
-    # 检查冷却时间（24 小时内不重复检查）
+    # 检查冷却时间（4 小时内不重复检查）
     base_dir = get_base_dir()
     cooldown_file = base_dir / ".last_update_check"
     failed_cooldown_file = base_dir / ".last_update_check_failed"

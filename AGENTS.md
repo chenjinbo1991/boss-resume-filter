@@ -87,7 +87,7 @@ boss-resume-filter/
 ## 代码规范
 - 使用 type hints
 - 关键函数写 docstring
-- 异常处理要具体，不要裸 except（已规范化为具体异常类型）
+- 异常处理要具体，不要裸 except；核心模块用 `except Exception:` 兜底，scripts/ 逐步收敛中
 
 ## 敏感信息
 - .env 文件不进 git

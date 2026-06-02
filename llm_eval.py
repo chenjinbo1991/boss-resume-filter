@@ -8,7 +8,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
-from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
+from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG, USER_AGENT
 
 import requests
 
@@ -127,7 +127,7 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str) -> LLMEvalResu
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
-        "User-Agent": "BossResumeFilter/1.0",
+        "User-Agent": USER_AGENT,
         "Connection": "close",
     }
     body = {

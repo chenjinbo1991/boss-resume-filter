@@ -149,15 +149,16 @@ python tests/test_import.py
 boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
-├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、并发批量评估）
+├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── constants.py          # 全局共享常量（评分阈值、主要城市列表）
-├── paths.py              # 路径工具模块（PyInstaller 打包路径处理、配置文件初始化）
+├── constants.py          # 共享常量（评分阈值、城市列表）
+├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
 ├── gui_main.py            # 图形界面主程序（v2.9.1）
-├── updater.py             # 自动更新模块（Gitee/GitHub 双源检查、下载替换）
+├── updater.py             # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py               # 图标绘制模块（Pillow 矢量图标）
 ├── doc_parser.py          # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
+├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
 ├── latest.json           # 版本清单（Gitee 更新源，build.py --release 自动维护）
 ├── gui.bat               # GUI 启动脚本
@@ -170,12 +171,15 @@ boss-resume-filter/
 ├── README.md             # 项目主文档
 ├── CHANGELOG.md          # 更新日志（嵌入 EXE，运行时从 _MEIPASS 读取）
 ├── GUI 使用说明.md        # 图形界面详细说明
+├── README_文件管理.md      # 数据文件管理说明
 ├── DEPLOYMENT.md         # 部署说明
 ├── PACKAGING.md          # 打包指南
 ├── requirements.txt      # Python 依赖
 ├── install.bat           # 安装脚本
 ├── tests/                # 测试脚本目录
-└── scripts/              # 辅助脚本目录
+├── scripts/              # 辅助脚本目录
+│   └── watch_progress.py # 发布进度监控脚本
+└── .build_progress.json  # 发布进度文件（build.py 实时更新）
 ```
 
 ## 📊 匹配规则

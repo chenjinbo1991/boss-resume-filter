@@ -4,6 +4,6 @@ echo LLM 连接测试
 echo ========================================
 echo.
 
-python test_llm.py
+python tests/manual/test_llm.py
 
 pause

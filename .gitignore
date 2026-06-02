@@ -43,6 +43,10 @@ build_log*.txt
 .build_progress.json
 .build_state.json
 
+# 孤儿文件（无引用，不纳入版本控制）
+input.txt
+sample_job_requirements.txt
+
 # IDE
 .vscode/
 .idea/

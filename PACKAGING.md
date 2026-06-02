@@ -325,6 +325,7 @@ pyinstaller --onedir --noconsole \
 | Pillow | 图标绘制（PIL.ImageDraw） |
 | keyring | API Key 加密存储 |
 | python-dotenv | 环境变量管理 |
+| tkcalendar | 日期选择控件（筛选结果日期过滤） |
 
 ### 8. 最小化部署
 
