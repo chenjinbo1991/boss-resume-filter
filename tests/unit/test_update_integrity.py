@@ -621,7 +621,7 @@ def test_sync_gitee_from_github_supports_macos_release_waiting_for_windows_exe()
     }
 
 
-def test_transfer_batch_runs_large_files_before_small_files():
+def test_transfer_batch_runs_small_files_before_large_files():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         small = tmp_path / "README.md"
@@ -650,8 +650,8 @@ def test_transfer_batch_runs_large_files_before_small_files():
         finally:
             build.LARGE_TRANSFER_THRESHOLD = original_large_threshold
 
-    assert order[:2] == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
-    assert "README.md" in order[2:]
+    assert order[0] == "README.md"
+    assert order[1:] == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
 
 
 def test_update_latest_json_requires_complete_auto_update_metadata():

@@ -2658,7 +2658,7 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     """从 GitHub Release 下载对端产物并上传到 Gitee Release。
 
     当 need_wait=True 时，先轮询等待 CI 构建完成（对端产物出现在 GitHub Release）。
-    大文件串行传输，小文件并发传输，避免网络波动时大文件互相抢带宽。
+    小文件优先并发传输，大文件随后串行传输，避免网络波动时大文件互相抢带宽。
     release_cache: 可选的缓存信息（来自 _gitee_get_release_cache），避免重复 API 调用。
     返回 downloads_cn 字典，失败返回 None。
     """
@@ -2738,7 +2738,7 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         print("  [跳过] 无需下载对端产物")
         return downloads_cn if downloads_cn else None
 
-    # 下载对端产物：ZIP/DMG/EXE 等大文件串行，小文件才并发。
+    # 下载对端产物：小文件优先并发，ZIP/DMG/EXE 等大文件随后串行。
     download_dir = DIST_DIR / "_gh_download"
     download_dir.mkdir(exist_ok=True)
 
