@@ -2570,6 +2570,11 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     api_base = release_cache['api_base']
     release_id = release_cache['release_id']
     existing = release_cache['existing']
+    try:
+        existing = _gitee_fetch_assets(api_base, token, release_id)
+        release_cache['existing'] = existing
+    except requests.exceptions.RequestException as e:
+        print(f"  [Gitee] 刷新附件列表失败，继续使用缓存: {e}")
 
     # 对端产物列表
     if IS_MAC:
@@ -2972,14 +2977,27 @@ def main():
         '--hidden-import=tkinter.filedialog',
         '--hidden-import=tkinter.messagebox',
         '--hidden-import=tkcalendar',
-        '--collect-submodules=babel',
+        '--hidden-import=babel',
+        '--hidden-import=babel.numbers',
+        '--hidden-import=babel.dates',
+        '--hidden-import=babel.localedata',
         *tk_args,
-        '--collect-all', 'PIL',
+        '--hidden-import=PIL',
+        '--hidden-import=PIL.Image',
+        '--hidden-import=PIL.ImageDraw',
+        '--hidden-import=PIL.ImageTk',
+        '--hidden-import=PIL.ImageColor',
+        '--hidden-import=PIL.ImageFont',
         '--exclude-module=PyQt5',
         '--exclude-module=PySide6',
         '--exclude-module=torch',
         '--exclude-module=botocore',
         '--exclude-module=boto3',
+        '--exclude-module=matplotlib',
+        '--exclude-module=scipy',
+        '--exclude-module=IPython',
+        '--exclude-module=pytest',
+        '--exclude-module=notebook',
         str(BASE_DIR / "gui_main.py")
     ]
 
