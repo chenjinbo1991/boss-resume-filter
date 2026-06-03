@@ -3067,7 +3067,7 @@ class BossFilterGUI:
     # ===== 右键菜单功能 =====
     def bind_entry_context_menu(self, entry_widget):
         """为 Entry/Combobox 控件绑定右键复制/粘贴/全选菜单"""
-        menu_font = (FONT_FAMILY, int(14 * self.font_scale))
+        menu_font = (FONT_FAMILY, int(12 * self.font_scale))
         menu = tk.Menu(entry_widget, tearoff=0, font=menu_font)
         self._context_menus.append(menu)
 
@@ -3109,7 +3109,7 @@ class BossFilterGUI:
 
     def bind_text_context_menu(self, text_widget, editable=True):
         """为 Text 控件绑定右键复制/粘贴/全选菜单"""
-        menu_font = (FONT_FAMILY, int(14 * self.font_scale))
+        menu_font = (FONT_FAMILY, int(12 * self.font_scale))
         menu = tk.Menu(text_widget, tearoff=0, font=menu_font)
         self._context_menus.append(menu)
 
