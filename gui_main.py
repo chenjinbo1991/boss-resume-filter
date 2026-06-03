@@ -4156,6 +4156,10 @@ class BossFilterGUI:
             self.api_base_url_var.set(config["base_url"])
             self.api_model_var.set(config["model"])
 
+        # 切换服务商时，从 keyring 读取该服务商的 API Key，没有则清空
+        saved_key = get_api_key(provider)
+        self.api_key_var.set(saved_key if saved_key else "")
+
     _model_dialog = None  # 防止重复打开模型列表对话框
 
     def fetch_model_list(self):
