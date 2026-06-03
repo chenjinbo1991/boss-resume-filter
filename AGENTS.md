@@ -205,7 +205,7 @@ boss-resume-filter/
 - **Windows**：下载 EXE → 校验 SHA256 → `update.bat` 替换重启；脚本须清理 `_PYI_*` 环境变量 + `PYINSTALLER_RESET_ENVIRONMENT=1` 防 DLL 缺失
 - **macOS**：.app 运行→下载 ZIP 替换重启；源码→`git pull`
 - `latest.json` 的 `assets` 记录产物 `size`/`sha256` 供校验
-- **Gitee Release 上传**：`_gitee_upload_local()` 本地产物 + `_sync_gitee_from_github()` CI 产物，3 路并行；5 次重试 + 600s 超时，4xx 不重试
+- **Gitee Release 上传**：`_gitee_upload_local()` 上传本地产物，`_sync_gitee_from_github()` 下载并同步 CI 对端产物；大文件（EXE/ZIP/DMG，>=20MB）串行，小文件最多 3 路并发；上传/下载超时 600s，4xx 不重试；Windows 发布同步 Mac 产物时 ZIP 优先于 DMG
 - **Gitee Token**：环境变量 `GITEE_TOKEN`，未设置时跳过上传
 - 实现位置：`updater.py`（客户端），`build.py`（上传）
 

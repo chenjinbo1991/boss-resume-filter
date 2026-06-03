@@ -15,8 +15,9 @@
 - **解析摘要增加薪资**：解析成功后显示的摘要信息新增薪资范围，格式为"薪资=12-15K"、"薪资≥12K"或"薪资≤15K"
 - **需求示例提示交互**：点击"招聘需求示例"按钮后，左侧"点击查看需求示例→"提示自动消失
 - **服务商默认模型更新**：DeepSeek、Kimi、智谱、MiniMax、小米、阶跃星辰、OpenAI、Anthropic 等服务商默认模型更新为最新版本
-- **MiniMax Base URL 更新**：从旧域名 minimaxi.com 更新为 api.minimax.chat
+- **MiniMax Base URL 更新**：从旧域名 minimaxi.com 更新为 api.minimaxi.com
 - **运行控制页优化**：打招呼等级备注动态显示实际阈值，AI 评估备注 +/- 分色显示并默认勾选，岗位选择提示文本优化
+- **发布传输策略优化**：GitHub/Gitee 上传下载改为大文件串行、小文件并发；对端产物优先用 GitHub digest 和 latest.json 判定可复用，Windows 发布同步 Mac 产物时 ZIP 优先于 DMG，减少重复传输并提升网络波动下稳定性
 
 ### 问题修复
 

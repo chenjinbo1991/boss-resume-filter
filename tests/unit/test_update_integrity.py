@@ -183,6 +183,320 @@ def test_latest_json_manifest_keeps_download_and_asset_keys_consistent():
     assert set(data["assets"]) <= set(data["downloads"])
 
 
+def test_release_asset_metadata_from_remote_assets_uses_github_digest():
+    metadata = build._release_asset_metadata_from_remote_assets([
+        {
+            "name": "BOSS_ResumeFilter_mac.zip",
+            "size": 123,
+            "digest": "sha256:" + "a" * 64,
+        },
+        {
+            "name": "README.md",
+            "size": 456,
+            "digest": "sha256:" + "b" * 64,
+        },
+    ])
+
+    assert metadata == {
+        "macos": {
+            "size": 123,
+            "sha256": "a" * 64,
+        }
+    }
+
+
+def test_collect_github_release_asset_metadata_uses_remote_digest_before_download():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (dist_dir / "BOSS_ResumeFilter.exe").write_bytes(b"exe")
+
+        original_get_assets = build._get_github_release_assets
+        original_wait = build._wait_for_github_release_assets
+        original_download = build._download_from_github_release
+        try:
+            build._get_github_release_assets = lambda tag: {
+                "BOSS_ResumeFilter_mac.zip": {
+                    "name": "BOSS_ResumeFilter_mac.zip",
+                    "size": 222,
+                    "digest": "sha256:" + "b" * 64,
+                },
+                "BOSS_ResumeFilter.dmg": {
+                    "name": "BOSS_ResumeFilter.dmg",
+                    "size": 333,
+                    "digest": "sha256:" + "c" * 64,
+                },
+            }
+            build._wait_for_github_release_assets = lambda tag, names: (_ for _ in ()).throw(
+                AssertionError("remote digest metadata should avoid waiting")
+            )
+            build._download_from_github_release = lambda tag, name, dest: (_ for _ in ()).throw(
+                AssertionError("remote digest metadata should avoid downloading")
+            )
+
+            with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+                metadata = build._collect_github_release_asset_metadata("9.9.9")
+        finally:
+            build._get_github_release_assets = original_get_assets
+            build._wait_for_github_release_assets = original_wait
+            build._download_from_github_release = original_download
+
+    assert metadata["windows"]["size"] == 3
+    assert metadata["macos"] == {"size": 222, "sha256": "b" * 64}
+    assert metadata["macos_dmg"] == {"size": 333, "sha256": "c" * 64}
+
+
+def test_gitee_asset_can_reuse_github_metadata_from_latest_json():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (tmp_path / "latest.json").write_text(
+            json.dumps({
+                "assets": {
+                    "macos": {
+                        "size": 222,
+                        "sha256": "b" * 64,
+                    }
+                }
+            }),
+            encoding="utf-8",
+        )
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            reusable = build._gitee_asset_can_reuse_github_metadata(
+                "BOSS_ResumeFilter_mac.zip",
+                {"size": 222},
+                {
+                    "name": "BOSS_ResumeFilter_mac.zip",
+                    "size": 222,
+                    "digest": "sha256:" + "b" * 64,
+                },
+            )
+
+    assert reusable is True
+
+
+def test_sync_gitee_from_github_skips_download_when_remote_assets_are_reusable():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (tmp_path / "latest.json").write_text(
+            json.dumps({
+                "assets": {
+                    "macos": {"size": 222, "sha256": "b" * 64},
+                    "macos_dmg": {"size": 333, "sha256": "c" * 64},
+                }
+            }),
+            encoding="utf-8",
+        )
+        release_cache = {
+            "token": "token",
+            "owner": "owner",
+            "repo": "repo",
+            "tag": "v9.9.9",
+            "api_base": "https://gitee.example/api",
+            "release_id": 1,
+            "existing": {
+                "BOSS_ResumeFilter_mac.zip": {"id": 1, "size": 222},
+                "BOSS_ResumeFilter.dmg": {"id": 2, "size": 333},
+            },
+        }
+
+        original_get_assets = build._get_github_release_assets
+        original_download = build._download_from_github_release
+        try:
+            build._get_github_release_assets = lambda tag: {
+                "BOSS_ResumeFilter_mac.zip": {
+                    "name": "BOSS_ResumeFilter_mac.zip",
+                    "size": 222,
+                    "digest": "sha256:" + "b" * 64,
+                },
+                "BOSS_ResumeFilter.dmg": {
+                    "name": "BOSS_ResumeFilter.dmg",
+                    "size": 333,
+                    "digest": "sha256:" + "c" * 64,
+                },
+            }
+            build._download_from_github_release = lambda tag, name, dest: (_ for _ in ()).throw(
+                AssertionError("reusable Gitee assets should avoid GitHub downloads")
+            )
+
+            with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+                downloads_cn = build._sync_gitee_from_github(
+                    "9.9.9", "title", "notes", need_wait=False, release_cache=release_cache
+                )
+        finally:
+            build._get_github_release_assets = original_get_assets
+            build._download_from_github_release = original_download
+
+    assert downloads_cn == {
+        "macos": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter_mac.zip",
+        "macos_dmg": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter.dmg",
+    }
+
+
+def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        release_cache = {
+            "token": "token",
+            "owner": "owner",
+            "repo": "repo",
+            "tag": "v9.9.9",
+            "api_base": "https://gitee.example/api",
+            "release_id": 1,
+            "existing": {},
+        }
+        download_order = []
+        upload_order = []
+
+        original_get_assets = build._get_github_release_assets
+        original_download = build._download_from_github_release
+        original_upload = build._gitee_upload_single
+        original_large_threshold = build.LARGE_TRANSFER_THRESHOLD
+        try:
+            build.LARGE_TRANSFER_THRESHOLD = 3
+            build._get_github_release_assets = lambda tag: {
+                "BOSS_ResumeFilter_mac.zip": {
+                    "name": "BOSS_ResumeFilter_mac.zip",
+                    "size": build.LARGE_TRANSFER_THRESHOLD + 1,
+                    "digest": "sha256:" + "b" * 64,
+                },
+                "BOSS_ResumeFilter.dmg": {
+                    "name": "BOSS_ResumeFilter.dmg",
+                    "size": build.LARGE_TRANSFER_THRESHOLD + 2,
+                    "digest": "sha256:" + "c" * 64,
+                },
+            }
+
+            def fake_download(tag, name, dest_dir):
+                download_order.append(name)
+                path = Path(dest_dir) / name
+                path.write_bytes(b"asset")
+                return path
+
+            def fake_upload(path, api_base, token, release_id):
+                upload_order.append(path.name)
+                return path.name, {}
+
+            build._download_from_github_release = fake_download
+            build._gitee_upload_single = fake_upload
+
+            with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+                downloads_cn = build._sync_gitee_from_github(
+                    "9.9.9", "title", "notes", need_wait=False, release_cache=release_cache
+                )
+        finally:
+            build._get_github_release_assets = original_get_assets
+            build._download_from_github_release = original_download
+            build._gitee_upload_single = original_upload
+            build.LARGE_TRANSFER_THRESHOLD = original_large_threshold
+
+    assert download_order == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
+    assert upload_order == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
+    assert downloads_cn["macos"].endswith("/BOSS_ResumeFilter_mac.zip")
+    assert downloads_cn["macos_dmg"].endswith("/BOSS_ResumeFilter.dmg")
+
+
+def test_sync_gitee_from_github_supports_macos_release_waiting_for_windows_exe():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        release_cache = {
+            "token": "token",
+            "owner": "owner",
+            "repo": "repo",
+            "tag": "v9.9.9",
+            "api_base": "https://gitee.example/api",
+            "release_id": 1,
+            "existing": {},
+        }
+        download_order = []
+        upload_order = []
+
+        original_get_assets = build._get_github_release_assets
+        original_download = build._download_from_github_release
+        original_upload = build._gitee_upload_single
+        original_large_threshold = build.LARGE_TRANSFER_THRESHOLD
+        try:
+            build.LARGE_TRANSFER_THRESHOLD = 3
+            build._get_github_release_assets = lambda tag: {
+                "BOSS_ResumeFilter.exe": {
+                    "name": "BOSS_ResumeFilter.exe",
+                    "size": build.LARGE_TRANSFER_THRESHOLD + 1,
+                    "digest": "sha256:" + "a" * 64,
+                },
+            }
+
+            def fake_download(tag, name, dest_dir):
+                download_order.append(name)
+                path = Path(dest_dir) / name
+                path.write_bytes(b"asset")
+                return path
+
+            def fake_upload(path, api_base, token, release_id):
+                upload_order.append(path.name)
+                return path.name, {}
+
+            build._download_from_github_release = fake_download
+            build._gitee_upload_single = fake_upload
+
+            with _with_build_context(tmp_path, dist_dir, is_win=False, is_mac=True):
+                downloads_cn = build._sync_gitee_from_github(
+                    "9.9.9", "title", "notes", need_wait=False, release_cache=release_cache
+                )
+        finally:
+            build._get_github_release_assets = original_get_assets
+            build._download_from_github_release = original_download
+            build._gitee_upload_single = original_upload
+            build.LARGE_TRANSFER_THRESHOLD = original_large_threshold
+
+    assert download_order == ["BOSS_ResumeFilter.exe"]
+    assert upload_order == ["BOSS_ResumeFilter.exe"]
+    assert downloads_cn == {
+        "windows": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter.exe"
+    }
+
+
+def test_transfer_batch_runs_large_files_before_small_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        small = tmp_path / "README.md"
+        zip_path = tmp_path / "BOSS_ResumeFilter_mac.zip"
+        dmg_path = tmp_path / "BOSS_ResumeFilter.dmg"
+        small.write_bytes(b"x")
+        zip_path.write_bytes(b"large")
+        dmg_path.write_bytes(b"large")
+        order = []
+
+        original_large_threshold = build.LARGE_TRANSFER_THRESHOLD
+        try:
+            build.LARGE_TRANSFER_THRESHOLD = 3
+
+            def worker(path):
+                order.append(path.name)
+                return path.name
+
+            build._run_transfer_batch(
+                [small, zip_path, dmg_path],
+                "测试传输",
+                worker,
+                lambda item, result: None,
+                lambda item, error: None,
+            )
+        finally:
+            build.LARGE_TRANSFER_THRESHOLD = original_large_threshold
+
+    assert order[:2] == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
+    assert "README.md" in order[2:]
+
+
 def test_update_latest_json_requires_complete_auto_update_metadata():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)

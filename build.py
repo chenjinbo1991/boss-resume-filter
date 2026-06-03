@@ -321,6 +321,9 @@ BUILD_DIR = BASE_DIR / "build"
 VENV_DIR = BASE_DIR / "pack_venv"
 BUILD_STATE_PATH = BASE_DIR / ".build_state.json"
 BUILD_FINGERPRINT_VERSION = 1
+LARGE_TRANSFER_THRESHOLD = 20 * 1024 * 1024
+SMALL_TRANSFER_WORKERS = 3
+TRANSFER_TIMEOUT_SECONDS = 600
 
 # 平台检测
 IS_MAC = sys.platform == 'darwin'
@@ -943,13 +946,67 @@ def _remote_file_sha256(url, token=None):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     session = _gitee_session()
-    resp = session.get(url, headers=headers, stream=True, timeout=600)
+    resp = session.get(url, headers=headers, stream=True, timeout=TRANSFER_TIMEOUT_SECONDS)
     resp.raise_for_status()
     digest = hashlib.sha256()
     for chunk in resp.iter_content(chunk_size=1024 * 1024):
         if chunk:
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _transfer_item_name(item):
+    return item.name if isinstance(item, Path) else str(item)
+
+
+def _transfer_item_size(item, remote_assets=None):
+    if isinstance(item, Path) and item.exists():
+        return item.stat().st_size
+    if remote_assets:
+        info = remote_assets.get(_transfer_item_name(item), {})
+        try:
+            return int(info.get("size") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _is_large_transfer_item(item, remote_assets=None):
+    size = _transfer_item_size(item, remote_assets)
+    if size:
+        return size >= LARGE_TRANSFER_THRESHOLD
+    return Path(_transfer_item_name(item)).suffix.lower() in {".exe", ".dmg", ".zip"}
+
+
+def _run_transfer_batch(items, label, worker, on_success, on_failure, remote_assets=None):
+    """Run large transfers serially and small transfers concurrently."""
+    if not items:
+        return
+
+    large = [item for item in items if _is_large_transfer_item(item, remote_assets)]
+    small = [item for item in items if item not in large]
+
+    for item in large:
+        name = _transfer_item_name(item)
+        print(f"  {label} 大文件串行: {name}")
+        try:
+            on_success(item, worker(item))
+        except Exception as e:
+            on_failure(item, e)
+
+    if not small:
+        return
+
+    workers = min(SMALL_TRANSFER_WORKERS, len(small))
+    print(f"  {label} 小文件并发: {len(small)} 个 (workers={workers})")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(worker, item): item for item in small}
+        for future in as_completed(futures):
+            item = futures[future]
+            try:
+                on_success(item, future.result())
+            except Exception as e:
+                on_failure(item, e)
 
 
 def _github_asset_matches_local(tag, local_path, remote_asset):
@@ -978,6 +1035,27 @@ def _github_asset_matches_local(tag, local_path, remote_asset):
         return False, "SHA256 不一致"
     finally:
         shutil.rmtree(compare_dir, ignore_errors=True)
+
+
+def _upload_github_release_asset(tag, path, report=None):
+    """Upload one asset to GitHub Release with retry and timeout."""
+    report = report or (lambda msg: print(f"  {msg}"))
+    for attempt in range(3):
+        try:
+            subprocess.run(
+                ["gh", "release", "upload", tag, str(path), "--clobber"],
+                cwd=BASE_DIR,
+                check=True,
+                timeout=TRANSFER_TIMEOUT_SECONDS,
+            )
+            return path.name
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            if attempt < 2:
+                wait = 10 * (attempt + 1)
+                report(f"[重试] {path.name} 上传失败 (attempt {attempt+1}/3), {wait}s 后重试...")
+                time.sleep(wait)
+            else:
+                raise
 
 
 def _gitee_asset_matches_local(local_path, remote_asset, owner, repo, tag, token=None):
@@ -1040,6 +1118,40 @@ def _latest_json_asset_matches_local(local_path):
     )
 
 
+def _latest_json_asset_matches_remote_asset(path_or_name, remote_asset):
+    """Use latest.json metadata to prove a remote release asset is unchanged."""
+    asset_info = _latest_json_asset_info(path_or_name)
+    if not asset_info or not remote_asset:
+        return False
+    try:
+        expected_size = int(asset_info.get("size"))
+        remote_size = int(remote_asset.get("size") or 0)
+    except (TypeError, ValueError):
+        return False
+    expected_sha = _asset_digest_sha256(asset_info)
+    remote_sha = _asset_digest_sha256(remote_asset)
+    return (
+        expected_size > 0
+        and expected_size == remote_size
+        and bool(expected_sha)
+        and expected_sha == remote_sha
+    )
+
+
+def _gitee_asset_can_reuse_github_metadata(filename, gitee_asset, github_asset):
+    """Return True when existing Gitee asset can be reused without downloading."""
+    if filename not in gitee_asset.get("name", filename):
+        return False
+    if not _latest_json_asset_matches_remote_asset(filename, github_asset):
+        return False
+    try:
+        gitee_size = int(gitee_asset.get("size") or 0)
+        github_size = int(github_asset.get("size") or 0)
+    except (TypeError, ValueError):
+        return False
+    return gitee_size > 0 and gitee_size == github_size
+
+
 def _release_asset_key(path_or_name):
     """Map release artifact filename to latest.json assets key."""
     name = Path(path_or_name).name
@@ -1084,6 +1196,26 @@ def _release_asset_metadata(extra_paths=None):
             "size": path.stat().st_size,
             "sha256": _sha256_file(path),
         }
+    return metadata
+
+
+def _release_asset_metadata_from_remote_assets(remote_assets):
+    """Build update metadata from GitHub Release asset JSON when digest is available."""
+    metadata = {}
+    for asset in remote_assets:
+        key = _release_asset_key(asset.get("name", ""))
+        if not key:
+            continue
+        sha256 = _asset_digest_sha256(asset)
+        try:
+            size = int(asset.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size > 0 and sha256:
+            metadata[key] = {
+                "size": size,
+                "sha256": sha256,
+            }
     return metadata
 
 
@@ -1228,8 +1360,12 @@ def _check_readme_release(version):
             print(f"  [OK] README.md v{version} 条目数与 CHANGELOG 一致")
 
 
+def _version_sort_key(version):
+    return tuple(int(part) for part in version.split("."))
+
+
 def _check_version_history_integrity():
-    """验证 CHANGELOG 和 README 中所有历史版本都存在。"""
+    """验证 CHANGELOG 含全部历史版本，README 只保留最近 3 个版本。"""
     # 从 Git tags 获取所有历史版本
     r = subprocess.run(
         ["git", "tag", "-l", "v*"],
@@ -1280,47 +1416,37 @@ def _check_version_history_integrity():
         if not re.search(pattern, changelog_text, re.MULTILINE) and ver not in merged_versions:
             missing_in_changelog.append(ver)
 
-    # 检查 README
+    # 报告结果
+    if missing_in_changelog:
+        print(f"[错误] CHANGELOG.md 缺少以下 {len(missing_in_changelog)} 个历史版本：")
+        for ver in sorted(missing_in_changelog, key=_version_sort_key):
+            print(f"  - v{ver}")
+        print("\n请从 Git 历史恢复这些版本的发布说明，或确认它们已被合并到其他版本。")
+        sys.exit(1)
+
+    # README 是项目主页，只保留最近 3 个版本摘要，完整历史以 CHANGELOG.md 为准。
     readme_path = BASE_DIR / "README.md"
     if not readme_path.exists():
         print("[错误] README.md 不存在")
         sys.exit(1)
 
     readme_text = readme_path.read_text(encoding="utf-8")
-
-    # 在 README 中也识别"已合并"的版本范围说明
-    readme_merged_versions = set()
-    for match in merged_pattern.finditer(readme_text):
-        start_ver = match.group(1)
-        end_ver = match.group(2)
-        start_parts = [int(x) for x in start_ver.split('.')]
-        end_parts = [int(x) for x in end_ver.split('.')]
-        if start_parts[:2] == end_parts[:2]:
-            for patch in range(start_parts[2], end_parts[2] + 1):
-                readme_merged_versions.add(f"{start_parts[0]}.{start_parts[1]}.{patch}")
-
-    missing_in_readme = []
-    for ver in versions:
-        pattern = rf"^###\s+v{re.escape(ver)}\b"
-        if not re.search(pattern, readme_text, re.MULTILINE) and ver not in readme_merged_versions:
-            missing_in_readme.append(ver)
-
-    # 报告结果
-    if missing_in_changelog:
-        print(f"[错误] CHANGELOG.md 缺少以下 {len(missing_in_changelog)} 个历史版本：")
-        for ver in sorted(missing_in_changelog, key=lambda x: [int(n) for n in x.split('.')]):
+    recent_versions = sorted(versions, key=_version_sort_key, reverse=True)[:3]
+    missing_recent_in_readme = [
+        ver for ver in recent_versions
+        if not re.search(rf"^###\s+v{re.escape(ver)}\b", readme_text, re.MULTILINE)
+    ]
+    if missing_recent_in_readme:
+        print(f"[错误] README.md 缺少最近 3 个版本中的以下版本摘要：")
+        for ver in sorted(missing_recent_in_readme, key=_version_sort_key, reverse=True):
             print(f"  - v{ver}")
-        print("\n请从 Git 历史恢复这些版本的发布说明，或确认它们已被合并到其他版本。")
+        print("\nREADME.md 只需保留最近 3 个版本；更早版本请引导用户查看 CHANGELOG.md。")
         sys.exit(1)
 
-    if missing_in_readme:
-        print(f"[错误] README.md 缺少以下 {len(missing_in_readme)} 个历史版本：")
-        for ver in sorted(missing_in_readme, key=lambda x: [int(n) for n in x.split('.')]):
-            print(f"  - v{ver}")
-        print("\n请同步 CHANGELOG.md 中这些版本的内容到 README.md。")
-        sys.exit(1)
-
-    print(f"  [OK] 版本历史完整性检查通过：CHANGELOG 和 README 均包含全部 {len(versions)} 个历史版本")
+    print(
+        f"  [OK] 版本历史完整性检查通过：CHANGELOG 含全部 {len(versions)} 个历史版本，"
+        f"README 保留最近 {len(recent_versions)} 个版本摘要"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1595,6 +1721,7 @@ def _gh_release(version, release_title, release_notes, progress=None,
 
     _sub(f'上传 {len(artifacts)} 个文件到 GitHub...')
     uploaded_names = set()
+    to_upload = []
     for f, label in artifacts:
         if f.exists():
             remote_asset = remote_assets.get(f.name)
@@ -1604,23 +1731,25 @@ def _gh_release(version, release_title, release_notes, progress=None,
                     _sub(f'[跳过] {f.name} 已一致: {reason}')
                     continue
                 _sub(f'[更新] {f.name}: {reason}')
-            for attempt in range(3):
-                try:
-                    subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
-                                   cwd=BASE_DIR, check=True, timeout=600)
-                    uploaded_names.add(f.name)
-                    _sub(f'[OK] {f.name}')
-                    break
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-                    if attempt < 2:
-                        wait = 10 * (attempt + 1)
-                        _sub(f'[重试] {f.name} 上传失败 (attempt {attempt+1}/3), {wait}s 后重试...')
-                        time.sleep(wait)
-                    else:
-                        _sub(f'[失败] {f.name} 上传失败: {e}')
-                        raise
+            to_upload.append(f)
         else:
             _sub(f'[跳过] {f.name}')
+
+    def _github_upload_success(f, name):
+        uploaded_names.add(name)
+        _sub(f'[OK] {name}')
+
+    def _github_upload_failure(f, error):
+        _sub(f'[失败] {f.name} 上传失败: {error}')
+        raise error
+
+    _run_transfer_batch(
+        to_upload,
+        "上传 GitHub Release",
+        lambda f: _upload_github_release_asset(tag, f, report=_sub),
+        _github_upload_success,
+        _github_upload_failure,
+    )
 
     changed_update_artifacts = uploaded_names & _current_platform_update_artifact_names()
     if not enable_ci_sync:
@@ -1844,7 +1973,7 @@ def _needs_local_rebuild(pyinstaller_cmd):
 
 
 def _get_github_release_assets(tag):
-    """获取 GitHub Release 上的产物列表。返回 {文件名: {size, updatedAt}} 字典。"""
+    """获取 GitHub Release 上的产物列表。返回按文件名索引的资产元数据。"""
     r = subprocess.run(
         ["gh", "release", "view", tag, "--json", "assets"],
         capture_output=True, text=True, cwd=BASE_DIR,
@@ -1855,10 +1984,7 @@ def _get_github_release_assets(tag):
         assets = json.loads(r.stdout).get("assets", [])
     except (json.JSONDecodeError, KeyError):
         return {}
-    return {
-        a["name"]: {"size": a.get("size", 0), "updatedAt": a.get("updatedAt", "")}
-        for a in assets
-    }
+    return {a["name"]: a for a in assets}
 
 
 def _delete_github_release_assets(tag, asset_names):
@@ -1921,7 +2047,7 @@ def _trigger_cross_platform_ci(tag, old_tag_commit=None):
     if IS_MAC:
         opposite_assets = ["BOSS_ResumeFilter.exe"]
     else:
-        opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
+        opposite_assets = ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
 
     # 1. 判断是否需要重建对端（按需重建）
     changed_files = _get_changed_files_since_tag(old_tag_commit)
@@ -2112,7 +2238,7 @@ def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
                     f"{api_base}/releases/{release_id}/attach_files",
                     files={"file": (filepath.name, fh)},
                     params={"access_token": token},
-                    timeout=600,
+                    timeout=TRANSFER_TIMEOUT_SECONDS,
                 )
             resp.raise_for_status()
             return filepath.name, resp.json()
@@ -2266,26 +2392,28 @@ def _gitee_upload_local(version, release_title, release_notes, release_cache=Non
                 to_upload.append(f)
             if not to_upload:
                 return
-            print(f"  {label} ({len(to_upload)} 个)...")
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                futures = {
-                    pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
-                    for f in to_upload
-                }
-                for future in as_completed(futures):
-                    f = futures[future]
-                    try:
-                        name, asset = future.result()
-                        url = asset.get("browser_download_url",
-                                        _gitee_asset_url(owner, repo, tag, name))
-                        downloads_cn[_downloads_cn_key(name)] = url
-                        print(f"  [OK] Gitee 已上传: {name}")
-                    except Exception as e:
-                        print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
-                        failed.append(f.name)
 
-        _process_and_upload(batch1, "并行上传本地产物到 Gitee")
-        _process_and_upload(batch2, "上传自动更新包")
+            def _upload_success(f, result):
+                name, asset = result
+                url = asset.get("browser_download_url",
+                                _gitee_asset_url(owner, repo, tag, name))
+                downloads_cn[_downloads_cn_key(name)] = url
+                print(f"  [OK] Gitee 已上传: {name}")
+
+            def _upload_failure(f, error):
+                print(f"  [失败] Gitee 上传失败: {f.name} ({error})")
+                failed.append(f.name)
+
+            _run_transfer_batch(
+                to_upload,
+                label,
+                lambda f: _gitee_upload_single(f, api_base, token, release_id),
+                _upload_success,
+                _upload_failure,
+            )
+
+        _process_and_upload(batch1, "上传本地产物到 Gitee")
+        _process_and_upload(batch2, "上传 macOS 安装包到 Gitee")
 
         if failed:
             print(f"\n{'!'*60}")
@@ -2330,17 +2458,22 @@ def _download_from_github_release(tag, asset_name, dest_dir):
 
     # 重试机制：下载失败时等待 5s 后重试，最多 3 次
     for attempt in range(3):
-        r = subprocess.run(
-            ["gh", "release", "download", tag, "-p", asset_name, "-D", str(dest_dir), "--clobber"],
-            capture_output=True, text=True, cwd=BASE_DIR,
-        )
-        if r.returncode == 0:
-            return dest
+        try:
+            r = subprocess.run(
+                ["gh", "release", "download", tag, "-p", asset_name, "-D", str(dest_dir), "--clobber"],
+                capture_output=True, text=True, cwd=BASE_DIR, timeout=TRANSFER_TIMEOUT_SECONDS,
+            )
+            if r.returncode == 0:
+                return dest
+            error = r.stderr.strip()
+        except subprocess.TimeoutExpired as e:
+            error = f"下载超时 ({TRANSFER_TIMEOUT_SECONDS}s)"
         if attempt < 2:
-            print(f"  [重试] 下载 {asset_name} 失败 (attempt {attempt+1}/3), 5s 后重试...")
-            time.sleep(5)
+            delay = 10 * (attempt + 1)
+            print(f"  [重试] 下载 {asset_name} 失败: {error} (attempt {attempt+1}/3), {delay}s 后重试...")
+            time.sleep(delay)
 
-    raise RuntimeError(f"gh download 失败 (3 次重试后): {r.stderr.strip()}")
+    raise RuntimeError(f"gh download 失败 (3 次重试后): {error}")
 
 
 def _wait_for_github_release_assets(tag, asset_names, max_wait=600, poll_interval=30):
@@ -2370,15 +2503,38 @@ def _collect_github_release_asset_metadata(version, existing_metadata=None):
         "macos_dmg": "BOSS_ResumeFilter.dmg",
     }
 
-    missing = [
-        name for key, name in required_assets.items()
-        if key not in metadata
-    ]
+    missing = [name for key, name in required_assets.items() if key not in metadata]
     if not missing:
         return metadata
 
+    remote_assets = _get_github_release_assets(tag)
+    if remote_assets:
+        remote_metadata = _release_asset_metadata_from_remote_assets(remote_assets.values())
+        metadata.update({
+            key: value
+            for key, value in remote_metadata.items()
+            if key not in metadata
+        })
+        missing = [name for key, name in required_assets.items() if key not in metadata]
+        if not missing:
+            print("  [OK] 已从 GitHub Release 读取对端产物完整性元数据")
+            return metadata
+
     if not _wait_for_github_release_assets(tag, missing):
         return metadata
+
+    remote_assets = _get_github_release_assets(tag)
+    if remote_assets:
+        remote_metadata = _release_asset_metadata_from_remote_assets(remote_assets.values())
+        metadata.update({
+            key: value
+            for key, value in remote_metadata.items()
+            if key not in metadata
+        })
+        missing = [name for key, name in required_assets.items() if key not in metadata]
+        if not missing:
+            print("  [OK] 已从 GitHub Release 读取对端产物完整性元数据")
+            return metadata
 
     download_dir = DIST_DIR / "_metadata_download"
     download_dir.mkdir(exist_ok=True)
@@ -2394,9 +2550,10 @@ def _collect_github_release_asset_metadata(version, existing_metadata=None):
 
 
 def _sync_gitee_from_github(version, release_title, release_notes, need_wait=False, release_cache=None):
-    """从 GitHub Release 下载对端产物，并行上传到 Gitee Release。
+    """从 GitHub Release 下载对端产物并上传到 Gitee Release。
 
     当 need_wait=True 时，先轮询等待 CI 构建完成（对端产物出现在 GitHub Release）。
+    大文件串行传输，小文件并发传输，避免网络波动时大文件互相抢带宽。
     release_cache: 可选的缓存信息（来自 _gitee_get_release_cache），避免重复 API 调用。
     返回 downloads_cn 字典，失败返回 None。
     """
@@ -2418,7 +2575,8 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
     if IS_MAC:
         opposite_assets = ["BOSS_ResumeFilter.exe"]
     else:
-        opposite_assets = ["BOSS_ResumeFilter.dmg", "BOSS_ResumeFilter_mac.zip"]
+        opposite_assets = ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
+    downloads_cn = {}
 
     if need_wait:
         print(f"  等待 CI 构建对端产物（{', '.join(opposite_assets)}）...")
@@ -2455,25 +2613,42 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
             print(f"{'!'*60}\n")
             return None
 
-    # 并行下载对端产物
+    github_assets = _get_github_release_assets(tag)
+    to_download = []
+    for name in opposite_assets:
+        if name in existing and name in github_assets:
+            if _gitee_asset_can_reuse_github_metadata(name, existing[name], github_assets[name]):
+                url = _gitee_asset_url(owner, repo, tag, name)
+                downloads_cn[_downloads_cn_key(name)] = url
+                print(f"  [跳过] Gitee 对端产物已可复用: {name} (GitHub digest 与 latest.json 一致)")
+                continue
+        to_download.append(name)
+
+    if not to_download:
+        print("  [跳过] 无需下载对端产物")
+        return downloads_cn if downloads_cn else None
+
+    # 下载对端产物：ZIP/DMG/EXE 等大文件串行，小文件才并发。
     download_dir = DIST_DIR / "_gh_download"
     download_dir.mkdir(exist_ok=True)
 
-    print(f"  并行下载对端产物...")
     downloaded = []
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {
-            pool.submit(_download_from_github_release, tag, name, download_dir): name
-            for name in opposite_assets
-        }
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                path = future.result()
-                print(f"  [OK] 已下载: {name}")
-                downloaded.append(path)
-            except Exception as e:
-                print(f"  [失败] 下载失败: {name} ({e})")
+
+    def _download_success(name, path):
+        print(f"  [OK] 已下载: {name}")
+        downloaded.append(path)
+
+    def _download_failure(name, error):
+        print(f"  [失败] 下载失败: {name} ({error})")
+
+    _run_transfer_batch(
+        to_download,
+        "下载对端产物",
+        lambda name: _download_from_github_release(tag, name, download_dir),
+        _download_success,
+        _download_failure,
+        remote_assets=github_assets,
+    )
 
     if not downloaded:
         print(f"\n  [!!]  未成功下载任何对端产物")
@@ -2485,7 +2660,6 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
 
     # 上传到 Gitee（使用缓存的 release_id 和 existing）
     try:
-        downloads_cn = {}
         failed = []
 
         def _upload_batch(files, label):
@@ -2507,23 +2681,25 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
                 to_upload.append(f)
             if not to_upload:
                 return
-            print(f"  {label} ({len(to_upload)} 个)...")
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                futures = {
-                    pool.submit(_gitee_upload_single, f, api_base, token, release_id): f
-                    for f in to_upload
-                }
-                for future in as_completed(futures):
-                    f = futures[future]
-                    try:
-                        name, asset = future.result()
-                        url = asset.get("browser_download_url",
-                                        _gitee_asset_url(owner, repo, tag, name))
-                        downloads_cn[_downloads_cn_key(name)] = url
-                        print(f"  [OK] Gitee 已上传: {name}")
-                    except Exception as e:
-                        print(f"  [失败] Gitee 上传失败: {f.name} ({e})")
-                        failed.append(f.name)
+
+            def _upload_success(f, result):
+                name, asset = result
+                url = asset.get("browser_download_url",
+                                _gitee_asset_url(owner, repo, tag, name))
+                downloads_cn[_downloads_cn_key(name)] = url
+                print(f"  [OK] Gitee 已上传: {name}")
+
+            def _upload_failure(f, error):
+                print(f"  [失败] Gitee 上传失败: {f.name} ({error})")
+                failed.append(f.name)
+
+            _run_transfer_batch(
+                to_upload,
+                label,
+                lambda f: _gitee_upload_single(f, api_base, token, release_id),
+                _upload_success,
+                _upload_failure,
+            )
 
         _upload_batch(batch1, f"上传 {len(batch1)} 个对端产物")
         _upload_batch(batch2, "上传 DMG")
@@ -2700,7 +2876,7 @@ def main():
             assets = json.loads(existing.stdout).get("assets", [])
             remote_assets = {a["name"]: a for a in assets}
 
-        uploaded_count = 0
+        to_upload = []
         for f, label in artifacts:
             if f.exists():
                 remote_asset = remote_assets.get(f.name)
@@ -2713,26 +2889,30 @@ def main():
                 else:
                     print(f"  [上传] {f.name}")
 
-                for attempt in range(3):
-                    try:
-                        subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
-                                       cwd=BASE_DIR, check=True, timeout=600)
-                        uploaded_count += 1
-                        print(f"  [OK] {f.name}")
-                        break
-                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-                        if attempt < 2:
-                            wait = 10 * (attempt + 1)
-                            print(f"  [重试] {f.name} 上传失败 (attempt {attempt+1}/3), {wait}s 后重试...")
-                            time.sleep(wait)
-                        else:
-                            print(f"  [失败] {f.name} 上传失败: {e}")
-                            raise
+                to_upload.append(f)
             else:
                 print(f"  [跳过] {f.name} 不存在")
 
-        if uploaded_count > 0:
-            print(f"\n  [OK] 已上传 {uploaded_count} 个文件到 GitHub Release {tag}")
+        uploaded_names = []
+
+        def _github_upload_success(f, name):
+            uploaded_names.append(name)
+            print(f"  [OK] {name}")
+
+        def _github_upload_failure(f, error):
+            print(f"  [失败] {f.name} 上传失败: {error}")
+            raise error
+
+        _run_transfer_batch(
+            to_upload,
+            "上传 GitHub Release",
+            lambda f: _upload_github_release_asset(tag, f),
+            _github_upload_success,
+            _github_upload_failure,
+        )
+
+        if uploaded_names:
+            print(f"\n  [OK] 已上传 {len(uploaded_names)} 个文件到 GitHub Release {tag}")
             print(f"  查看 Release: https://github.com/yaoyouzhong/boss-resume-filter/releases/tag/{tag}")
         else:
             print(f"\n  [跳过] 没有需要上传的文件")
@@ -2976,3 +3156,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
