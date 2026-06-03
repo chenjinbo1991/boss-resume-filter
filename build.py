@@ -2226,6 +2226,15 @@ def _gitee_fetch_assets(api_base, token, release_id, retry_fn=None):
     }
 
 
+def _format_size(size_bytes):
+    """格式化字节数，供发布日志展示。"""
+    size = float(size_bytes or 0)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+
+
 def _gitee_fetch_releases(api_base, token):
     """获取 Gitee Release 列表，返回所有分页结果。"""
     session = _gitee_session()
