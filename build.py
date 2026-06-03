@@ -979,12 +979,24 @@ def _is_large_transfer_item(item, remote_assets=None):
 
 
 def _run_transfer_batch(items, label, worker, on_success, on_failure, remote_assets=None):
-    """Run large transfers serially and small transfers concurrently."""
+    """Run small transfers concurrently before serial large transfers."""
     if not items:
         return
 
     large = [item for item in items if _is_large_transfer_item(item, remote_assets)]
     small = [item for item in items if item not in large]
+
+    if small:
+        workers = min(SMALL_TRANSFER_WORKERS, len(small))
+        print(f"  {label} 小文件并发: {len(small)} 个 (workers={workers})")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(worker, item): item for item in small}
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    on_success(item, future.result())
+                except Exception as e:
+                    on_failure(item, e)
 
     for item in large:
         name = _transfer_item_name(item)
@@ -993,20 +1005,6 @@ def _run_transfer_batch(items, label, worker, on_success, on_failure, remote_ass
             on_success(item, worker(item))
         except Exception as e:
             on_failure(item, e)
-
-    if not small:
-        return
-
-    workers = min(SMALL_TRANSFER_WORKERS, len(small))
-    print(f"  {label} 小文件并发: {len(small)} 个 (workers={workers})")
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(worker, item): item for item in small}
-        for future in as_completed(futures):
-            item = futures[future]
-            try:
-                on_success(item, future.result())
-            except Exception as e:
-                on_failure(item, e)
 
 
 def _github_asset_matches_local(tag, local_path, remote_asset):

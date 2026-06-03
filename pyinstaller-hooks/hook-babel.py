@@ -9,8 +9,6 @@ tkcalendar 只用 babel.dates 的日期格式化，实际运行只需要：
 不收集全部 1086 个 locale .dat 文件，减少约 10MB 体积。
 """
 from PyInstaller.utils.hooks import collect_data_files
-import sys
 
 # 排除整个 locale-data 目录，由 build.py 按需添加特定语言
 datas = collect_data_files('babel', excludes=['locale-data'])
-print(f"[hook-babel] Collected {len(datas)} data files (excluding locale-data)", file=sys.stderr)
