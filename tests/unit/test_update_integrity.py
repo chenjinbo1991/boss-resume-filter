@@ -338,6 +338,78 @@ def test_sync_gitee_from_github_skips_download_when_remote_assets_are_reusable()
     }
 
 
+def test_sync_gitee_from_github_refreshes_stale_release_cache_before_upload():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (tmp_path / "latest.json").write_text(
+            json.dumps({
+                "assets": {
+                    "macos": {"size": 222, "sha256": "b" * 64},
+                    "macos_dmg": {"size": 333, "sha256": "c" * 64},
+                }
+            }),
+            encoding="utf-8",
+        )
+        release_cache = {
+            "token": "token",
+            "owner": "owner",
+            "repo": "repo",
+            "tag": "v9.9.9",
+            "api_base": "https://gitee.example/api",
+            "release_id": 1,
+            "existing": {},
+        }
+
+        original_fetch_assets = build._gitee_fetch_assets
+        original_get_assets = build._get_github_release_assets
+        original_download = build._download_from_github_release
+        original_upload = build._gitee_upload_single
+        try:
+            build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: {
+                "BOSS_ResumeFilter_mac.zip": {"id": 1, "size": 222},
+                "BOSS_ResumeFilter.dmg": {"id": 2, "size": 333},
+            }
+            build._get_github_release_assets = lambda tag: {
+                "BOSS_ResumeFilter_mac.zip": {
+                    "name": "BOSS_ResumeFilter_mac.zip",
+                    "size": 222,
+                    "digest": "sha256:" + "b" * 64,
+                },
+                "BOSS_ResumeFilter.dmg": {
+                    "name": "BOSS_ResumeFilter.dmg",
+                    "size": 333,
+                    "digest": "sha256:" + "c" * 64,
+                },
+            }
+            build._download_from_github_release = lambda tag, name, dest: (_ for _ in ()).throw(
+                AssertionError("fresh Gitee assets should avoid GitHub downloads")
+            )
+            build._gitee_upload_single = lambda path, api_base, token, release_id: (_ for _ in ()).throw(
+                AssertionError("fresh Gitee assets should avoid duplicate uploads")
+            )
+
+            with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+                downloads_cn = build._sync_gitee_from_github(
+                    "9.9.9", "title", "notes", need_wait=False, release_cache=release_cache
+                )
+        finally:
+            build._gitee_fetch_assets = original_fetch_assets
+            build._get_github_release_assets = original_get_assets
+            build._download_from_github_release = original_download
+            build._gitee_upload_single = original_upload
+
+    assert release_cache["existing"] == {
+        "BOSS_ResumeFilter_mac.zip": {"id": 1, "size": 222},
+        "BOSS_ResumeFilter.dmg": {"id": 2, "size": 333},
+    }
+    assert downloads_cn == {
+        "macos": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter_mac.zip",
+        "macos_dmg": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter.dmg",
+    }
+
+
 def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
