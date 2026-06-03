@@ -4129,23 +4129,23 @@ class BossFilterGUI:
             },
             "minimax": {
                 "base_url": "https://api.minimaxi.com/v1",
-                "model": "MiniMax-M2.5"
+                "model": "MiniMax-M3"
             },
             "xiaomi": {
                 "base_url": "https://api.ai.xiaomi.com/v1",
-                "model": "mi-deep-thinking"
+                "model": "mimo-v2.5-pro"
             },
             "stepfun": {
                 "base_url": "https://api.stepfun.com/v1",
-                "model": "step-2-mini"
+                "model": "step-3.7-flash"
             },
             "openai": {
                 "base_url": "https://api.openai.com/v1",
-                "model": "gpt-4o"
+                "model": "GPT-5.5"
             },
             "anthropic": {
                 "base_url": "https://api.anthropic.com/v1",
-                "model": "claude-sonnet-4-5"
+                "model": "claude-sonnet4.8"
             },
             "custom": {
                 "base_url": "",
