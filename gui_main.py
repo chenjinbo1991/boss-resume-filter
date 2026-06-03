@@ -1268,47 +1268,11 @@ class BossFilterGUI:
         btn_add._icon_ref = icon_plus_small
         btn_add.pack(side="right", padx=int(8 * self.dpi_scale * self.zoom_factor))
 
-        # "点此新增岗位" 提示标签（忽隐忽现动画）
+        # "点此新增岗位→" 提示标签（呼吸动画，与三处新提示风格一致）
         self.btn_add_hint = ttk.Label(select_frame, text="点此新增岗位→", foreground=self.colors['success'],
                                        background=self.colors['bg_card'], font=self.font_label)
         self.btn_add_hint.pack(side="right", padx=int(4 * self.dpi_scale * self.zoom_factor))
-
-        # 忽隐忽现动画（颜色渐变模拟透明度）
-
-        def hex_to_rgb(h):
-            h = h.lstrip('#')
-            return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-
-        def rgb_to_hex(r, g, b):
-            return f'#{int(r):02x}{int(g):02x}{int(b):02x}'
-
-        def _fade_hint(step=[0]):
-            if not hasattr(self, 'btn_add_hint') or not self.btn_add_hint.winfo_exists():
-                return
-
-            try:
-                # 解析颜色
-                target_rgb = hex_to_rgb(self.colors['success'])
-                bg_rgb = hex_to_rgb(self.colors['bg_card'])
-
-                # 使用正弦函数实现平滑渐变 (0-1 之间)
-                # step 从 0 到 59，对应一个完整的呼吸周期
-                phase = step[0] / 60.0 * 2 * math.pi  # 0 到 2π
-                alpha = 0.15 + 0.85 * (0.5 + 0.5 * math.sin(phase))  # 0.15 到 1.0 之间
-
-                # 颜色插值
-                r = target_rgb[0] * alpha + bg_rgb[0] * (1 - alpha)
-                g = target_rgb[1] * alpha + bg_rgb[1] * (1 - alpha)
-                b = target_rgb[2] * alpha + bg_rgb[2] * (1 - alpha)
-
-                self.btn_add_hint.config(foreground=rgb_to_hex(r, g, b))
-
-                step[0] = (step[0] + 1) % 60
-                self.root.after(50, _fade_hint)  # 50ms 一帧，约 3 秒一个周期
-            except tk.TclError:
-                pass
-
-        _fade_hint()
+        self._start_breathing(self.btn_add_hint, color_key='success', bg_key='bg_card')
         # 下拉框
         self.config_job_combo = ttk.Combobox(select_frame, values=list(self.job_rules.keys()), width=28, font=self.font_label)
         self.config_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
@@ -1320,7 +1284,7 @@ class BossFilterGUI:
         # 默认隐藏，add_job 时显示
 
         self._job_step_labels: list[ttk.Label] = []
-        _step_texts = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"]
+        _step_texts = ["① 填入需求", "② 解析需求", "③ 检查结果", "④ 保存配置"]
         _step_font = (FONT_FAMILY, int(12 * self.font_scale))
 
         # 标题行
@@ -1352,7 +1316,8 @@ class BossFilterGUI:
             fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
 
         # 需求输入框
-        req_header = ttk.Frame(parse_frame, style='TFrame')
+        self._req_header_frame = ttk.Frame(parse_frame, style='TFrame')
+        req_header = self._req_header_frame
         req_header.pack(fill="x", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
         ttk.Label(req_header, text="粘贴招聘需求文档:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
@@ -1361,6 +1326,13 @@ class BossFilterGUI:
         self.requirement_template_btn._icon_ref = icon_clipboard
         self.requirement_template_btn.pack(side="right")
         self.requirement_template_btn.state(['disabled'])
+        # "点击查看需求示例->" 提示标签（新建岗位时显示）
+        self.requirement_hint_label = ttk.Label(
+            req_header, text="点击查看需求示例->", font=self.font_label,
+            foreground=self.colors['success'], background=self.colors['bg_card'])
+        self.requirement_hint_label.pack(side="right", padx=(0, int(4 * self.dpi_scale * self.zoom_factor)))
+        self.requirement_hint_label.bind("<Button-1>", lambda e: self._insert_requirement_template())
+        self.requirement_hint_label.destroy()  # 初始隐藏（show 时重建）
 
         # 需求输入框 - 白底 + focus蓝边框 + 占位提示
         text_container = ttk.Frame(parse_frame, style='TFrame')
@@ -1400,6 +1372,11 @@ class BossFilterGUI:
 
         self.requirement_text.bind('<FocusIn>', _req_focus_in)
         self.requirement_text.bind('<FocusOut>', _req_focus_out)
+        # 粘贴后显示"点击解析"提示
+        def _on_paste(event):
+            self._hide_requirement_hint()
+            self._show_parse_hint()
+        self.requirement_text.bind('<<Paste>>', _on_paste, add='+')
 
         # Text 控件 Enter/Leave 绑定，防止页面滚动干扰 Text 自身滚动
         self.requirement_text.bind('<Enter>', lambda e: setattr(self, '_over_text_widget', True))
@@ -1408,12 +1385,19 @@ class BossFilterGUI:
         self.bind_text_context_menu(self.requirement_text)
 
         # 解析按钮
-        parse_btn_frame = ttk.Frame(parse_frame, style='TFrame')
+        self._parse_btn_frame = ttk.Frame(parse_frame, style='TFrame')
+        parse_btn_frame = self._parse_btn_frame
         parse_btn_frame.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
         icon_search_parse = self.icons.button('search', self.colors['text_primary'])
-        btn_parse = ttk.Button(parse_btn_frame, image=icon_search_parse, text=" 解析需求文档", compound=tk.LEFT, command=self.parse_requirement)
+        btn_parse = ttk.Button(parse_btn_frame, image=icon_search_parse, text=" 解析招聘需求", compound=tk.LEFT, command=self.parse_requirement)
         btn_parse._icon_ref = icon_search_parse
         btn_parse.pack(side="left")
+        # "<-点击解析招聘需求" 提示标签（粘贴或填入模板后显示）
+        self.parse_hint_label = ttk.Label(
+            parse_btn_frame, text="<-点击解析招聘需求", font=self.font_label,
+            foreground=self.colors['success'], background=self.colors['bg_card'])
+        self.parse_hint_label.pack(side="left", padx=(int(8 * self.dpi_scale * self.zoom_factor), 0))
+        self.parse_hint_label.destroy()  # 初始隐藏（show 时重建）
 
         # 解析结果展示
         self.parse_result_label = ttk.Label(parse_frame, text="", font=self.font_label,
@@ -1663,13 +1647,20 @@ class BossFilterGUI:
 
         # 按钮行（居中布局，固定在页面底部，不随 Canvas 滚动）
         self.btn_frame = ttk.Frame(self.config_page, style='Page.TFrame')
-        btn_inner = ttk.Frame(self.btn_frame, style='Page.TFrame')
+        self._btn_inner = ttk.Frame(self.btn_frame, style='Page.TFrame')
+        btn_inner = self._btn_inner
         btn_inner.pack(anchor="center")
 
+        # "点击保存配置->" 提示标签（解析成功后显示，位于保存按钮左侧）
+        self.save_hint_label = ttk.Label(btn_inner, text="点击保存配置->", font=self.font_label,
+                                          foreground=self.colors['success'], background=self.colors['bg_main'])
+        self.save_hint_label.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        self.save_hint_label.destroy()  # 初始隐藏（show 时重建）
+
         icon_save_cfg = self.icons.button('save', self.colors['text_primary'])
-        btn_save = ttk.Button(btn_inner, image=icon_save_cfg, text=" 保存配置", compound=tk.LEFT, command=self.save_current_job)
-        btn_save._icon_ref = icon_save_cfg
-        btn_save.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        self.btn_save = ttk.Button(btn_inner, image=icon_save_cfg, text=" 保存配置", compound=tk.LEFT, command=self.save_current_job)
+        self.btn_save._icon_ref = icon_save_cfg
+        self.btn_save.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
         icon_refresh_cfg = self.icons.button('refresh', self.colors['text_primary'])
         btn_reset = ttk.Button(btn_inner, image=icon_refresh_cfg, text=" 重置", compound=tk.LEFT, command=self.reset_job_form)
         btn_reset._icon_ref = icon_refresh_cfg
@@ -5028,9 +5019,18 @@ class BossFilterGUI:
             rule = self.job_rules[job_name]
             self.load_job_to_form(rule)
             self.requirement_template_btn.state(['disabled'])
+            self._hide_requirement_hint()
+            self._hide_parse_hint()
+            self._hide_save_hint()
+            self._show_btn_add_hint()  # 切换到已有岗位时重新显示"点此新增岗位→"提示
             self._hide_job_step_bar()
             # 显示详细结果区域
             self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+        else:
+            # 岗位未选中时也隐藏提示
+            self._hide_requirement_hint()
+            self._hide_parse_hint()
+            self._hide_save_hint()
 
     def load_job_to_form(self, rule):
         """将岗位配置加载到表单（包含话术模板）"""
@@ -5305,6 +5305,94 @@ class BossFilterGUI:
             pass
         return start_str, end_str
 
+    def _start_breathing(self, label, color_key='success', bg_key='bg_card'):
+        """启动呼吸渐变动画（与 btn_add_hint 风格一致）"""
+        def hex_to_rgb(h):
+            h = h.lstrip('#')
+            return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+        def rgb_to_hex(r, g, b):
+            return f'#{int(r):02x}{int(g):02x}{int(b):02x}'
+
+        color_rgb = hex_to_rgb(self.colors[color_key])
+        bg_rgb = hex_to_rgb(self.colors[bg_key])
+
+        def _fade(label=label, color=color_rgb, bg=bg_rgb, step=[0]):
+            if not label.winfo_exists():
+                return
+            try:
+                phase = step[0] / 60.0 * 2 * math.pi
+                alpha = 0.15 + 0.85 * (0.5 + 0.5 * math.sin(phase))
+                r = color[0] * alpha + bg[0] * (1 - alpha)
+                g = color[1] * alpha + bg[1] * (1 - alpha)
+                b = color[2] * alpha + bg[2] * (1 - alpha)
+                label.config(foreground=rgb_to_hex(r, g, b))
+                step[0] = (step[0] + 1) % 60
+                self.root.after(50, _fade)
+            except tk.TclError:
+                pass
+
+        _fade()
+
+    def _show_requirement_hint(self):
+        """显示「点击查看需求示例->」提示标签（重建控件并启动呼吸动画）"""
+        self.requirement_hint_label = ttk.Label(
+            self._req_header_frame, text="点击查看需求示例->", font=self.font_label,
+            foreground=self.colors['success'], background=self.colors['bg_card'])
+        self.requirement_hint_label.pack(side="right", padx=(0, int(4 * self.dpi_scale * self.zoom_factor)))
+        self.requirement_hint_label.bind("<Button-1>", lambda e: self._insert_requirement_template())
+        self._start_breathing(self.requirement_hint_label, color_key='success', bg_key='bg_card')
+
+    def _hide_requirement_hint(self):
+        """隐藏「点击查看需求示例->」提示标签"""
+        if hasattr(self, 'requirement_hint_label') and self.requirement_hint_label.winfo_exists():
+            self.requirement_hint_label.destroy()
+
+    def _show_btn_add_hint(self):
+        """显示「点此新增岗位→」提示标签（重建控件并启动呼吸动画）"""
+        if hasattr(self, 'btn_add_hint') and self.btn_add_hint.winfo_exists():
+            return  # 已显示，不重复创建
+        self.btn_add_hint = ttk.Label(
+            self._config_select_frame, text="点此新增岗位→", font=self.font_label,
+            foreground=self.colors['success'], background=self.colors['bg_card'])
+        self.btn_add_hint.pack(side="right", padx=int(4 * self.dpi_scale * self.zoom_factor))
+        self._start_breathing(self.btn_add_hint, color_key='success', bg_key='bg_card')
+
+    def _hide_btn_add_hint(self):
+        """隐藏「点此新增岗位→」提示标签"""
+        if hasattr(self, 'btn_add_hint') and self.btn_add_hint.winfo_exists():
+            self.btn_add_hint.destroy()
+
+    def _show_parse_hint(self):
+        """显示「<-点击解析招聘需求」提示标签（重建控件并启动呼吸动画）"""
+        self.parse_hint_label = ttk.Label(
+            self._parse_btn_frame, text="<-点击解析招聘需求", font=self.font_label,
+            foreground=self.colors['success'], background=self.colors['bg_card'])
+        self.parse_hint_label.pack(side="left", padx=(int(8 * self.dpi_scale * self.zoom_factor), 0))
+        self._start_breathing(self.parse_hint_label, color_key='success', bg_key='bg_card')
+
+    def _hide_parse_hint(self):
+        """隐藏「<-点击解析招聘需求」提示标签"""
+        if hasattr(self, 'parse_hint_label') and self.parse_hint_label.winfo_exists():
+            self.parse_hint_label.destroy()
+
+    def _show_save_hint(self):
+        """显示「点击保存配置->」提示标签（重建控件并启动呼吸动画）"""
+        if hasattr(self, 'save_hint_label') and self.save_hint_label.winfo_exists():
+            return  # 已显示，不重复创建
+        self.save_hint_label = ttk.Label(
+            self._btn_inner, text="点击保存配置->", font=self.font_label,
+            foreground=self.colors['success'], background=self.colors['bg_main'])
+        self.save_hint_label.pack(side="left", before=self.btn_save,
+                                  padx=int(5 * self.dpi_scale * self.zoom_factor))
+        self.save_hint_label.bind("<Button-1>", lambda e: self.save_current_job())
+        self._start_breathing(self.save_hint_label, color_key='success', bg_key='bg_main')
+
+    def _hide_save_hint(self):
+        """隐藏「点击保存配置->」提示标签"""
+        if hasattr(self, 'save_hint_label') and self.save_hint_label.winfo_exists():
+            self.save_hint_label.destroy()
+
     def _insert_requirement_template(self):
         """插入招聘需求模板到输入框（模板文本从 job_config.json 读取）"""
         try:
@@ -5320,6 +5408,8 @@ class BossFilterGUI:
         self.requirement_text.tag_remove("placeholder", "1.0", tk.END)
         self._req_placeholder_active = False
         self.requirement_text.insert("1.0", template)
+        self._hide_requirement_hint()
+        self._show_parse_hint()
         # 步骤推进：填入需求 → 解析文档
         if self._job_step_active >= 0:
             self._update_job_step(1)
@@ -5332,6 +5422,7 @@ class BossFilterGUI:
 
     def parse_requirement(self):
         """解析需求文档"""
+        self._hide_parse_hint()
         requirement_text = self._get_requirement_text()
         if not requirement_text:
             messagebox.showwarning("警告", "请输入招聘需求文档内容")
@@ -5412,7 +5503,15 @@ class BossFilterGUI:
             parsed_edu = job_config.get("edu", "本科")
             parsed_location = job_config.get("work_location", "")
             loc_part = f"，地点={parsed_location}" if parsed_location else ""
-            summary_base = f"岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}{loc_part}, 技能={skills_count}个，必要条件={required_count}条"
+            if salary_min is not None and salary_max is not None:
+                salary_part = f"，薪资={salary_min}-{salary_max}K"
+            elif salary_min is not None:
+                salary_part = f"，薪资≥{salary_min}K"
+            elif salary_max is not None:
+                salary_part = f"，薪资≤{salary_max}K"
+            else:
+                salary_part = ""
+            summary_base = f"岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}{loc_part}{salary_part}, 技能={skills_count}个，必要条件={required_count}条"
 
             # 关键字不足警告
             if skills_count == 0:
@@ -5455,6 +5554,9 @@ class BossFilterGUI:
             if self._job_step_active >= 0:
                 self._update_job_step(2)
                 self._bind_job_step_advance()
+            else:
+                # 非新建流程，直接显示保存提示
+                self._show_save_hint()
 
         except Exception as e:
             messagebox.showerror("解析失败", f"解析需求文档时出错：{e}")
@@ -5476,16 +5578,16 @@ class BossFilterGUI:
         for i, lbl in enumerate(self._job_step_labels):
             if i < active_step:
                 # 已完成：绿色 ✓
-                original = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"][i]
+                original = ["① 填入需求", "② 解析需求", "③ 检查结果", "④ 保存配置"][i]
                 done_text = f"✓ {original[2:]}"  # 去掉数字圆圈，加 ✓
                 lbl.config(text=done_text, foreground=self.colors['success'])
             elif i == active_step:
                 # 当前步骤：蓝色加粗效果
-                original = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"][i]
+                original = ["① 填入需求", "② 解析需求", "③ 检查结果", "④ 保存配置"][i]
                 lbl.config(text=original, foreground=self.colors['primary'])
             else:
                 # 未到：灰色
-                original = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"][i]
+                original = ["① 填入需求", "② 解析需求", "③ 检查结果", "④ 保存配置"][i]
                 lbl.config(text=original, foreground=self.colors['text_muted'])
 
     def _hide_job_step_bar(self):
@@ -5518,6 +5620,7 @@ class BossFilterGUI:
             if self._job_step_active == 2 and float(bottom) >= 0.95:
                 self._job_step_edit_done = True
                 self._update_job_step(3)
+                self._show_save_hint()
 
         self.config_canvas.configure(yscrollcommand=_wrapped_yscroll)
 
@@ -5527,11 +5630,9 @@ class BossFilterGUI:
         self.job_name_var.set("新岗位")
         self.config_job_combo.set("")  # 清空岗位选择
         self.requirement_template_btn.state(['!disabled'])
+        self._show_requirement_hint()
+        self._hide_btn_add_hint()  # 新建时隐藏"点此新增岗位→"提示
         self._update_job_step(0)  # 步骤1：填入需求
-
-        # 隐藏"点此新建"提示
-        if hasattr(self, 'btn_add_hint') and self.btn_add_hint.winfo_exists():
-            self.btn_add_hint.destroy()
 
     def delete_job(self):
         """删除岗位"""
@@ -5547,6 +5648,7 @@ class BossFilterGUI:
 
     def save_current_job(self):
         """保存当前岗位配置"""
+        self._hide_save_hint()
         job_name = self.job_name_var.get().strip()
         if not job_name:
             messagebox.showwarning("警告", "岗位名称不能为空")
@@ -5613,12 +5715,13 @@ class BossFilterGUI:
         self.config_job_combo.set(normalized_job_name)
         # 步骤完成：先显示全绿，800ms 后隐藏引导条
         if self._job_step_active >= 0:
-            _step_texts = ["① 填入需求", "② 解析文档", "③ 检查结果", "④ 保存配置"]
+            _step_texts = ["① 填入需求", "② 解析需求", "③ 检查结果", "④ 保存配置"]
             for i, lbl in enumerate(self._job_step_labels):
                 lbl.config(text=f"✓ {_step_texts[i][2:]}", foreground=self.colors['success'])
             self.root.after(800, self._hide_job_step_bar)
         else:
             self._hide_job_step_bar()
+        self._show_btn_add_hint()
         messagebox.showinfo("成功", "岗位配置已保存")
 
     def reset_job_form(self):
@@ -5639,6 +5742,9 @@ class BossFilterGUI:
         self.requirement_text.insert("1.0", self._req_placeholder_text, "placeholder")
         self._req_placeholder_active = True
         self.parse_result_label.config(text="")
+        self._hide_requirement_hint()
+        self._hide_parse_hint()
+        self._hide_save_hint()
 
     def load_config_dialog(self):
         """打开配置对话框"""
