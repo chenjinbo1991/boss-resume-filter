@@ -38,6 +38,7 @@ boss-resume-filter/
 ├── tests/                # 测试脚本目录
 ├── scripts/              # 辅助脚本目录
 │   └── watch_progress.py # 发布进度监控脚本（轮询 .build_progress.json）
+├── pyinstaller-hooks/    # PyInstaller 自定义 hook（控制模块收集范围，减小产物体积）
 └── .build_progress.json  # 发布进度文件（build.py 实时更新，供外部监控）
 ```
 
@@ -91,6 +92,13 @@ boss-resume-filter/
 - 新增/修改 `requirements.txt` 依赖时同步更新 `build.py:REQUIRED_IMPORTS`；`build.py` 显式收集 Tk 运行库防 `No module named 'tkinter'`
 - Release 模式只自动提交 `--version` 引起的版本号变化，其他变更须先手工提交
 - 推送前 `input()` 确认 [y/N]；tag 冲突时自动 `--force`（master 除外）
+
+#### 打包体积优化（44MB → 32MB）
+
+- **PIL**：精确 `--hidden-import` 仅收集 Image/ImageDraw/ImageTk，排除 `_avif`/`_webp`
+- **babel locale-data**：自定义 hook（`pyinstaller-hooks/hook-babel.py`）排除全部 1086 个 locale .dat，按需添加 9 个（zh/en 系列）
+- **排除模块**：`--exclude-module=numpy`（项目只用 pandas）、`sqlite3`、`scipy`、`lxml.objectify`/`lxml.html`
+- 修改 build.py 时注意保持上述优化，避免体积回退
 
 ## 代码规范
 
