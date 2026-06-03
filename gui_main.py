@@ -4154,7 +4154,7 @@ class BossFilterGUI:
                 "model": "glm-5.1"
             },
             "minimax": {
-                "base_url": "https://api.minimax.chat/v1",
+                "base_url": "https://api.minimaxi.com/v1",
                 "model": "MiniMax-M3"
             },
             "xiaomi": {
