@@ -3139,6 +3139,7 @@ def main():
         # 项目不直接用 sqlite3/numpy，都是 pandas/openpyxl 的传递依赖
         '--exclude-module=sqlite3',
         '--exclude-module=numpy',
+        '--exclude-module=numpy.libs',
         # lxml 只用 etree，不用 objectify/html
         '--exclude-module=lxml.objectify',
         '--exclude-module=lxml.html',
