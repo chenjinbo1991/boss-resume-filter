@@ -3136,6 +3136,12 @@ def main():
         '--exclude-module=IPython',
         '--exclude-module=pytest',
         '--exclude-module=notebook',
+        # 项目不直接用 sqlite3/numpy，都是 pandas/openpyxl 的传递依赖
+        '--exclude-module=sqlite3',
+        '--exclude-module=numpy',
+        # lxml 只用 etree，不用 objectify/html
+        '--exclude-module=lxml.objectify',
+        '--exclude-module=lxml.html',
         str(BASE_DIR / "gui_main.py")
     ]
 
