@@ -2427,8 +2427,23 @@ class BossFilterGUI:
                                     values=["不打招呼（仅筛选）", "仅强烈推荐", "强烈推荐 + 推荐"],
                                     width=20, state="readonly", font=self.font_label)
         greet_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        ttk.Label(row2, text="(自动打招呼的推荐等级)", font=(FONT_FAMILY, int(11 * self.font_scale)),
-                 foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+        # 动态备注：根据选择的打招呼等级实时变化
+        self._greet_note_label = ttk.Label(row2, text="",
+                 font=(FONT_FAMILY, int(11 * self.font_scale)),
+                 foreground=self.colors['text_muted'], background=self.colors['bg_card'])
+        self._greet_note_label.pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
+
+        def _update_greet_note(*_):
+            level = self.greet_level_var.get()
+            if level == "不打招呼（仅筛选）":
+                self._greet_note_label.config(text="不自动打招呼")
+            elif level == "仅强烈推荐":
+                self._greet_note_label.config(text=f"给评分≥{SCORE_THRESHOLD_STRONG}分的候选人打招呼")
+            else:
+                self._greet_note_label.config(text=f"给评分≥{SCORE_THRESHOLD_RECOMMEND}分的候选人打招呼")
+
+        _update_greet_note()
+        greet_combo.bind("<<ComboboxSelected>>", _update_greet_note)
 
         # AI 辅助评估开关
         row_ai = ttk.Frame(param_frame, style='TFrame')
