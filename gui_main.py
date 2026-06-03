@@ -2261,7 +2261,8 @@ class BossFilterGUI:
         provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
         self.api_provider_var.set(provider_display)
         # API Key 从 keyring 读取（api_config.json 不含明文）
-        saved_key = get_api_key(provider_key)
+        _base_url = self.api_config.get("base_url", "")
+        saved_key = get_api_key(provider_key, _base_url)
         self.api_key_var.set(saved_key if saved_key else "")
         self.api_base_url_var.set(self.api_config.get("base_url", ""))
         self.api_model_var.set(self.api_config.get("model", ""))
@@ -3752,7 +3753,7 @@ class BossFilterGUI:
                     # 从 keyring 读取当前服务商的 API Key
                     current_provider = self.api_config.get("api_provider", "")
                     if current_provider:
-                        encrypted_key = get_api_key(current_provider)
+                        encrypted_key = get_api_key(current_provider, self.api_config.get("base_url", ""))
                         if encrypted_key:
                             self.api_config["api_key"] = encrypted_key
 
@@ -3767,7 +3768,7 @@ class BossFilterGUI:
                         has_missing_key = False
                         for m in self.api_config["saved_models"]:
                             provider = m.get("api_provider", "")
-                            if provider and not get_api_key(provider):
+                            if provider and not get_api_key(provider, m.get("base_url", "")):
                                 has_missing_key = True
                                 break
                         if has_missing_key:
@@ -3884,7 +3885,8 @@ class BossFilterGUI:
 
         if model_config:
             # 从系统钥匙串读取该服务商的 API Key
-            saved_api_key = get_api_key(provider_key)
+            _model_base_url = model_config.get("base_url", "")
+            saved_api_key = get_api_key(provider_key, _model_base_url)
 
             if not saved_api_key:
                 messagebox.showwarning("警告",
@@ -3948,7 +3950,7 @@ class BossFilterGUI:
             return
 
         base_url = model_config.get("base_url", "").strip()
-        api_key = get_api_key(provider_key)
+        api_key = get_api_key(provider_key, base_url)
         if not api_key:
             messagebox.showwarning("警告",
                 f"模型 '{model_name}' 的 API Key 未在系统钥匙串中找到\n\n"
@@ -4048,8 +4050,8 @@ class BossFilterGUI:
                 messagebox.showwarning("警告", "请输入 Base URL")
                 return
 
-            # 按服务商统一存储 API Key（同一服务商的所有模型共享一个 Key）
-            save_api_key(provider, api_key)
+            # 按服务商 + Base URL 组合存储 API Key（区分同一服务商的不同接入方式）
+            save_api_key(provider, api_key, base_url)
 
             # 构建当前配置
             self.api_config = {
@@ -4156,25 +4158,29 @@ class BossFilterGUI:
         # 优先从已保存模型中读取该服务商最近使用的配置
         current_provider = self.api_config.get("api_provider", "") if hasattr(self, 'api_config') and self.api_config else ""
         saved_models = getattr(self, 'saved_models', [])
+        resolved_base_url = ""
 
         if current_provider == provider:
             # 正在使用这个服务商，显示当前使用的模型配置
-            self.api_base_url_var.set(self.api_config.get("base_url", ""))
+            resolved_base_url = self.api_config.get("base_url", "")
+            self.api_base_url_var.set(resolved_base_url)
             self.api_model_var.set(self.api_config.get("model", ""))
         else:
             # 不是当前服务商，从已保存模型中找该服务商最近使用的配置
             provider_saved = [m for m in saved_models if m.get("api_provider") == provider]
             if provider_saved:
                 last_config = provider_saved[-1]
-                self.api_base_url_var.set(last_config.get("base_url", ""))
+                resolved_base_url = last_config.get("base_url", "")
+                self.api_base_url_var.set(resolved_base_url)
                 self.api_model_var.set(last_config.get("model", ""))
             elif provider in provider_defaults:
                 config = provider_defaults[provider]
-                self.api_base_url_var.set(config["base_url"])
+                resolved_base_url = config["base_url"]
+                self.api_base_url_var.set(resolved_base_url)
                 self.api_model_var.set(config["model"])
 
         # 切换服务商时，从 keyring 读取该服务商的 API Key，没有则清空
-        saved_key = get_api_key(provider)
+        saved_key = get_api_key(provider, resolved_base_url)
         self.api_key_var.set(saved_key if saved_key else "")
 
     _model_dialog = None  # 防止重复打开模型列表对话框
@@ -4471,8 +4477,8 @@ class BossFilterGUI:
 
                                 # 获取 API Key 和 Base URL
                                 provider_key = self.DISPLAY_TO_KEY.get(provider, provider)
-                                test_api_key = get_api_key(provider_key)
                                 test_base_url = self.api_base_url_var.get().strip()
+                                test_api_key = get_api_key(provider_key, test_base_url)
 
                                 if not test_api_key:
                                     messagebox.showwarning("警告",
@@ -6624,7 +6630,7 @@ class BossFilterGUI:
                 try:
                     ai_api_config = self.api_config
                     from security import get_api_key
-                    ai_api_key = get_api_key(self.api_config.get('api_provider', ''))
+                    ai_api_key = get_api_key(self.api_config.get('api_provider', ''), self.api_config.get('base_url', ''))
                     if not ai_api_key:
                         self.append_log("AI 评估需要 API Key，但未配置，将跳过")
                         ai_eval_enabled = False

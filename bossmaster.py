@@ -1674,7 +1674,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
             with open('api_config.json', 'r', encoding='utf-8') as f:
                 ai_api_config = json.load(f)
             from security import get_api_key
-            ai_api_key = get_api_key(ai_api_config.get('api_provider', ''))
+            ai_api_key = get_api_key(ai_api_config.get('api_provider', ''), ai_api_config.get('base_url', ''))
             if not ai_api_key:
                 print("⚠️  AI 评估需要 API Key，但未配置，将跳过 AI 评估")
                 args.ai_eval = False

@@ -29,11 +29,12 @@ llm_type = os.getenv("LOCAL_LLM_TYPE", "openai").lower()
 base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:8000/v1")
 model = os.getenv("LOCAL_LLM_MODEL", "qwen-plus")
 
-# 优先从 keyring 读取 API Key（按服务商管理）
+# 优先从 keyring 读取 API Key（按服务商 + base_url 管理）
 api_key = None
 if HAS_SECURITY:
     provider = os.getenv("LOCAL_LLM_PROVIDER", "qwen")
-    api_key = get_api_key(provider)
+    base_url = os.getenv("LOCAL_LLM_BASE_URL", "")
+    api_key = get_api_key(provider, base_url)
 
 # 降级到环境变量
 if not api_key:
