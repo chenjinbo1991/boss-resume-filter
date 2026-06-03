@@ -1855,14 +1855,20 @@ def _needs_cross_platform_rebuild(changed_files):
         'storage.py', 'doc_parser.py', 'security.py', 'constants.py',
         'paths.py', 'icons.py', 'updater.py', 'selectors.json',
         'job_config.json', 'api_config.json', 'requirements.txt',
+        'build.py',  # 打包脚本本身的变化影响产物内容
     }
+
+    # 需要重建的目录（改了影响构建产物内容）
+    REBUILD_PREFIXES = (
+        'pyinstaller-hooks/',  # 自定义 hook 控制模块收集
+    )
 
     # 不需要重建的目录/文件前缀
     SKIP_PREFIXES = (
         'tests/', 'scripts/', 'docs/', '.github/', '.claude/',
         'AGENTS.md', 'CHANGELOG.md', 'CLAUDE.md', 'DEPLOYMENT.md',
         'GUI', 'PACKAGING.md', 'README', 'TODO.md',
-        'latest.json', '.gitignore', 'build.py',
+        'latest.json', '.gitignore',
     )
 
     for f in changed_files:
@@ -1871,6 +1877,10 @@ def _needs_cross_platform_rebuild(changed_files):
 
         # 明确需要重建
         if f in SHARED_BUILD_FILES:
+            return True
+
+        # 需要重建的目录
+        if any(f.startswith(p) for p in REBUILD_PREFIXES):
             return True
 
         # 明确不需要重建（前缀匹配 + .md 后缀兜底）
