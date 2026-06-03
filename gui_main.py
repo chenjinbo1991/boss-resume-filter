@@ -2260,7 +2260,9 @@ class BossFilterGUI:
         provider_key = self.api_config.get("api_provider", "qwen")
         provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
         self.api_provider_var.set(provider_display)
-        self.api_key_var.set(self.api_config.get("api_key", ""))
+        # API Key 从 keyring 读取（api_config.json 不含明文）
+        saved_key = get_api_key(provider_key)
+        self.api_key_var.set(saved_key if saved_key else "")
         self.api_base_url_var.set(self.api_config.get("base_url", ""))
         self.api_model_var.set(self.api_config.get("model", ""))
 
@@ -4151,7 +4153,17 @@ class BossFilterGUI:
             }
         }
 
-        if provider in provider_defaults:
+        # 优先从已保存模型中读取该服务商最近使用的配置
+        saved_models = getattr(self, 'saved_models', [])
+        provider_saved = [m for m in saved_models if m.get("provider") == provider]
+
+        if provider_saved:
+            # 使用最后一条（最近保存的）配置
+            last_config = provider_saved[-1]
+            self.api_base_url_var.set(last_config.get("base_url", ""))
+            self.api_model_var.set(last_config.get("model", ""))
+        elif provider in provider_defaults:
+            # 没有保存过，使用默认配置
             config = provider_defaults[provider]
             self.api_base_url_var.set(config["base_url"])
             self.api_model_var.set(config["model"])
