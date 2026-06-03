@@ -2225,6 +2225,90 @@ def _gitee_fetch_assets(api_base, token, release_id, retry_fn=None):
         for a in resp.json()
     }
 
+
+def _gitee_fetch_releases(api_base, token):
+    """获取 Gitee Release 列表，返回所有分页结果。"""
+    session = _gitee_session()
+    releases = []
+    page = 1
+    while True:
+        resp = session.get(
+            f"{api_base}/releases",
+            params={"access_token": token, "page": page, "per_page": 100},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        batch = resp.json()
+        if not batch:
+            break
+        releases.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return releases
+
+
+def _gitee_clean_old_assets(keep_version, apply=False):
+    """清理 Gitee 旧版本附件，仅保留 keep_version 对应 Release 的产物。"""
+    token = os.environ.get("GITEE_TOKEN")
+    if not token:
+        print("  [跳过] Gitee Release: 未设置 GITEE_TOKEN 环境变量")
+        return False
+
+    if keep_version.startswith("v"):
+        keep_version = keep_version[1:]
+    keep_tag = f"v{keep_version}"
+
+    if not _gitee_ping(token):
+        print("  [失败] Gitee API 不可达")
+        return False
+
+    owner = "yaoyouzhong"
+    repo = "boss-resume-filter"
+    api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+    releases = _gitee_fetch_releases(api_base, token)
+    stale = []
+    for release in releases:
+        tag = release.get("tag_name") or ""
+        release_id = release.get("id")
+        if not release_id or tag == keep_tag:
+            continue
+        assets = _gitee_fetch_assets(api_base, token, release_id)
+        for name, asset in assets.items():
+            stale.append({
+                "tag": tag,
+                "release_id": release_id,
+                "name": name,
+                "id": asset["id"],
+                "size": int(asset.get("size") or 0),
+            })
+
+    total_size = sum(item["size"] for item in stale)
+    if not stale:
+        print(f"  [OK] Gitee 旧版本无附件需要清理，仅保留 {keep_tag}")
+        return True
+
+    action = "将删除" if apply else "预览"
+    print(f"\n>>> Gitee 旧版本附件清理{action}（保留 {keep_tag}）")
+    print(f"  旧附件数量: {len(stale)}")
+    print(f"  可释放空间: {_format_size(total_size)}")
+    for item in stale:
+        print(f"  - {item['tag']}: {item['name']} ({_format_size(item['size'])})")
+
+    if not apply:
+        print("\n  [预览] 未执行删除。确认后运行：")
+        print(f"  python build.py --gitee-clean-old-assets {keep_version} --apply")
+        return True
+
+    for item in stale:
+        _gitee_delete_asset(api_base, token, item["release_id"], item["id"],
+                            f"{item['tag']}/{item['name']}")
+
+    print(f"\n  [OK] Gitee 旧版本附件已清理，保留 {keep_tag} 的产物")
+    return True
+
+
 def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
     """上传单个文件到 Gitee Release，带重试。返回 (文件名, 响应JSON)。
 
@@ -2988,7 +3072,6 @@ def main():
         '--hidden-import=babel',
         '--hidden-import=babel.numbers',
         '--hidden-import=babel.dates',
-        '--hidden-import=babel.localedata',
         *tk_args,
         '--hidden-import=PIL',
         '--hidden-import=PIL.Image',
@@ -2996,6 +3079,8 @@ def main():
         '--hidden-import=PIL.ImageTk',
         '--hidden-import=PIL.ImageColor',
         '--hidden-import=PIL.ImageFont',
+        '--exclude-module=PIL._avif',
+        '--exclude-module=PIL._webp',
         '--exclude-module=PyQt5',
         '--exclude-module=PySide6',
         '--exclude-module=torch',
