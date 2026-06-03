@@ -2233,6 +2233,7 @@ class BossFilterGUI:
         model_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
         self.model_context_menu = tk.Menu(self.model_list_tree, tearoff=0, font=model_menu_font)
         self.model_context_menu.add_command(label="切换", command=self.use_selected_model)
+        self.model_context_menu.add_command(label="测试连通性", command=self.test_saved_model_connectivity)
         self.model_context_menu.add_command(label="删除", command=self.delete_selected_model)
 
         def show_model_context_menu(event):
@@ -3921,6 +3922,109 @@ class BossFilterGUI:
             messagebox.showinfo("切换成功", f"已切换到模型：\n\n{provider_display} / {model_name}")
         else:
             messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
+
+    def test_saved_model_connectivity(self):
+        """测试已保存模型列表中选中模型的连通性（单模型，后台线程执行）"""
+        selection = self.model_list_tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择要测试的模型")
+            return
+
+        item = self.model_list_tree.item(selection[0])
+        model_name = item['values'][0]
+        provider_display = item['values'][1]
+        provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
+
+        # 查找模型配置（base_url）
+        model_config = None
+        for saved in getattr(self, 'saved_models', []):
+            if saved.get("model") == model_name:
+                model_config = saved
+                break
+        if not model_config:
+            messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
+            return
+
+        base_url = model_config.get("base_url", "").strip()
+        api_key = get_api_key(provider_key)
+        if not api_key:
+            messagebox.showwarning("警告",
+                f"模型 '{model_name}' 的 API Key 未在系统钥匙串中找到\n\n"
+                f"请先在 API 配置页输入并保存该服务商的 API Key")
+            return
+        if not base_url:
+            messagebox.showwarning("警告", f"模型 '{model_name}' 未配置 Base URL")
+            return
+
+        self._update_api_status(text=f"⏳ 正在测试 {model_name}...", foreground=self.colors['warning'])
+
+        def _run_test():
+            import requests, certifi, time
+            start = time.time()
+            session = requests.Session()
+            try:
+                resp = session.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    json={"model": model_name, "messages": [{"role": "user", "content": "1"}],
+                          "max_tokens": 1, "stream": False},
+                    headers={"Content-Type": "application/json",
+                             "Authorization": f"Bearer {api_key}",
+                             "User-Agent": USER_AGENT, "Connection": "close"},
+                    timeout=(8, 30), verify=certifi.where()
+                )
+                elapsed = time.time() - start
+                if resp.status_code == 200:
+                    result = {"status": "success", "time": elapsed}
+                elif resp.status_code == 401:
+                    result = {"status": "error", "msg": "认证失败（API Key 无效）"}
+                elif resp.status_code == 404:
+                    result = {"status": "error", "msg": "模型不存在"}
+                else:
+                    friendly = None
+                    try:
+                        err_json = resp.json()
+                        code = err_json.get("error", {}).get("code", "")
+                        msg_text = err_json.get("error", {}).get("message", "")
+                        if "not activated" in msg_text.lower():
+                            friendly = "该服务商未开通此模型"
+                        elif "quota" in msg_text.lower() or "limit" in msg_text.lower():
+                            friendly = "配额超限"
+                        elif "free tier" in msg_text.lower() or "allocationquota" in code.lower():
+                            friendly = "免费额度已用完"
+                    except Exception:
+                        pass
+                    result = {"status": "error", "msg": friendly or f"HTTP {resp.status_code}"}
+            except requests.exceptions.Timeout:
+                result = {"status": "error", "msg": "连接超时"}
+            except requests.exceptions.ConnectionError:
+                result = {"status": "error", "msg": "无法连接，请检查 Base URL 或网络"}
+            except Exception as e:
+                result = {"status": "error", "msg": f"异常: {str(e)[:80]}"}
+            finally:
+                session.close()
+
+            self.root.after(0, lambda: self._show_connectivity_result(model_name, provider_display, result))
+
+        threading.Thread(target=_run_test, daemon=True).start()
+
+    def _show_connectivity_result(self, model_name, provider_display, result):
+        """在主线程显示连通性测试结果"""
+        if result["status"] == "success":
+            self._update_api_status(
+                text=f"✓ {model_name} 连通正常（{result['time']:.1f}s）",
+                foreground=self.colors['success'])
+            messagebox.showinfo("测试成功",
+                f"模型 {model_name} 连通正常\n\n"
+                f"服务商：{provider_display}\n"
+                f"响应时间：{result['time']:.1f} 秒")
+        else:
+            self._update_api_status(
+                text=f"✗ {model_name} 测试失败：{result['msg']}",
+                foreground=self.colors['danger'])
+            messagebox.showerror("测试失败",
+                f"模型 {model_name} 测试失败\n\n"
+                f"服务商：{provider_display}\n"
+                f"错误：{result['msg']}")
 
     def save_api_config(self):
         """保存 API 配置 - API Key 按服务商加密存储到系统钥匙串"""
