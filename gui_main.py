@@ -4109,7 +4109,7 @@ class BossFilterGUI:
         # 将显示名称转换为内部键（兼容旧配置）
         provider = self.DISPLAY_TO_KEY.get(display_name, display_name)
 
-        # 主流服务商默认配置
+        # 主流服务商默认配置（各服务商当前最新主力模型）
         provider_defaults = {
             "qwen": {
                 "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -4117,15 +4117,15 @@ class BossFilterGUI:
             },
             "deepseek": {
                 "base_url": "https://api.deepseek.com",
-                "model": "deepseek-chat"
+                "model": "deepseek-v4-pro"
             },
             "kimi": {
                 "base_url": "https://api.moonshot.cn/v1",
-                "model": "moonshot-v1-8k"
+                "model": "kimi-k2.6"
             },
             "zhipu": {
                 "base_url": "https://open.bigmodel.cn/api/paas/v4",
-                "model": "glm-4"
+                "model": "glm-5.1"
             },
             "minimax": {
                 "base_url": "https://api.minimaxi.com/v1",
@@ -4137,7 +4137,7 @@ class BossFilterGUI:
             },
             "stepfun": {
                 "base_url": "https://api.stepfun.com/v1",
-                "model": "step-1-8k"
+                "model": "step-2-mini"
             },
             "openai": {
                 "base_url": "https://api.openai.com/v1",
@@ -4145,7 +4145,7 @@ class BossFilterGUI:
             },
             "anthropic": {
                 "base_url": "https://api.anthropic.com/v1",
-                "model": "claude-sonnet-4-20250514"
+                "model": "claude-sonnet-4-5"
             },
             "custom": {
                 "base_url": "",
