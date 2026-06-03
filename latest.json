@@ -10,8 +10,8 @@
   },
   "assets": {
     "windows": {
-      "size": 61343504,
-      "sha256": "587c15d09e61d2379f392088d8229952c9d21baa01430c0c89bec25821c8ded4"
+      "size": 33763633,
+      "sha256": "6589dccb47704b20ad6081d4ce70e8a503a0c287a3b87c4fb03a7d0882305627"
     },
     "macos_dmg": {
       "size": 44247110,
@@ -25,8 +25,8 @@
   "release_notes": "### 新增功能\n\n- **已保存模型连通性测试**：已保存模型列表右键菜单新增\"测试连通性\"选项，可快速验证模型可用性\n- **多接入方式支持**：API Key 按 provider+base_url 组合存储，同一服务商可同时配置 API 和 Token Plan 等多种接入方式\n\n### 体验优化\n\n- **新建岗位全流程呼吸提示**：岗位配置页新增三处动态提示（点击查看需求示例→、←点击解析招聘需求、点击保存配置→），与\"点此新增岗位→\"风格统一（绿色呼吸动画），按流程阶段依次出现，完成后自动消失\n- **保存提示更精准**：新建流程中，\"点击保存配置→\"提示等检查结果步骤打勾（滚动到底部）后才出现，避免过早引导\n- **按钮文字优化**：\"解析需求文档\"改为\"解析招聘需求\"，步骤文字\"② 解析文档\"改为\"② 解析需求\"\n- **解析摘要增加薪资**：解析成功后显示的摘要信息新增薪资范围，格式为\"薪资=12-15K\"、\"薪资≥12K\"或\"薪资≤15K\"\n- **需求示例提示交互**：点击\"招聘需求示例\"按钮后，左侧\"点击查看需求示例→\"提示自动消失\n- **服务商默认模型更新**：DeepSeek、Kimi、智谱、MiniMax、小米、阶跃星辰、OpenAI、Anthropic 等服务商默认模型更新为最新版本\n- **MiniMax Base URL 更新**：从旧域名 minimaxi.com 更新为 api.minimaxi.com\n- **运行控制页优化**：打招呼等级备注动态显示实际阈值，AI 评估备注 +/- 分色显示并默认勾选，岗位选择提示文本优化\n- **发布传输策略优化**：GitHub/Gitee 上传下载改为大文件串行、小文件并发；对端产物优先用 GitHub digest 和 latest.json 判定可复用，Windows 发布同步 Mac 产物时 ZIP 优先于 DMG，减少重复传输并提升网络波动下稳定性\n\n### 问题修复\n\n- **服务商切换配置丢失**：修复切换服务商时 API Key、Base URL、模型名称显示为默认值而非已保存配置的问题\n- **已保存模型切换崩溃**：修复 use_selected_model 中 provider 变量未定义导致崩溃的问题\n- **右键菜单字号不统一**：修复 Entry/Text 控件右键菜单字号（14pt）与其他菜单（12pt）不一致的问题",
   "downloads_cn": {
     "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/job_config.json",
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/BOSS_ResumeFilter.exe",
     "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/README.md",
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/BOSS_ResumeFilter.exe",
     "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/BOSS_ResumeFilter_mac.zip",
     "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/BOSS_ResumeFilter.dmg"
   }
