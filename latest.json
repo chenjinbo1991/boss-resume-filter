@@ -26,6 +26,8 @@
   "downloads_cn": {
     "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/job_config.json",
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/BOSS_ResumeFilter.exe",
-    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/README.md"
+    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/README.md",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.9.2/BOSS_ResumeFilter.dmg"
   }
 }
