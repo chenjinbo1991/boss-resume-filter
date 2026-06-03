@@ -13,7 +13,7 @@ boss-resume-filter/
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
-├── security.py           # API Key 安全存储模块（keyring 加密）
+├── security.py           # API Key 安全存储模块（keyring 加密，按 provider+base_url 组合存储）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── constants.py          # 共享常量（评分模型参数、阈值、学历档位、滚动参数、城市列表）
 ├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
@@ -103,7 +103,7 @@ boss-resume-filter/
 - .env 文件不进 git
 - 候选人数据含个人隐私，本地存储要加密
 - API Key 加密存储在系统钥匙串（Windows DPAPI / macOS Keychain），`api_config.json` 不含明文
-- API Key 按服务商统一管理，同一服务商的所有模型共享一个 Key
+- API Key 按 provider + base_url 组合存储，同一服务商不同接入方式（API / Token Plan）独立管理
 
 ## 核心逻辑
 
@@ -292,7 +292,7 @@ PATCH release 必须带 `tag_name` 和 `body`（只传 `name` 返回 400）。re
 
 ### provider 显示名称与内部键不一致
 
-GUI 中 `api_provider_var.get()` 返回显示名称（如「通义千问」），但 `get_api_key()` / keyring 存的是内部键（如 `qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换，否则 keyring 查不到 Key。
+GUI 中 `api_provider_var.get()` 返回显示名称（如「通义千问」），但 `get_api_key()` / keyring 存的是内部键（如 `qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换，否则 keyring 查不到 Key。`get_api_key(provider, base_url)` 按 provider + base_url 组合查找，新 key 找不到时自动回退旧格式（仅 provider）实现向后兼容。
 
 ### 更新弹窗必须使用 GUI 缩放参数
 
