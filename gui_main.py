@@ -4155,7 +4155,7 @@ class BossFilterGUI:
 
         # 优先从已保存模型中读取该服务商最近使用的配置
         saved_models = getattr(self, 'saved_models', [])
-        provider_saved = [m for m in saved_models if m.get("provider") == provider]
+        provider_saved = [m for m in saved_models if m.get("api_provider") == provider]
 
         if provider_saved:
             # 使用最后一条（最近保存的）配置
