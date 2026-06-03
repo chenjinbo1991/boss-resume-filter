@@ -2412,7 +2412,7 @@ class BossFilterGUI:
                                        font=self.font_label)
         self.job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.job_combo.bind("<<ComboboxSelected>>", self.on_run_job_selected)
-        ttk.Label(row_job, text="(选择要处理的岗位，\"全部岗位\"依次处理)",
+        ttk.Label(row_job, text="建议每次选择一个岗位，\"全部岗位\"将依次处理",
                  font=(FONT_FAMILY, int(11 * self.font_scale)),
                  foreground=self.colors['text_muted'],
                  background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
