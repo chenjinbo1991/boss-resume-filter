@@ -2450,7 +2450,7 @@ class BossFilterGUI:
         row_ai.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_ai, text="AI 评估:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
-        self.ai_eval_var = tk.BooleanVar(value=False)
+        self.ai_eval_var = tk.BooleanVar(value=True)
         # 大 indicator + 文字一体，用父容器 anchor 做垂直居中
         _cb_style = ttk.Style()
         _indicator_size = int(32 * self.dpi_scale * self.zoom_factor)
