@@ -4154,19 +4154,24 @@ class BossFilterGUI:
         }
 
         # 优先从已保存模型中读取该服务商最近使用的配置
+        current_provider = self.api_config.get("api_provider", "") if hasattr(self, 'api_config') and self.api_config else ""
         saved_models = getattr(self, 'saved_models', [])
-        provider_saved = [m for m in saved_models if m.get("api_provider") == provider]
 
-        if provider_saved:
-            # 使用最后一条（最近保存的）配置
-            last_config = provider_saved[-1]
-            self.api_base_url_var.set(last_config.get("base_url", ""))
-            self.api_model_var.set(last_config.get("model", ""))
-        elif provider in provider_defaults:
-            # 没有保存过，使用默认配置
-            config = provider_defaults[provider]
-            self.api_base_url_var.set(config["base_url"])
-            self.api_model_var.set(config["model"])
+        if current_provider == provider:
+            # 正在使用这个服务商，显示当前使用的模型配置
+            self.api_base_url_var.set(self.api_config.get("base_url", ""))
+            self.api_model_var.set(self.api_config.get("model", ""))
+        else:
+            # 不是当前服务商，从已保存模型中找该服务商最近使用的配置
+            provider_saved = [m for m in saved_models if m.get("api_provider") == provider]
+            if provider_saved:
+                last_config = provider_saved[-1]
+                self.api_base_url_var.set(last_config.get("base_url", ""))
+                self.api_model_var.set(last_config.get("model", ""))
+            elif provider in provider_defaults:
+                config = provider_defaults[provider]
+                self.api_base_url_var.set(config["base_url"])
+                self.api_model_var.set(config["model"])
 
         # 切换服务商时，从 keyring 读取该服务商的 API Key，没有则清空
         saved_key = get_api_key(provider)
