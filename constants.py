@@ -4,7 +4,15 @@
 SCORE_BASE = 25                    # 基础分
 SCORE_SKILL_MAX = 50               # 技能匹配上限
 SCORE_EXP_MAX = 15                 # 经验超额上限
+SCORE_EXP_MULTIPLIER = 3           # 每超出一年经验的加分
 SCORE_EDU_MAX = 10                 # 学历加分上限
+
+# 学历加分档位（博士=10, 985硕士=9, 普通硕士=7, 985本科=6, 普通本科=3）
+SCORE_EDU_DOCTOR = 10
+SCORE_EDU_MASTER_985 = 9
+SCORE_EDU_MASTER = 7
+SCORE_EDU_BACHELOR_985 = 6
+SCORE_EDU_BACHELOR = 3
 
 # ========== 评分阈值 ==========
 SCORE_THRESHOLD_PASS = 55          # 通过筛选（待定及以上）
@@ -22,6 +30,15 @@ CHINESE_NUMERALS = {
     '零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
     '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
 }
+
+# ========== 滚动与扫描参数 ==========
+SCROLL_PX = 800                    # 每次滚动像素
+MAX_SCROLL_SEARCH = 40             # 最大滚动搜索次数
+MAX_ROUNDS_DEFAULT = 30            # 默认最大扫描轮数
+EMPTY_ROUNDS_LIMIT = 5             # 连续无新候选人轮数上限
+GREET_FAIL_LIMIT = 3               # 连续打招呼失败次数上限
+CAPTCHA_MAX_WAIT = 300             # 验证码最大等待秒数（5 分钟）
+CAPTCHA_CHECK_INTERVAL = 3         # 验证码检查间隔秒数
 
 # ========== HTTP ==========
 USER_AGENT = "BossResumeFilter/1.0"

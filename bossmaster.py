@@ -8,11 +8,9 @@ import time
 import json
 import re
 import random
-import sys
 import threading
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 from DrissionPage import ChromiumPage
 import os
 from filtering import (
@@ -32,7 +30,11 @@ from storage import (
     load_candidates_all,
     save_candidates_all,
 )
-from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG
+from constants import (
+    SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG,
+    SCROLL_PX, MAX_SCROLL_SEARCH, MAX_ROUNDS_DEFAULT, EMPTY_ROUNDS_LIMIT,
+    GREET_FAIL_LIMIT, CAPTCHA_MAX_WAIT, CAPTCHA_CHECK_INTERVAL,
+)
 from paths import BASE_DIR, SELECTORS_PATH, CONFIG_PATH, CANDIDATES_PATH, CANDIDATES_XLSX_PATH
 
 
@@ -422,7 +424,7 @@ def extract_name_from_card(card_element: Any) -> str:
     return "未知"
 
 
-def scroll_in_frame(frame: Any, scroll_amount: int = 800) -> None:
+def scroll_in_frame(frame: Any, scroll_amount: int = SCROLL_PX) -> None:
     """在 iframe 内部滚动"""
     try:
         frame.run_js(f'window.scrollBy(0, {scroll_amount})')
@@ -510,7 +512,7 @@ def _extract_cards_batch(target):
         return []
 
 
-def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_callback=None, stop_event=None, captcha_callback=None):
+def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEFAULT, progress_callback=None, stop_event=None, captcha_callback=None):
     """通过全面分析提取候选人
 
     Args:
@@ -554,13 +556,13 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
                 _scroll_sel = _sel('scroll', 'container_js_selectors',
                     '.candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]')
                 iframe.run_js(f'''
-                    window.scrollBy(0, 800);
+                    window.scrollBy(0, {SCROLL_PX});
                     var list = document.querySelector("{_scroll_sel}");
-                    if(list) list.scrollTop += 800;
+                    if(list) list.scrollTop += {SCROLL_PX};
                 ''')
                 time.sleep(_human_delay(0.8, 0.5))
             else:
-                page.run_js('window.scrollBy(0, 800)')
+                page.run_js(f'window.scrollBy(0, {SCROLL_PX})')
                 time.sleep(_human_delay(0.8, 0.5))
 
             # 到底检测：滚动位置优先（单次 JS 调用，无 DOM 查找）
@@ -622,7 +624,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
         # 连续空轮次检测（兜底策略，不依赖特定文案）
         if new_count == 0:
             consecutive_empty += 1
-            if consecutive_empty >= 5:
+            if consecutive_empty >= EMPTY_ROUNDS_LIMIT:
                 print(f"连续 {consecutive_empty} 轮无新候选人，第 {scroll_round + 1} 轮提前终止（累计 {total_count} 个候选人）")
                 break
         else:
@@ -638,7 +640,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=30, progress_c
     return all_candidates
 
 
-def _find_card_by_scroll(target, card_css, stop_event=None, max_scrolls=40, scroll_px=800):
+def _find_card_by_scroll(target, card_css, stop_event=None, max_scrolls=MAX_SCROLL_SEARCH, scroll_px=SCROLL_PX):
     """智能滚动定位候选人卡片
 
     BOSS 直聘使用虚拟列表，只渲染视口内的卡片。此函数通过系统性滚动搜索
@@ -808,7 +810,7 @@ def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_
 
 
 
-def _detect_limit_popup(page: ChromiumPage) -> bool:
+def _detect_limit_popup(page: ChromiumPage) -> tuple[bool, str]:
     """
     检测是否弹出了 BOSS 直聘沟通次数上限/升级套餐弹窗（极速版）
 
@@ -849,7 +851,7 @@ def _detect_limit_popup(page: ChromiumPage) -> bool:
         return False, ""
 
 
-def _detect_captcha(page: ChromiumPage) -> bool:
+def _detect_captcha(page: ChromiumPage) -> tuple[bool, str]:
     """
     检测是否弹出了 BOSS 直聘安全验证弹窗（滑块/图形验证码等）
 
@@ -930,7 +932,7 @@ def _detect_captcha(page: ChromiumPage) -> bool:
         return False, ""
 
 
-def _wait_for_captcha_resolution(page, stop_event=None, max_wait=300, captcha_callback=None, detail=""):
+def _wait_for_captcha_resolution(page, stop_event=None, max_wait=CAPTCHA_MAX_WAIT, captcha_callback=None, detail=""):
     """
     等待用户手动完成安全验证（验证码/滑块）。
 
@@ -963,7 +965,7 @@ def _wait_for_captcha_resolution(page, stop_event=None, max_wait=300, captcha_ca
             pass
 
     elapsed = 0
-    check_interval = 3
+    check_interval = CAPTCHA_CHECK_INTERVAL
     while elapsed < max_wait:
         if stop_event and stop_event.is_set():
             print("   用户中止，停止等待验证。")
@@ -982,7 +984,7 @@ def _wait_for_captcha_resolution(page, stop_event=None, max_wait=300, captcha_ca
     return False
 
 
-def verify_greeting_success(page: ChromiumPage, geek_id: str, debug: bool = False) -> bool:
+def verify_greeting_success(page: ChromiumPage, geek_id: str, debug: bool = False) -> tuple[bool, str]:
     """
     验证打招呼是否成功（快速版 - 直接检查按钮文本）
     """
@@ -1018,7 +1020,7 @@ def verify_greeting_success(page: ChromiumPage, geek_id: str, debug: bool = Fals
         return True, "点击已执行"
 
 
-def check_selectors_health(page: ChromiumPage) -> dict[str, Any]:
+def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
     """选择器健康检查：逐一测试 selectors.json 中的关键选择器，返回诊断报告。
 
     返回: list[dict]，每项包含:
@@ -1125,7 +1127,7 @@ def check_selectors_health(page: ChromiumPage) -> dict[str, Any]:
 
     return results
 
-def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None):
+def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None):
     """
     智能扫描候选人 - 两阶段模式
 
@@ -1368,7 +1370,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=30, verbo
                 action = "补打招呼" if candidate['geek_id'] in all_existing_ids else "打招呼"
 
                 # 检查连续失败，如果连续失败 3 次则停止
-                if consecutive_failures >= 3:
+                if consecutive_failures >= GREET_FAIL_LIMIT:
                     print(f"\n⚠️  连续 {consecutive_failures} 次失败，停止打招呼")
                     break
 

@@ -9,6 +9,12 @@ from constants import (
     SCORE_BASE,
     SCORE_SKILL_MAX,
     SCORE_EXP_MAX,
+    SCORE_EXP_MULTIPLIER,
+    SCORE_EDU_DOCTOR,
+    SCORE_EDU_MASTER_985,
+    SCORE_EDU_MASTER,
+    SCORE_EDU_BACHELOR_985,
+    SCORE_EDU_BACHELOR,
     SCORE_THRESHOLD_PASS,
     SCORE_THRESHOLD_RECOMMEND,
     SCORE_THRESHOLD_STRONG,
@@ -113,11 +119,11 @@ def _calc_edu_bonus(text: str) -> int:
     is_bachelor = '本科' in text
 
     if is_doctor:
-        bonus = 10
+        bonus = SCORE_EDU_DOCTOR
     elif is_master:
-        bonus = 9 if has_985211 else 7
+        bonus = SCORE_EDU_MASTER_985 if has_985211 else SCORE_EDU_MASTER
     elif is_bachelor:
-        bonus = 6 if has_985211 else 3
+        bonus = SCORE_EDU_BACHELOR_985 if has_985211 else SCORE_EDU_BACHELOR
 
     return bonus
 
@@ -167,7 +173,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             if exp_years is not None:
                 if min_exp > exp_years:
                     return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
-                details['exp_bonus'] = min((exp_years - min_exp) * 3, SCORE_EXP_MAX)
+                details['exp_bonus'] = min((exp_years - min_exp) * SCORE_EXP_MULTIPLIER, SCORE_EXP_MAX)
 
         max_age = rule.get("max_age")
         if max_age is not None:

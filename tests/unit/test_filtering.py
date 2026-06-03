@@ -1,0 +1,414 @@
+"""filtering 模块完整单元测试 — 覆盖 parse_experience_years、filter_candidate、
+check_required_condition、_extract_city、evaluate_candidate 等核心筛选逻辑。"""
+
+from filtering import (
+    _calc_edu_bonus,
+    _extract_city,
+    _keyword_found,
+    _parse_candidate_salary_range,
+    check_required_condition,
+    evaluate_candidate,
+    filter_candidate,
+    parse_experience_years,
+)
+from constants import SCORE_BASE, SCORE_SKILL_MAX, SCORE_EXP_MAX
+
+
+# ========== parse_experience_years ==========
+
+def test_parse_experience_years_arabic_numbers():
+    assert parse_experience_years("3 年经验") == 3
+    assert parse_experience_years("10年经验") == 10
+    assert parse_experience_years("0年工作经验") == 0
+
+
+def test_parse_experience_years_chinese_numbers():
+    cases = {
+        "一年经验": 1,
+        "两年工作经验": 2,
+        "三年以上 Java 经验": 3,
+        "五年以上 Java 经验": 5,
+        "八年后端经验": 8,
+        "十年经验": 10,
+        "十二年开发经验": 12,
+        "十五年后端经验": 15,
+        "二十年工作经验": 20,
+    }
+    for text, expected in cases.items():
+        assert parse_experience_years(text) == expected, f"failed on: {text}"
+
+
+def test_parse_experience_years_no_match_returns_none():
+    assert parse_experience_years("没有年限描述") is None
+    assert parse_experience_years("") is None
+
+
+def test_parse_experience_years_arabic_takes_precedence():
+    assert parse_experience_years("3年经验，工作过五年") == 3
+
+
+# ========== _extract_city ==========
+
+def test_extract_city_explicit_label():
+    assert _extract_city("意向：南京，5 年 Java") == "南京"
+    assert _extract_city("城市: 上海") == "上海"
+    assert _extract_city("地点 北京") == "北京"
+
+
+def test_extract_city_with_shi_suffix():
+    assert _extract_city("意向：南京市") == "南京"
+    assert _extract_city("城市: 深圳市") == "深圳"
+
+
+def test_extract_city_mentioned_in_text():
+    assert _extract_city("目前在上海工作，5 年 Java 经验") == "上海"
+    assert _extract_city("现居杭州") == "杭州"
+
+
+def test_extract_city_longer_name_matched_first():
+    assert _extract_city("意向：哈尔滨") == "哈尔滨"
+
+
+def test_extract_city_no_city_returns_empty():
+    assert _extract_city("5 年 Java 开发经验") == ""
+    assert _extract_city("") == ""
+
+
+# ========== _parse_candidate_salary_range ==========
+
+def test_parse_salary_range_with_k():
+    assert _parse_candidate_salary_range("15-20K\n本科") == (15, 20)
+    assert _parse_candidate_salary_range("15-20k\n本科") == (15, 20)
+
+
+def test_parse_salary_range_separator_variants():
+    assert _parse_candidate_salary_range("10~15K\n本科") == (10, 15)
+    assert _parse_candidate_salary_range("10～15K\n本科") == (10, 15)
+    assert _parse_candidate_salary_range("10-15K\n本科") == (10, 15)
+
+
+def test_parse_salary_range_single_value():
+    assert _parse_candidate_salary_range("18K\n本科") == (18, 18)
+
+
+def test_parse_salary_range_negotiable():
+    assert _parse_candidate_salary_range("面议\n本科") == (None, None)
+
+
+def test_parse_salary_range_no_salary():
+    assert _parse_candidate_salary_range("5 年 Java 经验") == (None, None)
+    assert _parse_candidate_salary_range("") == (None, None)
+
+
+# ========== _keyword_found ==========
+
+def test_keyword_found_english_word_boundary():
+    assert _keyword_found("AI Agent platform", "AI") is True
+    assert _keyword_found("email platform", "AI") is False
+    assert _keyword_found("Java developer", "Java") is True
+    assert _keyword_found("JavaScript developer", "Java") is False
+
+
+def test_keyword_found_chinese_substring():
+    assert _keyword_found("熟悉智能体和知识库", "智能体") is True
+    assert _keyword_found("熟悉大模型", "大模型") is True
+
+
+def test_keyword_found_case_insensitive():
+    assert _keyword_found("java developer", "Java") is True
+    assert _keyword_found("SPRING BOOT", "Spring Boot") is True
+
+
+# ========== _calc_edu_bonus ==========
+
+def test_calc_edu_bonus_tiers():
+    assert _calc_edu_bonus("博士学历") == 10
+    assert _calc_edu_bonus("985 硕士") == 9
+    assert _calc_edu_bonus("硕士") == 7
+    assert _calc_edu_bonus("985 本科") == 6
+    assert _calc_edu_bonus("211 本科") == 6
+    assert _calc_edu_bonus("双一流 本科") == 6
+    assert _calc_edu_bonus("统招本科") == 3
+    assert _calc_edu_bonus("5 年工作经验") == 0
+
+
+# ========== check_required_condition ==========
+
+def test_check_required_condition_regular_bachelor():
+    assert check_required_condition("统招本科，5 年 Java", "统招本科")["passed"] is True
+    assert check_required_condition("全日制本科，5 年 Java", "统招本科")["passed"] is True
+
+
+def test_check_required_condition_non_regular_rejected():
+    assert check_required_condition("成教本科，5 年 Java", "统招本科")["passed"] is False
+    assert check_required_condition("自考本科，5 年 Java", "统招本科")["passed"] is False
+
+
+def test_check_required_condition_master_satisfies_bachelor():
+    assert check_required_condition("硕士，5 年 Java", "统招本科")["passed"] is True
+
+
+def test_check_required_condition_985_bachelor_no_non_regular_mark():
+    assert check_required_condition("985 本科，5 年 Java", "统招本科")["passed"] is True
+
+
+def test_check_required_condition_or_match():
+    cond = {"type": "or", "items": ["activiti", "camunda", "flowable"]}
+    assert check_required_condition("有 Camunda 项目经验", cond)["passed"] is True
+    assert check_required_condition("有 activiti 经验", cond)["passed"] is True
+    assert check_required_condition("只有 Spring Boot", cond)["passed"] is False
+
+
+def test_check_required_condition_and_match():
+    cond = {"type": "and", "items": ["Java", "MySQL", "Redis"]}
+    assert check_required_condition("Java MySQL Redis", cond)["passed"] is True
+    assert check_required_condition("Java MySQL", cond)["passed"] is False
+
+
+def test_check_required_condition_empty_items_pass():
+    cond = {"type": "or", "items": []}
+    assert check_required_condition("任意文本", cond)["passed"] is True
+
+
+def test_check_required_condition_plain_string():
+    assert check_required_condition("有 Kubernetes 经验", "Kubernetes")["passed"] is True
+    assert check_required_condition("没有相关经验", "Kubernetes")["passed"] is False
+
+
+# ========== filter_candidate ==========
+
+def _java_rule(**overrides):
+    rule = {
+        "min_exp": 4,
+        "edu": "本科",
+        "work_location": "南京",
+        "salary_min": 12,
+        "salary_max": 15,
+        "required_conditions": ["统招本科"],
+        "keywords": [
+            {"name": "Java", "weight": 2},
+            {"name": "Spring Cloud", "weight": 2},
+            {"name": "MySQL", "weight": 1},
+            {"name": "Redis", "weight": 1},
+        ],
+    }
+    rule.update(overrides)
+    return rule
+
+
+def test_filter_candidate_strong_passes():
+    passed, score, details = filter_candidate(
+        "15-16K\n南京，统招本科，6 年 Java 经验，熟悉 Spring Cloud、MySQL、Redis",
+        _java_rule(),
+    )
+    assert passed is True
+    assert score >= 75
+    assert details["skill_matched_count"] == 4
+
+
+def test_filter_candidate_salary_too_high_rejected():
+    passed, _, details = filter_candidate(
+        "18-22K\n南京，统招本科，6 年 Java 经验",
+        _java_rule(),
+    )
+    assert passed is False
+    assert "薪资不匹配" in details["reason"]
+
+
+def test_filter_candidate_wrong_city_rejected():
+    passed, _, details = filter_candidate(
+        "15-16K\n上海，统招本科，6 年 Java 经验",
+        _java_rule(),
+    )
+    assert passed is False
+    assert "地点不符" in details["reason"]
+
+
+def test_filter_candidate_age_over_limit_rejected():
+    rule = {"min_exp": 0, "edu": "不限", "max_age": 35, "keywords": ["Java"]}
+    passed, _, details = filter_candidate("年龄：36 岁，Java 开发", rule)
+    assert passed is False
+    assert "年龄不符" in details["reason"]
+
+
+def test_filter_candidate_age_at_limit_passes():
+    rule = {"min_exp": 0, "edu": "不限", "max_age": 35, "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("35岁，Java 开发", rule)
+    assert passed is True
+
+
+def test_filter_candidate_experience_insufficient():
+    rule = {"min_exp": 5, "edu": "不限", "keywords": ["Java"]}
+    passed, _, details = filter_candidate("3 年 Java 经验", rule)
+    assert passed is False
+    assert "经验不足" in details["reason"]
+
+
+def test_filter_candidate_non_regular_bachelor_rejected():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("专升本，5 年 Java", rule)
+    assert passed is False
+
+
+def test_filter_candidate_fulltime_bachelor_passes():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("全日制本科，5 年 Java", rule)
+    assert passed is True
+
+
+def test_filter_candidate_tech_conditions_or():
+    rule = {
+        "min_exp": 0, "edu": "不限",
+        "tech_conditions": ["activiti", "camunda", "flowable"],
+        "keywords": ["Java"],
+    }
+    passed, _, _ = filter_candidate("有 Camunda 项目经验，Java 开发", rule)
+    assert passed is True
+
+    passed, _, details = filter_candidate("没有工作流经验，Java 开发", rule)
+    assert passed is False
+    assert "技术不匹配" in details["reason"]
+
+
+def test_filter_candidate_no_keywords_full_skill_score():
+    rule = {"min_exp": 0, "edu": "不限", "keywords": []}
+    passed, score, _ = filter_candidate("5 年经验", rule)
+    assert passed is True
+    assert score == SCORE_BASE + SCORE_SKILL_MAX
+
+
+def test_filter_candidate_weighted_skill_scoring():
+    rule = {
+        "min_exp": 0, "edu": "不限",
+        "keywords": [
+            {"name": "Java", "weight": 3},
+            {"name": "Python", "weight": 1},
+        ],
+    }
+    _, score, details = filter_candidate("5 年 Java 经验", rule)
+    expected_skill = int((3 / 4) * SCORE_SKILL_MAX)
+    assert score == SCORE_BASE + expected_skill
+    assert details["skill_matched_count"] == 1
+    assert details["skill_total"] == 4
+
+
+def test_filter_candidate_chinese_experience_years():
+    rule = {"min_exp": 3, "edu": "不限", "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("五年 Java 经验", rule)
+    assert passed is True
+
+
+def test_filter_candidate_multi_city_work_location():
+    rule = {"min_exp": 0, "edu": "不限", "work_location": "南京/上海", "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("意向：上海，Java 开发", rule)
+    assert passed is True
+    passed, _, _ = filter_candidate("意向：南京，Java 开发", rule)
+    assert passed is True
+    passed, _, details = filter_candidate("意向：北京，Java 开发", rule)
+    assert passed is False
+
+
+def test_filter_candidate_negotiable_salary_skips_check():
+    rule = {"min_exp": 0, "edu": "不限", "salary_min": 12, "salary_max": 15, "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("面议\n5 年 Java", rule)
+    assert passed is True
+
+
+def test_filter_candidate_empty_rule_passes_everyone():
+    """空规则意味着不检查任何条件，所有人都通过且技能满分。"""
+    passed, score, _ = filter_candidate("任意文本", {})
+    assert passed is True
+    assert score == SCORE_BASE + SCORE_SKILL_MAX
+
+
+# ========== evaluate_candidate (compatibility) ==========
+
+def test_evaluate_candidate_returns_bool():
+    rule = {"min_exp": 5, "edu": "不限", "keywords": ["Java"]}
+    # keywords 只用于算分，不影响通过/淘汰；经验不足才会被淘汰
+    assert evaluate_candidate("10 年 Java", rule) is True
+    assert evaluate_candidate("2 年 Java", rule) is False
+
+
+# ========== Score breakdown ==========
+
+def test_score_base_only():
+    rule = {"min_exp": 0, "edu": "不限", "keywords": []}
+    _, score, _ = filter_candidate("任意文本", rule)
+    assert score == SCORE_BASE + SCORE_SKILL_MAX
+
+
+def test_score_exp_bonus_capped():
+    rule = {"min_exp": 2, "edu": "不限", "keywords": []}
+    _, score, details = filter_candidate("22年工作经验", rule)
+    assert details["exp_bonus"] == SCORE_EXP_MAX
+    assert score == SCORE_BASE + SCORE_SKILL_MAX + SCORE_EXP_MAX
+
+
+def test_score_edu_bonus_added():
+    # edu_bonus 只在 rule.edu != "不限" 时计算
+    rule = {"min_exp": 0, "edu": "硕士", "keywords": []}
+    _, score_985, d1 = filter_candidate("985 硕士", rule)
+    _, score_plain, d2 = filter_candidate("普通硕士", rule)
+    assert d1["edu_bonus"] == 9
+    assert d2["edu_bonus"] == 7
+    assert score_985 - score_plain == 2
+
+
+# ========== filter_candidate 边界场景 ==========
+
+def test_filter_candidate_salary_exact_boundary_passes():
+    """候选人期望最低薪资 == 岗位最高薪资时应通过（检查条件是 >= max+1）。"""
+    rule = {"min_exp": 0, "edu": "不限", "salary_min": 10, "salary_max": 15, "keywords": ["Java"]}
+    # 候选人期望 15K，岗位最高 15K → 15 < 15+1 → 通过
+    passed, _, _ = filter_candidate("15K\n5 年 Java", rule)
+    assert passed is True
+
+    # 候选人期望 16K，岗位最高 15K → 16 >= 16 → 淘汰
+    passed, _, details = filter_candidate("16K\n5 年 Java", rule)
+    assert passed is False
+    assert "薪资不匹配" in details["reason"]
+
+
+def test_filter_candidate_master_rejected_when_rule_requires_master():
+    """要求硕士时，本科应被淘汰。"""
+    rule = {"min_exp": 0, "edu": "硕士", "keywords": ["Java"]}
+    passed, _, details = filter_candidate("统招本科，5 年 Java", rule)
+    assert passed is False
+    assert "学历不足" in details["reason"]
+
+
+def test_filter_candidate_no_age_in_text_passes():
+    """候选人文本中没有年龄信息时，max_age 检查应跳过（不淘汰）。"""
+    rule = {"min_exp": 0, "edu": "不限", "max_age": 35, "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("5 年 Java 开发经验", rule)
+    assert passed is True
+
+
+def test_filter_candidate_keyword_with_special_chars():
+    """re.escape 确保正则特殊字符不抛异常。
+    \\b 对含非单词字符的关键词（如 C++）有已知局限：
+    中文紧邻时 通→C 是词→词无边界，空格紧邻时 +→空格是非→非无边界。
+    此测试验证函数对这些边界情况至少不抛异常。"""
+    # C++ 周围都是中文或空格时，\b 均无法匹配 — 这是已知局限
+    assert _keyword_found("精通C++编程", "C++") is False
+    assert _keyword_found("精通 C++ 编程", "C++") is False
+    # 普通英文关键词正常匹配（Java 前后都是空格/中文，\b 正常工作）
+    assert _keyword_found("精通 Java 编程", "Java") is True
+    # 带空格的多词英文关键词
+    assert _keyword_found("熟悉 Spring Boot", "Spring Boot") is True
+
+
+def test_filter_candidate_exception_returns_graceful():
+    """触发异常时应返回 (False, 0, reason) 而非抛出异常。"""
+    # 传入一个会触发异常的 rule（edu 为非字符串类型导致比较异常）
+    # 实际上 filter_candidate 的 except 兜底了所有异常
+    # 用一个会触发 max() 空序列异常的场景：edu_keywords 里没有匹配的词
+    # 但 max 有 default=0 不会异常。用更直接的方式：mock 一个内部函数抛异常
+    import unittest.mock as mock
+    with mock.patch('filtering._calc_edu_bonus', side_effect=RuntimeError("test")):
+        rule = {"min_exp": 0, "edu": "本科", "keywords": []}
+        passed, score, details = filter_candidate("统招本科", rule)
+    assert passed is False
+    assert score == 0
+    assert "筛选异常" in details["reason"]

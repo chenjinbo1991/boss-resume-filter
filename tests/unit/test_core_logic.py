@@ -15,6 +15,7 @@ import io
 import json
 import os
 import tempfile
+from unittest.mock import patch
 
 
 def test_parse_experience_years_supports_arabic_and_chinese_numbers():
@@ -253,3 +254,194 @@ def test_save_candidates_all_accepts_explicit_path():
             saved = json.load(f)
 
     assert saved == [{"geek_id": "g1", "job_name": "Java", "match_score": 70}]
+
+
+# ========== load_job_config ==========
+
+def test_load_job_config_jobs_key_format():
+    """支持 "jobs" 键格式的配置文件。"""
+    config = {
+        "jobs": {
+            "Java工程师": {
+                "min_exp": 3,
+                "edu": "本科",
+                "keywords": ["Java", "Spring"]
+            }
+        }
+    }
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False)
+        tmp_path = f.name
+    try:
+        with patch('bossmaster.CONFIG_PATH', tmp_path):
+            from bossmaster import load_job_config
+            jobs, default = load_job_config()
+        assert "Java工程师" in jobs
+        assert default is None
+        assert jobs["Java工程师"]["min_exp"] == 3
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_load_job_config_extracts_default_rule():
+    """default 规则应从 job_requirements 中提取出来单独返回。"""
+    config = {
+        "job_requirements": {
+            "default": {"min_exp": 0, "edu": "不限", "keywords": []},
+            "Python工程师": {"min_exp": 2, "keywords": ["Python"]},
+        }
+    }
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False)
+        tmp_path = f.name
+    try:
+        with patch('bossmaster.CONFIG_PATH', tmp_path):
+            from bossmaster import load_job_config
+            jobs, default = load_job_config()
+        assert "default" not in jobs
+        assert default is not None
+        assert default["edu"] == "不限"
+        assert "Python工程师" in jobs
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_load_job_config_strips_spaces_from_job_name():
+    """岗位名称中的空格应被移除。"""
+    config = {"jobs": {"Java 工程师": {"keywords": ["Java"]}}}
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False)
+        tmp_path = f.name
+    try:
+        with patch('bossmaster.CONFIG_PATH', tmp_path):
+            from bossmaster import load_job_config
+            jobs, _ = load_job_config()
+        assert "Java工程师" in jobs
+        assert "Java 工程师" not in jobs
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_load_job_config_deduplicates_keywords_case_insensitive():
+    """关键词应按小写去重，保留首次出现的格式。"""
+    config = {
+        "jobs": {
+            "Dev": {
+                "keywords": ["Java", "java", "JAVA", "Spring"]
+            }
+        }
+    }
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False)
+        tmp_path = f.name
+    try:
+        with patch('bossmaster.CONFIG_PATH', tmp_path):
+            from bossmaster import load_job_config
+            jobs, _ = load_job_config()
+        kws = jobs["Dev"]["keywords"]
+        assert len(kws) == 2  # Java (case-insensitive dedup) + Spring
+        assert kws[0] == "Java"  # 保留首次出现
+        assert "Spring" in kws
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_load_job_config_deduplicates_dict_format_keywords():
+    """dict 格式关键词也应按 name 去重。"""
+    config = {
+        "jobs": {
+            "Dev": {
+                "keywords": [
+                    {"name": "Java", "weight": 2},
+                    {"name": "java", "weight": 1},
+                    {"name": "Spring", "weight": 1},
+                ]
+            }
+        }
+    }
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False)
+        tmp_path = f.name
+    try:
+        with patch('bossmaster.CONFIG_PATH', tmp_path):
+            from bossmaster import load_job_config
+            jobs, _ = load_job_config()
+        kws = jobs["Dev"]["keywords"]
+        assert len(kws) == 2
+        assert kws[0]["name"] == "Java"
+        assert kws[0]["weight"] == 2  # 保留首次出现的 weight
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_load_job_config_missing_file_returns_default():
+    """配置文件不存在时返回默认配置。"""
+    with patch('bossmaster.CONFIG_PATH', '/nonexistent/path/job_config.json'):
+        from bossmaster import load_job_config
+        with contextlib.redirect_stdout(io.StringIO()):
+            jobs, default = load_job_config()
+        assert default is None
+        assert "default" in jobs
+        assert jobs["default"]["edu"] == "不限"
+
+
+def test_load_job_config_corrupt_json_returns_default():
+    """配置文件 JSON 损坏时返回默认配置。"""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        f.write("{broken json")
+        tmp_path = f.name
+    try:
+        with patch('bossmaster.CONFIG_PATH', tmp_path):
+            from bossmaster import load_job_config
+            with contextlib.redirect_stdout(io.StringIO()):
+                jobs, default = load_job_config()
+        assert default is None
+        assert "default" in jobs
+    finally:
+        os.unlink(tmp_path)
+
+
+# ========== extract_summary_info ==========
+
+def test_extract_summary_info_full_text():
+    """完整摘要文本应提取所有字段。"""
+    from bossmaster import extract_summary_info
+    text = "15-20K\n30 岁，6 年经验，本科\n离职-某某科技有限公司\n南京\n熟悉 Java、Spring、MySQL、Redis"
+    info = extract_summary_info(text)
+    assert info['salary'] == '15-20K'
+    assert info['age'] == '30'
+    assert info['exp_years'] == '6'
+    assert info['education'] == '本科'
+    assert info['job_status'] == '离职'
+    assert '某某科技' in info['company']
+    assert 'Java' in info['skills']
+    assert 'MySQL' in info['skills']
+
+
+def test_extract_summary_info_negotiable_salary():
+    """面议薪资应正确识别。"""
+    from bossmaster import extract_summary_info
+    info = extract_summary_info("面议\n本科，3 年经验")
+    assert info['salary'] == '面议'
+
+
+def test_extract_summary_info_empty_text():
+    """空文本应返回全空字典。"""
+    from bossmaster import extract_summary_info
+    info = extract_summary_info("")
+    assert all(v == '' for v in info.values())
+
+
+def test_extract_summary_info_education_priority():
+    """学历应取最高级别（博士 > 硕士 > 本科）。"""
+    from bossmaster import extract_summary_info
+    info = extract_summary_info("本科，硕士在读，博士毕业")
+    assert info['education'] == '博士'
+
+
+def test_extract_summary_info_status_with_company():
+    """在职/离职状态和公司名提取。"""
+    from bossmaster import extract_summary_info
+    info = extract_summary_info("在职-阿里巴巴集团")
+    assert info['job_status'] == '在职'
+    assert info['company'] == '阿里巴巴集团'

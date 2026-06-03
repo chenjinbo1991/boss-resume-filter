@@ -15,7 +15,7 @@ boss-resume-filter/
 ├── doc_parser.py         # 文档解析器（简历解析）
 ├── security.py           # API Key 安全存储模块（keyring 加密）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
-├── constants.py          # 共享常量（评分模型参数、阈值、城市列表、非统招关键词、中文数字映射）
+├── constants.py          # 共享常量（评分模型参数、阈值、学历档位、滚动参数、城市列表）
 ├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
 ├── latest.json           # 版本清单（Gitee 更新源，build.py --release 自动维护）
@@ -170,21 +170,9 @@ boss-resume-filter/
 
 - 候选人城市匹配岗位配置，支持多地点（`/`、`、` 分隔），空时不启用
 
-### 招聘需求模板
-
-- `job_config.json` 的 `requirement_template` 字段存储模板，GUI 按钮一键填充
-
-### 新建岗位步骤引导条
-
-- 4 步引导：填需求→解析→检查→保存；推进时机与滚动检测联动
-
 ### 数据统计看板
 
 - 按岗位聚合，4 张汇总卡片 + 明细 Treeview；只统计 ≥55 分；支持时间范围过滤
-
-### 页面切换性能优化
-
-三缓存：滚轮绑定、job_config mtime、Treeview `(mtime, size)` + 过滤条件指纹
 
 ### 页面选择器配置（selectors.json）
 
@@ -249,21 +237,9 @@ boss-resume-filter/
 
 DMG 只含 .app + Applications 快捷方式，配置文件不在 DMG 中。`_get_base_dir()` 首次启动时检测配置文件不存在则从 `sys._MEIPASS` 复制。
 
-### macOS Dock 图标点击恢复窗口
-
-`tk::mac::Reopen`（旧命令）在 Tk macOS 上不触发。最终方案：`root.createcommand('tk::mac::ReopenApplication', callback)`（注意是 `ReopenApplication` 不是 `Reopen`），配合 `deiconify()` + `lift()` + `focus_force()`。
-
 ### Tk 对话框 `wait_window()` 嵌套事件循环崩溃
 
 `wait_window()` 在 `root.after()` 回调中创建嵌套事件循环，macOS 上与 Cocoa scroll hook 和浏览器轮询冲突导致崩溃。正确做法是用 `grab_set()` 实现模态（不阻塞主事件循环），`protocol("WM_DELETE_WINDOW")` + `_close_dialog()` 清理引用。`self.root.update()` 也有重入风险，应移除。
-
-### Tk Listbox 不支持 spacing1/spacing2/spacing3
-
-`tk.Listbox` 不接受这些参数——它们是 `tk.Text` 专属选项。调整行间距只能通过修改字体大小。
-
-### `pack_propagate(False)` 必须同时指定 width 和 height
-
-只设一个维度，另一个坍缩为 0，子控件不可见。搭配 `place` 更危险。正确做法：同时设 `width` 和 `height`，或内部用 pack + `expand=True` 撑开。
 
 ### Windows DPI 缩放（DPI Unaware 方案）
 
@@ -312,20 +288,7 @@ style.map('TEntry', fieldbackground=[('!disabled', bg_card)])
 
 ### Gitee Release API 限制
 
-1. **PATCH release 必须带 `tag_name` 和 `body`**：只传 `name` 返回 400 `"body is missing"`
-2. **releases 列表不返回附件 ID**：删除附件需通过 `GET /releases/{id}/attach_files` 获取
-
-### Windows ttk.Button foreground 不生效
-
-Windows `vista` 主题的 `ttk.Button` 不尊重 `foreground` 颜色。需要自定义颜色改用 `tk.Button`，或保持 `ttk.Button` 默认样式只通过图标颜色区分。
-
-### Tk Canvas yscrollcommand 返回字符串
-
-`canvas.cget("yscrollcommand")` 返回 Tcl 命令字符串，不是 Python 可调用对象。需遍历 canvas 父容器找到 `ttk.Scrollbar` 的 `.set` 方法。回调参数也是字符串，需 `float()` 转换。
-
-### Gitee 上传参数处理
-
-`build.py --gitee-upload` 接受版本号时需先移除 `v` 前缀（`v2.9` → `2.9`），否则 tag 变成 `vv2.9`。PATCH release 时 `release_notes` 为空不能传空字符串（Gitee 400），应保留原有 body。
+PATCH release 必须带 `tag_name` 和 `body`（只传 `name` 返回 400）。releases 列表不返回附件 ID，删除附件需通过 `GET /releases/{id}/attach_files`。版本号参数需先移除 `v` 前缀（`v2.9` → `2.9`），否则 tag 变成 `vv2.9`。
 
 ### provider 显示名称与内部键不一致
 
