@@ -2240,6 +2240,14 @@ def _gitee_upload_single(filepath, api_base, token, release_id, max_retries=5):
                     params={"access_token": token},
                     timeout=TRANSFER_TIMEOUT_SECONDS,
                 )
+            if 400 <= resp.status_code < 500:
+                detail = resp.text.strip()
+                if len(detail) > 300:
+                    detail = detail[:300] + "..."
+                raise requests.exceptions.HTTPError(
+                    f"{resp.status_code} Client Error: {detail}",
+                    response=resp,
+                )
             resp.raise_for_status()
             return filepath.name, resp.json()
         except requests.exceptions.RequestException as e:
