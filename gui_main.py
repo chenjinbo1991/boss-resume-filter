@@ -3901,7 +3901,7 @@ class BossFilterGUI:
             # 更新 api_config 中的所有字段
             if hasattr(self, 'api_config') and self.api_config:
                 self.api_config["model"] = model_name
-                self.api_config["api_provider"] = provider
+                self.api_config["api_provider"] = provider_key
                 self.api_config["api_key"] = saved_api_key
                 self.api_config["base_url"] = model_config.get("base_url", "")
 
