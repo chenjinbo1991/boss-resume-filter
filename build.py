@@ -1916,7 +1916,13 @@ def _build_input_files():
         "api_config.json", "selectors.json", "CHANGELOG.md",
     ]
 
-    all_files = py_files + config_files
+    # PyInstaller hooks（控制模块收集范围）
+    hook_files = []
+    hooks_dir = BASE_DIR / "pyinstaller-hooks"
+    if hooks_dir.exists():
+        hook_files = [str(f.relative_to(BASE_DIR)) for f in hooks_dir.glob("*.py")]
+
+    all_files = py_files + config_files + hook_files
     return [BASE_DIR / f for f in all_files if (BASE_DIR / f).exists()]
 
 
@@ -3077,6 +3083,7 @@ def main():
 
     cmd += [
         '--name', 'BOSS_ResumeFilter',
+        '--additional-hooks-dir', str(BASE_DIR / 'pyinstaller-hooks'),
         '--add-data', f'{BASE_DIR / "job_config.json"}{SEP}.',
         '--add-data', f'{BASE_DIR / "api_config.json"}{SEP}.',
         '--add-data', f'{BASE_DIR / "selectors.json"}{SEP}.',
