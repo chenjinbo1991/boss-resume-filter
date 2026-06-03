@@ -2846,8 +2846,12 @@ def main():
                         help="CI 模式：跳过虚拟环境切换和 git 操作，用于 GitHub Actions")
     parser.add_argument("--gitee-upload", type=str, default=None, metavar="X.Y.Z",
                         help="手动补传产物到 Gitee Release（需要 GITEE_TOKEN）")
+    parser.add_argument("--gitee-clean-old-assets", type=str, default=None, metavar="X.Y.Z",
+                        help="清理 Gitee 旧版本附件，仅保留指定版本产物；默认只预览")
     parser.add_argument("--github-upload", type=str, default=None, metavar="X.Y.Z",
                         help="手动补传产物到 GitHub Release")
+    parser.add_argument("--apply", action="store_true",
+                        help="配合 --gitee-clean-old-assets 执行真实删除")
     parser.add_argument("--auto", action="store_true",
                         help="全自动模式：跳过推送确认，用于 Claude Code 等非交互环境")
     parser.add_argument("--force-build", action="store_true",
@@ -2879,6 +2883,11 @@ def main():
 
     if args.check:
         _preflight_checks(require_clean=True)
+        return
+
+    if args.gitee_clean_old_assets:
+        version = args.gitee_clean_old_assets
+        _gitee_clean_old_assets(version, apply=args.apply)
         return
 
     if args.gitee_upload:

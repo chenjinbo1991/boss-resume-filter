@@ -410,6 +410,91 @@ def test_sync_gitee_from_github_refreshes_stale_release_cache_before_upload():
     }
 
 
+def test_gitee_clean_old_assets_dry_run_keeps_all_assets():
+    releases = [
+        {"tag_name": "v9.9.9", "id": 1},
+        {"tag_name": "v9.9.8", "id": 2},
+    ]
+    assets_by_release = {
+        1: {"BOSS_ResumeFilter.exe": {"id": 10, "size": 100}},
+        2: {"BOSS_ResumeFilter.exe": {"id": 20, "size": 200}},
+    }
+    deleted = []
+
+    original_env = build.os.environ.get("GITEE_TOKEN")
+    original_ping = build._gitee_ping
+    original_fetch_releases = build._gitee_fetch_releases
+    original_fetch_assets = build._gitee_fetch_assets
+    original_delete = build._gitee_delete_asset
+    try:
+        build.os.environ["GITEE_TOKEN"] = "token"
+        build._gitee_ping = lambda token: True
+        build._gitee_fetch_releases = lambda api_base, token: releases
+        build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: assets_by_release[release_id]
+        build._gitee_delete_asset = lambda *args: deleted.append(args)
+
+        ok = build._gitee_clean_old_assets("9.9.9", apply=False)
+    finally:
+        if original_env is None:
+            build.os.environ.pop("GITEE_TOKEN", None)
+        else:
+            build.os.environ["GITEE_TOKEN"] = original_env
+        build._gitee_ping = original_ping
+        build._gitee_fetch_releases = original_fetch_releases
+        build._gitee_fetch_assets = original_fetch_assets
+        build._gitee_delete_asset = original_delete
+
+    assert ok is True
+    assert deleted == []
+
+
+def test_gitee_clean_old_assets_apply_deletes_only_non_current_assets():
+    releases = [
+        {"tag_name": "v9.9.9", "id": 1},
+        {"tag_name": "v9.9.8", "id": 2},
+        {"tag_name": "v9.9.7", "id": 3},
+    ]
+    assets_by_release = {
+        1: {"BOSS_ResumeFilter.exe": {"id": 10, "size": 100}},
+        2: {"BOSS_ResumeFilter.exe": {"id": 20, "size": 200}},
+        3: {"README.md": {"id": 30, "size": 300}},
+    }
+    deleted = []
+
+    original_env = build.os.environ.get("GITEE_TOKEN")
+    original_ping = build._gitee_ping
+    original_fetch_releases = build._gitee_fetch_releases
+    original_fetch_assets = build._gitee_fetch_assets
+    original_delete = build._gitee_delete_asset
+    try:
+        build.os.environ["GITEE_TOKEN"] = "token"
+        build._gitee_ping = lambda token: True
+        build._gitee_fetch_releases = lambda api_base, token: releases
+        build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: assets_by_release[release_id]
+
+        def fake_delete(api_base, token, release_id, asset_id, filename):
+            deleted.append((release_id, asset_id, filename))
+
+        build._gitee_delete_asset = fake_delete
+
+        ok = build._gitee_clean_old_assets("v9.9.9", apply=True)
+    finally:
+        if original_env is None:
+            build.os.environ.pop("GITEE_TOKEN", None)
+        else:
+            build.os.environ["GITEE_TOKEN"] = original_env
+        build._gitee_ping = original_ping
+        build._gitee_fetch_releases = original_fetch_releases
+        build._gitee_fetch_assets = original_fetch_assets
+        build._gitee_delete_asset = original_delete
+
+    assert ok is True
+    assert deleted == [
+        (2, 20, "v9.9.8/BOSS_ResumeFilter.exe"),
+        (3, 30, "v9.9.7/README.md"),
+    ]
+
+
 def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
