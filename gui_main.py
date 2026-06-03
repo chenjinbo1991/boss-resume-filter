@@ -2468,11 +2468,12 @@ class BossFilterGUI:
         _note_prefix = "(对通过筛选的候选人进行 LLM 二次评分，"
         _note_suffix = "10分调整)"
         _note_font = (FONT_FAMILY, int(11 * self.font_scale))
+        _sign_font = (FONT_FAMILY, int(14 * self.font_scale))  # +/- 显式加大
         tk.Label(row_ai, text=_note_prefix, font=_note_font,
                  foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-        tk.Label(row_ai, text="+", font=_note_font,
+        tk.Label(row_ai, text="+", font=_sign_font,
                  foreground=self.colors['success'], background=self.colors['bg_card']).pack(side="left")
-        tk.Label(row_ai, text="-", font=_note_font,
+        tk.Label(row_ai, text="-", font=_sign_font,
                  foreground=self.colors['danger'], background=self.colors['bg_card']).pack(side="left")
         tk.Label(row_ai, text=_note_suffix, font=_note_font,
                  foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left")
