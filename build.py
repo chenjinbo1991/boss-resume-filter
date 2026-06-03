@@ -3088,6 +3088,28 @@ def main():
         '--add-data', f'{BASE_DIR / "api_config.json"}{SEP}.',
         '--add-data', f'{BASE_DIR / "selectors.json"}{SEP}.',
         '--add-data', f'{BASE_DIR / "CHANGELOG.md"}{SEP}.',
+    ]
+
+    # babel locale-data: 只收集项目实际使用的语言（排除全部 1086 个 locale 文件，按需添加）
+    babel_locale_dir = VENV_DIR / ("Lib" if IS_WIN else "lib") / "site-packages" / "babel" / "locale-data"
+    if not babel_locale_dir.exists():
+        import glob as _glob
+        matches = _glob.glob(str(babel_locale_dir))
+        babel_locale_dir = Path(matches[0]) if matches else None
+
+    babel_locales = [
+        "root.dat",
+        "en.dat", "en_US.dat",
+        "zh.dat", "zh_Hans.dat", "zh_Hans_CN.dat",
+        "zh_Hant.dat", "zh_Hant_TW.dat", "zh_Hant_HK.dat",
+    ]
+    if babel_locale_dir and babel_locale_dir.exists():
+        for loc in babel_locales:
+            loc_file = babel_locale_dir / loc
+            if loc_file.exists():
+                cmd += ['--add-data', f'{loc_file}{SEP}babel/locale-data']
+
+    cmd += [
         '--hidden-import=tkinter',
         '--hidden-import=tkinter.ttk',
         '--hidden-import=tkinter.font',

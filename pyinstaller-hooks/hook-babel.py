@@ -11,5 +11,5 @@ tkcalendar 只用 babel.dates 的日期格式化，实际运行只需要：
 from PyInstaller.utils.hooks import collect_data_files
 
 
-# 只收集 global.dat，不收集 locale-data 目录
-datas = collect_data_files('babel', include_only=['global.dat', 'py.typed'])
+# 排除整个 locale-data 目录，后面在 build.py 中按需添加
+datas = collect_data_files('babel', excludes=['babel/locale-data/*'])
