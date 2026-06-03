@@ -6,6 +6,7 @@ BOSS 简历筛选器 - 打包脚本
   python build.py --release            打包 → 提交 → 打 tag → 推送 → GitHub Release
   python build.py --release --version 2.5  自动更新 __version__ + 一键发布
   python build.py --ci --release       CI 模式：跳过 venv/git，由 GitHub Actions 调用
+  python build.py --github-upload X.Y.Z 手动补传产物到 GitHub Release
   python build.py --gitee-upload X.Y.Z 手动补传产物到 Gitee Release
 """
 import argparse
@@ -2563,6 +2564,8 @@ def main():
                         help="CI 模式：跳过虚拟环境切换和 git 操作，用于 GitHub Actions")
     parser.add_argument("--gitee-upload", type=str, default=None, metavar="X.Y.Z",
                         help="手动补传产物到 Gitee Release（需要 GITEE_TOKEN）")
+    parser.add_argument("--github-upload", type=str, default=None, metavar="X.Y.Z",
+                        help="手动补传产物到 GitHub Release")
     parser.add_argument("--auto", action="store_true",
                         help="全自动模式：跳过推送确认，用于 Claude Code 等非交互环境")
     parser.add_argument("--force-build", action="store_true",
@@ -2645,6 +2648,94 @@ def main():
                 print(f"\n  [跳过] latest.json 无变化，无需提交")
         else:
             print(f"\n  [失败] Gitee 上传未成功")
+        return
+
+    if args.github_upload:
+        version = args.github_upload
+        # 移除可能的 'v' 前缀，避免 tag 变成 'vv2.9'
+        if version.startswith('v'):
+            version = version[1:]
+        tag = f"v{version}"
+        print(f"\n>>> 手动上传产物到 GitHub Release {tag}")
+
+        # 检查 Release 是否存在
+        r = subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=BASE_DIR)
+        if r.returncode != 0:
+            print(f"[错误] GitHub Release {tag} 不存在，请先运行 python build.py --release --version {version}")
+            sys.exit(1)
+
+        # 从 GitHub Release 读取 release notes
+        release_title = tag
+        release_notes = ""
+        try:
+            r = subprocess.run(
+                ["gh", "release", "view", tag, "--json", "name,body"],
+                capture_output=True, text=True, encoding='utf-8', cwd=BASE_DIR,
+            )
+            if r.returncode == 0:
+                data = json.loads(r.stdout)
+                release_title = data.get("name", tag)
+                release_notes = data.get("body", "")
+        except Exception:
+            pass
+
+        # 上传缺失的产物
+        cfg = DIST_DIR / "job_config.json"
+        readme = DIST_DIR / "README.md"
+        if IS_MAC:
+            dmg = DIST_DIR / "BOSS_ResumeFilter.dmg"
+            mac_zip = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
+            artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (readme, "README")]
+        else:
+            exe = DIST_DIR / "BOSS_ResumeFilter.exe"
+            artifacts = [(exe, "EXE"), (cfg, "Config"), (readme, "README")]
+
+        print(f"  准备上传 {len(artifacts)} 个文件")
+
+        # 检查已存在的资源
+        existing = subprocess.run(["gh", "release", "view", tag, "--json", "assets"],
+                                  capture_output=True, text=True, cwd=BASE_DIR)
+        remote_assets = {}
+        if existing.returncode == 0 and existing.stdout.strip():
+            assets = json.loads(existing.stdout).get("assets", [])
+            remote_assets = {a["name"]: a for a in assets}
+
+        uploaded_count = 0
+        for f, label in artifacts:
+            if f.exists():
+                remote_asset = remote_assets.get(f.name)
+                if remote_asset:
+                    same, reason = _github_asset_matches_local(tag, f, remote_asset)
+                    if same:
+                        print(f"  [跳过] {f.name} 已存在且一致")
+                        continue
+                    print(f"  [更新] {f.name}: {reason}")
+                else:
+                    print(f"  [上传] {f.name}")
+
+                for attempt in range(3):
+                    try:
+                        subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
+                                       cwd=BASE_DIR, check=True, timeout=600)
+                        uploaded_count += 1
+                        print(f"  [OK] {f.name}")
+                        break
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                        if attempt < 2:
+                            wait = 10 * (attempt + 1)
+                            print(f"  [重试] {f.name} 上传失败 (attempt {attempt+1}/3), {wait}s 后重试...")
+                            time.sleep(wait)
+                        else:
+                            print(f"  [失败] {f.name} 上传失败: {e}")
+                            raise
+            else:
+                print(f"  [跳过] {f.name} 不存在")
+
+        if uploaded_count > 0:
+            print(f"\n  [OK] 已上传 {uploaded_count} 个文件到 GitHub Release {tag}")
+            print(f"  查看 Release: https://github.com/yaoyouzhong/boss-resume-filter/releases/tag/{tag}")
+        else:
+            print(f"\n  [跳过] 没有需要上传的文件")
         return
 
     print("""
