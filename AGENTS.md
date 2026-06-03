@@ -93,12 +93,13 @@ boss-resume-filter/
 - Release 模式只自动提交 `--version` 引起的版本号变化，其他变更须先手工提交
 - 推送前 `input()` 确认 [y/N]；tag 冲突时自动 `--force`（master 除外）
 
-#### 打包体积优化（44MB → 32MB）
+#### 打包体积优化（59MB → 32MB）
 
 - **PIL**：精确 `--hidden-import` 仅收集 Image/ImageDraw/ImageTk，排除 `_avif`/`_webp`
 - **babel locale-data**：自定义 hook（`pyinstaller-hooks/hook-babel.py`）排除全部 1086 个 locale .dat，按需添加 9 个（zh/en 系列）
 - **排除模块**：`--exclude-module=numpy`（项目只用 pandas）、`sqlite3`、`scipy`、`lxml.objectify`/`lxml.html`
 - 修改 build.py 时注意保持上述优化，避免体积回退
+- **CI 跨平台重建**：`build.py` 和 `pyinstaller-hooks/` 的变更会触发对端平台 CI 重建（`_needs_cross_platform_rebuild` 中 `SHARED_BUILD_FILES` 和 `REBUILD_PREFIXES`）。如果 CI 因旧产物存在而跳过构建，需先 `gh release delete-asset` 删除对端产物再触发
 
 ## 代码规范
 
