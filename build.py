@@ -3163,13 +3163,8 @@ def main():
         '--exclude-module=IPython',
         '--exclude-module=pytest',
         '--exclude-module=notebook',
-        # 项目不直接用 sqlite3/numpy，都是 pandas/openpyxl 的传递依赖
-        '--exclude-module=sqlite3',
-        '--exclude-module=numpy',
-        '--exclude-module=numpy.libs',
-        # lxml 只用 etree，不用 objectify/html
+        # lxml.objectify 当前没有运行期入口；lxml.html 由 DrissionPage 顶层导入，不能排除。
         '--exclude-module=lxml.objectify',
-        '--exclude-module=lxml.html',
         str(BASE_DIR / "gui_main.py")
     ]
 
