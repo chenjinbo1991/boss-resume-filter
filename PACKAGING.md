@@ -11,6 +11,8 @@
 
 `build.py` 自动检测当前平台，无需额外参数。
 
+**体积基线（v2.9.2）**：Windows 使用 `--onefile` 单文件 EXE，macOS 使用 `--onedir` 生成 `.app` 后再压缩为 ZIP/DMG。两者压缩结构和平台运行库不同，Windows EXE 约 43.6MB、macOS ZIP/DMG 约 32-34MB 属正常范围；不要把 macOS 安装包较小误判为缺依赖或未重建。
+
 ### 自动补齐（GitHub Actions）
 
 在任一平台本地发布后，`build.py` 会自动删除对端旧产物并触发 CI 重建：
