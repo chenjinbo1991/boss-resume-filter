@@ -46,12 +46,25 @@ _INDUSTRY_ALIASES = {
     '证券': ['券商', '证券公司', '证券交易'],
 }
 
+_EDU_ALIASES = {
+    '985 院校': ['985', '985院校', '985高校', '985大学'],
+    '211 院校': ['211', '211院校', '211高校', '211大学'],
+    '双一流院校': ['双一流', '双一流院校', '双一流高校', '双一流大学'],
+    '全日制本科': ['全日制本科', '统招本科'],
+}
+
 
 def _condition_item_found(candidate_text: str, item: str) -> bool:
     """Match a required/preferred item with known aliases."""
+    special_exp = re.match(r'(.+?)经验≥(\d+)年$', item)
+    if special_exp:
+        domain = special_exp.group(1).strip()
+        required_years = int(special_exp.group(2))
+        return _condition_item_found(candidate_text, domain) and (parse_experience_years(candidate_text) or 0) >= required_years
+
     if item.lower() in candidate_text.lower():
         return True
-    aliases = _CERT_ALIASES.get(item, []) + _INDUSTRY_ALIASES.get(item, [])
+    aliases = _CERT_ALIASES.get(item, []) + _INDUSTRY_ALIASES.get(item, []) + _EDU_ALIASES.get(item, [])
     return any(alias.lower() in candidate_text.lower() for alias in aliases)
 
 

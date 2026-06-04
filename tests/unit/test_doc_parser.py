@@ -31,6 +31,16 @@ def test_extract_work_location_patterns():
     assert _extract_work_location("Base地：深圳南山") == "深圳"
 
 
+def test_extract_work_location_multiple_cities():
+    assert _extract_work_location("工作地点：南京/上海/杭州") == "南京/上海/杭州"
+    assert _extract_work_location("base 南京，可接受上海") == "南京/上海"
+
+
+def test_extract_work_location_remote_or_nationwide_disables_filter():
+    assert _extract_work_location("工作地点：远程办公") == ""
+    assert _extract_work_location("办公地点不限，全国远程") == ""
+
+
 def test_extract_work_location_fallback_scans_full_text():
     assert _extract_work_location("我们在杭州招聘优秀人才") == "杭州"
     assert _extract_work_location("无地点信息") == ""
@@ -128,8 +138,34 @@ def test_required_conditions_quanrizhi():
 
 def test_required_conditions_985_211():
     result = parse_job_requirements("## 硬性条件\n985/211 院校")
-    assert "985 院校" in result["required_conditions"]
-    assert "211 院校" in result["required_conditions"]
+    school_or = next((c for c in result["required_conditions"] if isinstance(c, dict) and c.get("category") == "院校背景"), None)
+    assert school_or is not None
+    assert school_or["type"] == "or"
+    assert "985 院校" in school_or["items"]
+    assert "211 院校" in school_or["items"]
+
+
+def test_education_985_211_preferred_not_required():
+    config = generate_config_from_text("## 硬性条件\n本科，985/211 优先", merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    assert job["edu"] == "本科"
+    assert not any(
+        isinstance(c, dict) and c.get("category") == "院校背景"
+        for c in job["required_conditions"]
+    )
+    preferred_names = [k["name"] for k in job["preferred_keywords"]]
+    assert "985 院校" in preferred_names
+    assert "211 院校" in preferred_names
+
+
+def test_education_preferred_school_keeps_hard_regular_bachelor_without_markdown():
+    config = generate_config_from_text("任职资格\n统招本科，985/211 优先", merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    assert job["edu"] == "本科"
+    assert "统招本科" in job["required_conditions"]
+    preferred_names = [k["name"] for k in job["preferred_keywords"]]
+    assert "985 院校" in preferred_names
+    assert "211 院校" in preferred_names
 
 
 def test_required_conditions_age_limit():
@@ -148,13 +184,50 @@ def test_required_conditions_shuangzheng():
 def test_tech_conditions_extracted_from_required_section():
     text = "## 硬性条件\n必须熟悉 Java 或 Python"
     result = parse_job_requirements(text)
-    assert "Java" in result["tech_conditions"] or "Python" in result["tech_conditions"]
+    tech_or = next((c for c in result["required_conditions"] if isinstance(c, dict) and c.get("category") == "技术硬性条件"), None)
+    assert tech_or is not None
+    assert tech_or["type"] == "or"
+    assert "Java" in tech_or["items"] or "Python" in tech_or["items"]
 
 
 def test_tech_conditions_spring_ecosystem():
     text = "## 硬性条件\nSpring Cloud 微服务经验"
     result = parse_job_requirements(text)
     assert any("Spring" in tc for tc in result["tech_conditions"])
+
+
+def test_hard_line_or_condition_from_slash_or_hint():
+    text = "任职资格\n必须熟悉 Java/Python 至少一种"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    tech_or = next((c for c in job["required_conditions"] if isinstance(c, dict) and c.get("category") == "技术硬性条件"), None)
+    assert tech_or is not None
+    assert tech_or["type"] == "or"
+    assert "Java" in tech_or["items"]
+    assert "Python" in tech_or["items"]
+
+
+def test_hard_line_and_condition_from_simultaneous_hint():
+    text = "任职资格\n必须同时具备 Java 和 MySQL 经验"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    tech_and = next((c for c in job["required_conditions"] if isinstance(c, dict) and c.get("category") == "技术硬性条件"), None)
+    assert tech_and is not None
+    assert tech_and["type"] == "and"
+    assert "Java" in tech_and["items"]
+    assert "MySQL" in tech_and["items"]
+
+
+def test_generated_config_moves_tech_conditions_to_required_or_only():
+    text = "## 硬性条件\n必须熟悉 Java 或 Python"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    required = job["required_conditions"]
+    tech_or = next((c for c in required if isinstance(c, dict) and c.get("category") == "技术硬性条件"), None)
+    assert tech_or is not None
+    assert tech_or["type"] == "or"
+    assert "Java" in tech_or["items"] or "Python" in tech_or["items"]
+    assert "tech_conditions" not in job
 
 
 # ========== 软技能提取 ==========
@@ -188,6 +261,14 @@ def test_soft_skills_ai_keywords():
     skill_names_lower = [s.lower() for s in result["soft_skills"]]
     assert "llm" in skill_names_lower
     assert "rag" in skill_names_lower
+
+
+def test_skill_aliases_are_canonicalized():
+    text = "职位要求\n熟悉 K8s、Postgres、智能体开发"
+    result = parse_job_requirements(text)
+    assert "Kubernetes" in result["soft_skills"]
+    assert "PostgreSQL" in result["soft_skills"]
+    assert "AI Agent" in result["soft_skills"]
 
 
 # ========== 薪资范围 ==========
@@ -651,6 +732,17 @@ def test_experience_chinese_zhishao():
     """至少三年年（中文数字+至少）"""
     result = parse_job_requirements("## 硬性条件\n至少三年开发经验")
     assert result["min_exp"] == 3
+
+
+def test_specialized_experience_conditions_are_extracted():
+    text = "任职资格\n5年以上工作经验，其中3年以上金融行业经验，2年以上Python经验"
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    assert job["min_exp"] == 5
+    special = [c for c in job["required_conditions"] if isinstance(c, dict) and c.get("category") == "专项经验"]
+    flat_items = [item for cond in special for item in cond["items"]]
+    assert "金融行业经验≥3年" in flat_items
+    assert "Python经验≥2年" in flat_items
 
 
 # ========== P1: 段落分离增强（非标准标题词）==========

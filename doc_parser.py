@@ -16,12 +16,288 @@ from constants import MAJOR_CITIES, CHINESE_NUMERALS
 _major_cities_set = set(MAJOR_CITIES)
 
 
+SKILL_ALIASES = {
+    'Spring Cloud': ['Spring Cloud', 'SpringCloud'],
+    'Spring Boot': ['Spring Boot', 'SpringBoot'],
+    'Spring MVC': ['Spring MVC', 'SpringMvc'],
+    'Spring AI': ['Spring AI', 'SpringAI'],
+    'MyBatis Plus': ['MyBatis Plus', 'MyBatisPlus'],
+    'MyBatis': ['MyBatis'],
+    'Node.js': ['Node.js', 'NodeJs', 'Node'],
+    'Vue.js': ['Vue.js', 'VueJs', 'Vue'],
+    'AI Agent': ['AI Agent', 'AIAgent', '智能体'],
+    'Kubernetes': ['Kubernetes', 'K8s'],
+    'PostgreSQL': ['PostgreSQL', 'Postgres'],
+    'SQL': ['SQL', 'sql'],
+}
+
+TECH_SKILLS = [
+    # Spring 家族
+    'Spring Cloud', 'Spring Boot', 'Spring MVC', 'Spring AI', 'Spring',
+    # 数据库
+    'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'Oracle', 'SQLServer', 'SQLite', 'Elasticsearch', 'SQL',
+    # 语言
+    'JavaScript', 'TypeScript', 'Java', 'Python', 'Go', 'Rust', 'C++', 'C#', 'PHP', 'Ruby', 'Swift', 'Kotlin', 'Scala',
+    # 前端
+    'React', 'Vue.js', 'Angular', 'HTML', 'CSS', 'Sass', 'Less', 'jQuery', 'Bootstrap', 'Webpack', 'Vite', 'Node.js', 'Next.js',
+    # 后端框架
+    'Django', 'Flask', 'Express', 'FastAPI', 'Gin', 'Laravel', 'Dubbo', 'MyBatis Plus', 'MyBatis',
+    # 云/DevOps
+    'AWS', 'Azure', '阿里云', '腾讯云', '华为云',
+    'Docker', 'Kubernetes', 'Jenkins', 'GitLab', 'CI/CD', 'Terraform', 'Ansible', 'Nginx', 'Apache',
+    # 数据/AI
+    'TensorFlow', 'PyTorch', 'Pandas', 'NumPy', 'Spark', 'Hadoop',
+    'AI', '人工智能', '机器学习', '深度学习', '数据分析', '数据挖掘', '数据可视化',
+    'LLM', '大模型', 'AI Agent', 'Agent', '智能问答', '知识库', 'RAG', '向量数据库',
+    '爬虫', '网络爬虫',
+    # 金融/量化
+    'Wind', 'Bloomberg', '量化', '固收', '因子模型',
+    # 爬虫框架
+    'Scrapy', 'Selenium',
+    # 其他
+    'Linux', 'Git', '微服务', '分布式', '大数据', '云计算',
+    'MQTT', 'Kafka', 'RabbitMQ', '消息队列', '消息中间件', 'GraphQL', 'RESTful', 'API', 'RPC',
+    # 工作流
+    'activiti', 'camunda', 'flowable', '工作流',
+]
+
+INDUSTRY_CATEGORIES = {
+    '债券': ['债券', '固收', '固定收益', '利率债', '信用债', '国债', '公司债', '企业债', '可转债'],
+    '基金': ['基金', '公募', '私募', 'ETF', 'FOF', '货币基金', '债券基金', '股票基金'],
+    '期货': ['期货', '商品期货', '金融期货', '股指期货', 'CTA'],
+    '期权': ['期权', '衍生品', '结构化产品', '场外期权', '场内期权'],
+    '量化': ['量化', '量化交易', '量化策略', '量化模型', '因子', 'alpha'],
+    '证券': ['证券', '券商', '证券公司', '证券交易'],
+}
+
+CERT_KEYWORDS = [
+    '证券从业资格', '基金从业资格', '期货从业资格', '银行从业资格',
+    'CFA', 'CPA', 'FRM', 'ACCA', 'CIIA',
+    '法律职业资格', '司法资格', '注册会计师', '税务师',
+    'PMP', 'PRINCE2', 'Scrum Master',
+]
+
+BONUS_DOMAIN_KEYWORDS = [
+    '证券', '基金', '期货', '银行', '保险', '信托', '资管', '资产管理',
+    '固收', '固定收益', '量化', '衍生品', '期权', '外汇', '大宗商品',
+    '金融', '投行', '投资', '私募', '风控', '合规',
+    '游戏', '电商', '物联网', '区块链', '芯片', '嵌入式',
+    '医疗', '医药', '生物', '教育', '通信', '汽车', '自动驾驶',
+]
+
+HARD_HINT_RE = re.compile(r'必须|必需|要求|具备|需要|需|不低于|不少于|至少|硬性|必备|任职资格')
+PREFERRED_HINT_RE = re.compile(r'优先|加分|更佳|优先考虑|优先录用')
+SKILL_HINT_RE = re.compile(r'熟悉|熟练|掌握|精通|了解|参与过|使用|开发|运维|建设')
+OR_HINT_RE = re.compile(r'或|或者|任一|其一|至少一种|至少一项|包括但不限于|等|[/／]')
+AND_HINT_RE = re.compile(r'同时|均需|全部|均要|且|并且')
+REMOTE_LOCATION_RE = re.compile(r'远程|居家办公|线上办公|全国|不限地点|地点不限|不限制地点|混合办公')
+
+
 def _clean_job_title(title: str) -> str:
     """清理岗位标题中的序号/标签前缀和多余空白。"""
     title = re.sub(r'\s+', ' ', str(title or '')).strip()
     title = re.sub(r'^(?:岗位|职位|招聘)\s*\d+\s*[：:、.\-]\s*', '', title)
     title = re.sub(r'^\d+\s*[：:、.\-]\s*', '', title)
     return title.strip()
+
+
+def _strip_list_marker(line: str) -> str:
+    """去掉编号、项目符号、Markdown 标记，保留句子内容。"""
+    line = re.sub(r'^\s*(?:[-*•·●■□]+|\d+[).、．:：-]+|[一二三四五六七八九十]+[、.．])\s*', '', line)
+    return line.strip()
+
+
+def _structured_lines(text: str) -> list[dict]:
+    """将招聘文本转换为行级结构，供后续字段抽取和条件分类复用。"""
+    sections = {
+        'hard': re.compile(r'硬性条件|硬性要求|基本条件|必备条件|必须满足|必须条件|必要条件|任职资格'),
+        'desc': re.compile(r'职位描述|岗位职责|工作内容|主要职责|工作职责'),
+        'req': re.compile(r'职位要求|任职要求|岗位要求|应聘要求|能力要求|我们希望你'),
+        'preferred': re.compile(r'软性条件|加分项|优先条件|加分条件|优先考虑'),
+    }
+    current = 'body'
+    rows = []
+    for raw_line in text.split('\n'):
+        raw = raw_line.strip()
+        if not raw:
+            continue
+        heading = re.sub(r'^[#\s]+', '', raw).strip(' :：')
+        matched_section = None
+        for section, pattern in sections.items():
+            if pattern.fullmatch(heading) or pattern.search(heading):
+                matched_section = section
+                break
+        if matched_section:
+            current = matched_section
+            continue
+
+        clean = _strip_list_marker(raw)
+        if not clean:
+            continue
+        rows.append({
+            "raw": raw,
+            "text": clean,
+            "section": current,
+            "kind": _classify_requirement_line(clean, current),
+        })
+    return rows
+
+
+def _classify_requirement_line(line: str, section: str = "") -> str:
+    """粗分类单行需求：硬条件、优先项、普通技能或其他。"""
+    if section == 'preferred' or PREFERRED_HINT_RE.search(line):
+        return 'preferred'
+    if section == 'hard' or HARD_HINT_RE.search(line):
+        return 'hard'
+    if section == 'req' and (SKILL_HINT_RE.search(line) or _find_terms(line, TECH_SKILLS)):
+        return 'skill'
+    if SKILL_HINT_RE.search(line) or _find_terms(line, TECH_SKILLS):
+        return 'skill'
+    return 'other'
+
+
+def _canonical_skill_name(name: str) -> str:
+    key = re.sub(r'\s+', '', str(name or '')).lower()
+    for canonical, aliases in SKILL_ALIASES.items():
+        for alias in aliases:
+            if key == re.sub(r'\s+', '', alias).lower():
+                return canonical
+    return str(name or '').strip()
+
+
+def _find_terms(text: str, terms: list[str]) -> list[str]:
+    """在文本中查找词典项，返回 canonical 去重结果。"""
+    found = []
+    seen = set()
+    normalized_text = _normalize_skill_text(text)
+    for term in sorted(terms, key=lambda x: len(re.sub(r'\s+', '', x)), reverse=True):
+        canonical = _canonical_skill_name(term)
+        aliases = SKILL_ALIASES.get(canonical, [term])
+        if any(_term_in_text(alias, text, normalized_text) for alias in aliases):
+            key = re.sub(r'\s+', '', canonical).lower()
+            if key not in seen:
+                found.append(canonical)
+                seen.add(key)
+    return found
+
+
+def _term_in_text(term: str, original_text: str, normalized_text: str | None = None) -> bool:
+    normalized_text = normalized_text if normalized_text is not None else _normalize_skill_text(original_text)
+    normalized_term = re.sub(r'\s+', '', term)
+    if re.match(r'^[A-Za-z0-9+#/.]+$', normalized_term):
+        pat = r'(?<![A-Za-z0-9_])' + re.escape(normalized_term) + r'(?![A-Za-z0-9_])'
+        return bool(re.search(pat, normalized_text, re.IGNORECASE))
+    return term.lower() in original_text.lower() or normalized_term.lower() in normalized_text.lower()
+
+
+def _normalize_skill_text(text: str) -> str:
+    normalized = text
+    for canonical, aliases in SKILL_ALIASES.items():
+        compact = re.sub(r'\s+', '', canonical)
+        for alias in aliases:
+            normalized = re.sub(re.escape(alias), compact, normalized, flags=re.IGNORECASE)
+    return normalized
+
+
+def _find_industry_terms(text: str) -> list[str]:
+    found = []
+    for main_kw, aliases in INDUSTRY_CATEGORIES.items():
+        if any(alias.lower() in text.lower() for alias in aliases):
+            found.append(main_kw)
+    return found
+
+
+def _unique_cities(text: str) -> list[str]:
+    matches = []
+    for city in MAJOR_CITIES:
+        pos = text.find(city)
+        if pos >= 0:
+            matches.append((pos, city))
+    return [city for _, city in sorted(matches)]
+
+
+def _format_locations(cities: list[str]) -> str:
+    return "/".join(cities)
+
+
+def _is_preferred_context(text: str) -> bool:
+    return bool(PREFERRED_HINT_RE.search(text or ""))
+
+
+def _remove_education_preferred_phrases(text: str) -> str:
+    cleaned = text or ""
+    patterns = [
+        r'985\s*[/／、,，和及或]*\s*211\s*(?:院校|高校|大学)?\s*(?:优先|加分|更佳|优先考虑)',
+        r'211\s*[/／、,，和及或]*\s*985\s*(?:院校|高校|大学)?\s*(?:优先|加分|更佳|优先考虑)',
+        r'(?:985|211|双一流)\s*(?:院校|高校|大学)?\s*(?:优先|加分|更佳|优先考虑)',
+        r'(?:硕士|研究生|博士|博士后)(?:学历)?(?:及以上)?\s*(?:优先|加分|更佳|优先考虑)',
+    ]
+    for pattern in patterns:
+        cleaned = re.sub(pattern, '', cleaned)
+    return cleaned
+
+
+def _hard_education_text(required_section: str, structured_rows: list[dict]) -> str:
+    lines = []
+    for line in required_section.split('\n'):
+        clean = _strip_list_marker(line)
+        clean = _remove_education_preferred_phrases(clean)
+        if clean.strip():
+            lines.append(clean)
+    for row in structured_rows:
+        if row["kind"] == "hard" or row["section"] == "hard":
+            clean = _remove_education_preferred_phrases(row["text"])
+            if clean.strip():
+                lines.append(clean)
+    return "\n".join(lines)
+
+
+def _make_group_condition(items: list[str], line: str, category: str) -> dict | None:
+    clean_items = []
+    seen = set()
+    for item in items:
+        value = str(item).strip()
+        key = value.lower()
+        if value and key not in seen:
+            clean_items.append(value)
+            seen.add(key)
+    if not clean_items:
+        return None
+    cond_type = "and" if AND_HINT_RE.search(line) and not OR_HINT_RE.search(line) else "or"
+    return {"type": cond_type, "items": clean_items, "category": category}
+
+
+def _extract_special_experience_conditions(lines: list[dict]) -> list[dict]:
+    """提取专项经验，如“其中3年以上金融行业经验”“2年以上 Python 经验”。"""
+    conditions = []
+    seen = set()
+    exp_pat = re.compile(r'(?:其中)?\s*(\d+|[零一二两三四五六七八九十]+)\s*年以上?([\u4e00-\u9fa5A-Za-z0-9+#/. ]{2,30}?)(?:经验|背景|经历)')
+    for row in lines:
+        if row["kind"] not in {"hard", "skill"}:
+            continue
+        for match in exp_pat.finditer(row["text"]):
+            years = _chinese_or_int(match.group(1))
+            domain_text = match.group(2).strip(' ，,、；;。.-')
+            if not years or not domain_text or re.search(r'工作|相关|以上|不少于|不低于', domain_text):
+                continue
+            terms = _find_terms(domain_text, TECH_SKILLS) + _find_industry_terms(domain_text)
+            items = terms or [domain_text]
+            label_items = [f"{item}经验≥{years}年" for item in items]
+            condition = {"type": "or", "items": label_items, "category": "专项经验"}
+            key = ",".join(label_items).lower()
+            if key not in seen:
+                conditions.append(condition)
+                seen.add(key)
+    return conditions
+
+
+def _chinese_or_int(value: str) -> int:
+    if value in CHINESE_NUMERALS:
+        return CHINESE_NUMERALS[value]
+    try:
+        return int(value)
+    except ValueError:
+        return 0
 
 
 def _preprocess_text(text: str) -> str:
@@ -96,14 +372,20 @@ def _extract_work_location(text: str) -> str:
     # 地点相关关键词（用于模式匹配和兜底优先级）
     _loc_keywords = r'(?:工作地点|工作城市|工作地|办公地|办公地点|入职城市|派驻|base\s*地?|坐标)'
 
-    # 模式1: "工作地点：南京市雨花区凯润大厦" 等
-    m = re.search(rf'{_loc_keywords}\s*[：:]\s*([^\n]{{2,20}})', text, re.IGNORECASE)
+    # 模式1: "工作地点：南京/上海"、"base 南京，可接受上海" 等
+    m = re.search(rf'{_loc_keywords}\s*[：:]?\s*([^\n]{{2,80}})', text, re.IGNORECASE)
     if m:
-        city = _resolve_city(m.group(1))
-        if city:
-            return city
+        loc_text = m.group(1)
+        cities = _unique_cities(loc_text)
+        if cities:
+            return _format_locations(cities)
+        if REMOTE_LOCATION_RE.search(loc_text):
+            return ""
 
-    # 兜底：优先扫描地点关键词附近的行（前后 30 字符），而非盲目全文扫描
+    if REMOTE_LOCATION_RE.search(text) and not _unique_cities(text):
+        return ""
+
+    # 兜底：优先扫描地点关键词附近的行，而非盲目全文扫描
     # 避免"公司总部在上海，本次在成都招聘"误匹配上海
     _hq_keywords = re.compile(r'总部|公司位于|集团位于|坐落于')
 
@@ -111,14 +393,24 @@ def _extract_work_location(text: str) -> str:
         # 排除总部/公司所在地相关行
         if _hq_keywords.search(line):
             continue
-        for city in MAJOR_CITIES:
-            if city in line:
-                return city
+        if re.search(_loc_keywords, line, re.IGNORECASE) or REMOTE_LOCATION_RE.search(line):
+            cities = _unique_cities(line)
+            if cities:
+                return _format_locations(cities)
+            if REMOTE_LOCATION_RE.search(line):
+                return ""
+
+    for line in text.split('\n'):
+        if _hq_keywords.search(line):
+            continue
+        cities = _unique_cities(line)
+        if cities:
+            return _format_locations(cities)
 
     # 最后手段：全文扫描（无分行排除）
-    for city in MAJOR_CITIES:
-        if city in text:
-            return city
+    cities = _unique_cities(text)
+    if cities:
+        return _format_locations(cities)
     return ""
 
 
@@ -228,6 +520,7 @@ def parse_job_requirements(text: str) -> Dict:
     从招聘需求文本中解析出关键信息
     """
     text = _preprocess_text(text)
+    structured_rows = _structured_lines(text)
 
     # === 1. 提取职位名称 ===
     job_title = "Java 工程师"  # 默认值
@@ -342,6 +635,17 @@ def parse_job_requirements(text: str) -> Dict:
         if match:
             position_req_section = match.group(0)
         job_desc_section = text
+
+    # 行级结构化结果反向补强章节切分：兼容无标准标题、编号列表、单行条件混排。
+    hard_lines = [row["text"] for row in structured_rows if row["kind"] == "hard"]
+    preferred_lines_structured = [row["text"] for row in structured_rows if row["kind"] == "preferred"]
+    skill_lines = [row["text"] for row in structured_rows if row["kind"] == "skill"]
+    if hard_lines:
+        required_section = (required_section + "\n" + "\n".join(hard_lines)).strip()
+    if preferred_lines_structured or skill_lines:
+        position_req_section = (
+            position_req_section + "\n" + "\n".join(skill_lines + preferred_lines_structured)
+        ).strip()
 
     # === 3. 提取经验要求 ===
     exp_value = 0
@@ -537,23 +841,27 @@ def parse_job_requirements(text: str) -> Dict:
 
     # === 5. 提取必要条件（硬性约束）===
     required_conditions = []
+    hard_edu_text = _hard_education_text(required_section, structured_rows)
 
     # 学历相关要求
-    if '双证齐全' in required_section:
+    if '双证齐全' in hard_edu_text:
         required_conditions.append('双证齐全')
-    if '统招' in required_section:
-        if '本科' in required_section:
+    if '统招' in hard_edu_text:
+        if '本科' in hard_edu_text:
             required_conditions.append('统招本科')
         else:
             required_conditions.append('统招')
-    if '全日制' in required_section:
+    if '全日制' in hard_edu_text:
         required_conditions.append('全日制')
-    if '第一学历' in required_section:
+    if '第一学历' in hard_edu_text:
         required_conditions.append('第一学历本科')
-    if '985' in required_section:
-        required_conditions.append('985 院校')
-    if '211' in required_section:
-        required_conditions.append('211 院校')
+    if '985' in hard_edu_text and '211' in hard_edu_text and OR_HINT_RE.search(hard_edu_text):
+        required_conditions.append({"type": "or", "items": ["985 院校", "211 院校"], "category": "院校背景"})
+    else:
+        if '985' in hard_edu_text:
+            required_conditions.append('985 院校')
+        if '211' in hard_edu_text:
+            required_conditions.append('211 院校')
 
     # 年龄限制（多种格式：35岁以下 / 不超过40岁 / 25-35岁 / ≤35岁 / 35周岁以内）
     max_age = None
@@ -579,62 +887,40 @@ def parse_job_requirements(text: str) -> Dict:
     if max_age:
         required_conditions.append(f'年龄≤{max_age}岁')
 
-    # 从必要条件部分提取技术关键词（硬约束，只需满足其一）
+    # 从必要条件部分提取技术关键词（硬约束）。单句内有 OR/AND 线索时按句子语义建条件。
     tech_condition_keywords = []
-    tech_keywords = [
-        'activiti', 'camunda', 'flowable', '工作流',
-        'Java', 'Python', 'JavaScript', 'TypeScript', 'Go', 'C++', 'C#',
-        'Spring', 'Spring Boot', 'SpringBoot', 'Spring Cloud', 'SpringCloud', 'Spring AI', 'Dubbo', 'MyBatis', 'MyBatis Plus',
-        'MySQL', 'Oracle', 'Redis', 'MongoDB', 'Kafka', 'RabbitMQ', 'SQL',
-        'Docker', 'Kubernetes', 'K8s', 'Linux',
-        'Vue', 'Vue.js', 'React', 'Angular', 'HTML', 'CSS',
-        'AI', '人工智能', '机器学习', '深度学习', 'Agent', '爬虫', '网络爬虫', '数据分析',
-        'LLM', '大模型', 'AI Agent', '智能体', 'Langchain', 'LangChain', '智能问答', '知识库', 'RAG',
-        '微服务', '分布式', '消息中间件',
-        'Pandas', 'NumPy', 'Wind', 'Bloomberg', '量化', '固收', '因子模型',
-        'FastAPI', 'Flask', 'Django', 'Scrapy', 'Selenium',
-    ]
-
-    if required_section:
-        for keyword in tech_keywords:
-            keyword_variants = [keyword.lower(), keyword.lower().replace(' ', '')]
-            for variant in keyword_variants:
-                if variant and variant in required_section.lower():
-                    if not any(keyword.lower() in existing.lower() for existing in tech_condition_keywords):
-                        tech_condition_keywords.append(keyword)
-                    break
+    for row in structured_rows:
+        if row["kind"] != "hard":
+            continue
+        found_terms = _find_terms(row["text"], TECH_SKILLS)
+        if not found_terms:
+            continue
+        if len(found_terms) >= 2 and (OR_HINT_RE.search(row["text"]) or AND_HINT_RE.search(row["text"])):
+            cond = _make_group_condition(found_terms, row["text"], "技术硬性条件")
+            if cond and cond not in required_conditions:
+                required_conditions.append(cond)
+        else:
+            for keyword in found_terms:
+                if not any(keyword.lower() == existing.lower() for existing in tech_condition_keywords):
+                    tech_condition_keywords.append(keyword)
 
     # 专业资格证书（必要条件）：扫描必要条件和职位描述两段
-    cert_keywords = [
-        '证券从业资格', '基金从业资格', '期货从业资格', '银行从业资格',
-        'CFA', 'CPA', 'FRM', 'ACCA', 'CIIA',
-        '法律职业资格', '司法资格', '注册会计师', '税务师',
-        'PMP', 'PRINCE2', 'Scrum Master',
-    ]
     cert_search_text = required_section + '\n' + position_req_section
-    for cert in cert_keywords:
+    for cert in CERT_KEYWORDS:
         if cert.lower() in cert_search_text.lower():
             required_conditions.append(cert)
 
     # 行业经验（必要条件）：检测必要条件段落中的行业领域词及其子类
     # 多个方向应作为 OR 过滤，避免把"债券、基金、期货、期权等"误解为全部必须满足。
-    _industry_categories = {
-        '债券': {'aliases': ['债券', '固收', '固定收益', '利率债', '信用债', '国债', '公司债', '企业债', '可转债']},
-        '基金': {'aliases': ['基金', '公募', '私募', 'ETF', 'FOF', '货币基金', '债券基金', '股票基金']},
-        '期货': {'aliases': ['期货', '商品期货', '金融期货', '股指期货', 'CTA']},
-        '期权': {'aliases': ['期权', '衍生品', '结构化产品', '场外期权', '场内期权']},
-        '量化': {'aliases': ['量化', '量化交易', '量化策略', '量化模型', '因子', 'alpha']},
-        '证券': {'aliases': ['证券', '券商', '证券公司', '证券交易']},
-    }
     _industry_experience_triggers = ['行业经验', '从业经验', '领域经验', '行业背景', '行业从业', '行业相关']
     _industry_search_text = required_section + '\n' + position_req_section
 
     # 只有当必要条件中出现了"行业经验"等触发词，才激活行业检测（避免误判）
     if any(trigger in _industry_search_text for trigger in _industry_experience_triggers):
         industry_required_items = []
-        for main_kw, info in _industry_categories.items():
+        for main_kw, aliases in INDUSTRY_CATEGORIES.items():
             # 主词或任一别名在搜索文本中出现 → 添加主词为必要条件
-            if any(alias in _industry_search_text for alias in info['aliases']):
+            if any(alias in _industry_search_text for alias in aliases):
                 industry_required_items.append(main_kw)
         if len(industry_required_items) == 1:
             if not any(industry_required_items[0] == existing for existing in required_conditions):
@@ -646,6 +932,10 @@ def parse_job_requirements(text: str) -> Dict:
                 "category": "金融投资行业经验"
             })
 
+    for cond in _extract_special_experience_conditions(structured_rows):
+        if cond not in required_conditions:
+            required_conditions.append(cond)
+
     # === 6. 提取技能关键词（从所有部分）- 软性要求，用于评分 ===
     soft_skills = []
 
@@ -653,83 +943,7 @@ def parse_job_requirements(text: str) -> Dict:
     # markdown 格式中，技能可能在硬性条件（### 技能要求）或软性条件中
     combined_soft_section = required_section + "\n" + job_desc_section + "\n" + position_req_section
 
-    # 技能列表 - 按长度降序排列，优先匹配长技能名
-    tech_skills = [
-        # Spring 家族
-        'Spring Cloud', 'SpringBoot', 'Spring Boot', 'Spring MVC', 'SpringMvc', 'Spring AI', 'Spring',
-        # 数据库
-        'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'Oracle', 'SQLServer', 'SQLite', 'Elasticsearch',
-        # 语言
-        'JavaScript', 'TypeScript', 'Java', 'Python', 'Go', 'Rust', 'C++', 'C#', 'PHP', 'Ruby', 'Swift', 'Kotlin', 'Scala',
-        # 前端
-        'React', 'Vue.js', 'Vue', 'Angular', 'HTML', 'CSS', 'Sass', 'Less', 'jQuery', 'Bootstrap', 'Webpack', 'Vite', 'Node.js', 'Next.js',
-        # 后端框架
-        'Django', 'Flask', 'Express', 'FastAPI', 'Gin', 'Laravel', 'Dubbo', 'MyBatis Plus', 'MyBatis',
-        # 云/DevOps
-        'AWS', 'Azure', '阿里云', '腾讯云', '华为云',
-        'Docker', 'Kubernetes', 'K8s', 'Jenkins', 'GitLab', 'CI/CD', 'Terraform', 'Ansible', 'Nginx', 'Apache',
-        # 数据/AI
-        'TensorFlow', 'PyTorch', 'Pandas', 'NumPy', 'Spark', 'Hadoop',
-        'AI', '人工智能', '机器学习', '深度学习', '数据分析', '数据挖掘', '数据可视化',
-        'LLM', '大模型', 'AI Agent', '智能体', 'Langchain', 'LangChain', '智能问答', '知识库', 'RAG', '向量数据库',
-        'Agent', '爬虫', '网络爬虫', 'SQL',
-        # 金融/量化
-        'Wind', 'Bloomberg', '量化', '固收', '因子模型',
-        # 爬虫框架
-        'Scrapy', 'Selenium',
-        # 其他
-        'Linux', 'Git', '微服务', '分布式', '大数据', '云计算',
-        'MQTT', 'Kafka', 'RabbitMQ', '消息队列', '消息中间件', 'GraphQL', 'RESTful', 'API', 'RPC',
-        # 工作流
-        'activiti', 'camunda', 'flowable', '工作流'
-    ]
-
-    # 对文本进行预处理，统一常见变体
-    normalized_text = combined_soft_section
-    normalized_text = re.sub(r'Spring\s*Cloud', 'SpringCloud', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'Spring\s*Boot', 'SpringBoot', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'Spring\s*MVC', 'SpringMvc', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'Spring\s*Mvc', 'SpringMvc', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'Spring\s*AI', 'SpringAI', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'My\s*Batis\s*Plus', 'MyBatisPlus', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'My\s*Batis', 'MyBatis', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'Node\s*\.\s*js', 'NodeJs', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'Vue\s*\.\s*js', 'VueJs', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'AI\s*Agent', 'AIAgent', normalized_text, flags=re.IGNORECASE)
-
-    normalized_skill_map = {
-        'Spring Cloud': 'SpringCloud',
-        'Spring Boot': 'SpringBoot',
-        'Spring MVC': 'SpringMvc',
-        'Spring AI': 'SpringAI',
-        'MyBatis Plus': 'MyBatisPlus',
-        'MyBatis': 'MyBatis',
-        'Node.js': 'NodeJs',
-        'Vue.js': 'VueJs',
-        'AI Agent': 'AIAgent',
-    }
-
-    # 匹配技能关键词 - 按长度降序，优先匹配长技能名
-    for skill in tech_skills:
-        normalized_skill = normalized_skill_map.get(skill, re.sub(r'\s+', '', skill))
-
-        # 英文技能：使用单词边界防止子串误匹配（Go 不匹配 Google，API 不匹配 RAPID）
-        # 中文上下文无空格，\b 依赖 ASCII/non-ASCII 边界，中文旁的英文词仍可匹配
-        if re.match(r'^[A-Za-z0-9+#/.]+$', normalized_skill):
-            # 纯英文技能：用 \b 单词边界
-            pat = r'(?<![A-Za-z0-9_])' + re.escape(normalized_skill) + r'(?![A-Za-z0-9_])'
-            if re.search(pat, normalized_text, re.IGNORECASE):
-                if skill not in soft_skills:
-                    soft_skills.append(skill)
-        # 中文技能直接匹配
-        elif len(skill) >= 2 and not any(c.isalpha() for c in skill):
-            if skill in combined_soft_section and skill not in soft_skills:
-                soft_skills.append(skill)
-        else:
-            # 混合技能（如含中英文）
-            if re.search(re.escape(normalized_skill), normalized_text, re.IGNORECASE):
-                if skill not in soft_skills:
-                    soft_skills.append(skill)
+    soft_skills.extend(_find_terms(combined_soft_section, TECH_SKILLS))
 
     # 去重（忽略大小写，同时处理空格变体）
     unique_soft_skills = []
@@ -854,15 +1068,18 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
 
     # === 提取"优先"类行业/领域加分关键词 ===
     # 从"X经验者优先"、"X行业优先"等表述中提取领域词，作为额外加分（非硬过滤）
-    bonus_domain_keywords = [
-        '证券', '基金', '期货', '银行', '保险', '信托', '资管', '资产管理',
-        '固收', '固定收益', '量化', '衍生品', '期权', '外汇', '大宗商品',
-        '金融', '投行', '投资', '私募', '风控', '合规',
-        '游戏', '电商', '物联网', '区块链', '芯片', '嵌入式',
-        '医疗', '医药', '生物', '教育', '通信', '汽车', '自动驾驶',
-    ]
     for line in preferred_lines:
-        for bk in bonus_domain_keywords:
+        if '985' in line:
+            _add_preferred_keyword('985 院校', 2)
+        if '211' in line:
+            _add_preferred_keyword('211 院校', 2)
+        if '双一流' in line:
+            _add_preferred_keyword('双一流院校', 2)
+        if re.search(r'硕士|研究生', line):
+            _add_preferred_keyword('硕士', 2)
+        if re.search(r'博士|博士后', line):
+            _add_preferred_keyword('博士', 2)
+        for bk in BONUS_DOMAIN_KEYWORDS:
             if bk in line.lower():
                 _add_preferred_keyword(bk, 2)
         for match in re.finditer(r'(?:有|具备)?([\u4e00-\u9fa5A-Za-z0-9+#/. ]{2,24}?)(?:经验|背景|经历|能力)(?:者)?优先', line):
@@ -871,7 +1088,8 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
             if preferred_name:
                 _add_preferred_keyword(preferred_name, 2)
 
-    # 合并必要条件和技术条件
+    # 合并必要条件和技术条件。技术硬条件进入 required_conditions 的 OR 条件，
+    # 避免同时写入旧 tech_conditions 字段导致命令行筛选路径重复检查。
     all_required = parsed["required_conditions"].copy()
     tech_conditions = parsed.get("tech_conditions", [])
     if tech_conditions:
@@ -887,7 +1105,6 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         "keywords": weighted_keywords,  # 带权重的技能列表
         "preferred_keywords": preferred_keywords,  # 优先项：额外加分，不参与关键词分母
         "required_conditions": all_required,
-        "tech_conditions": parsed.get("tech_conditions", [])  # 单独存储，用于 OR 检查
     }
 
     # 如果合并现有配置，则读取并更新

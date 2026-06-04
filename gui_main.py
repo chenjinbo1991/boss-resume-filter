@@ -5642,16 +5642,17 @@ class BossFilterGUI:
         """后台线程中构建解析结果，不直接操作 Tk 控件。"""
         from doc_parser import generate_config_from_text, parse_job_requirements
 
-        debug_log_path = BASE_DIR / "parse_debug.log"
         parsed_detail = parse_job_requirements(requirement_text)
-        with open(debug_log_path, 'w', encoding='utf-8') as f:
-            f.write(f"=== 学历解析调试日志 ===\n")
-            f.write(f"需求文档长度: {len(requirement_text)}\n")
-            f.write(f"需求文档是否含'博士': {'博士' in requirement_text}\n")
-            f.write(f"需求文档是否含'硕士': {'硕士' in requirement_text}\n")
-            f.write(f"需求文档是否含'本科': {'本科' in requirement_text}\n")
-            f.write(f"parse_job_requirements 结果: edu={parsed_detail['edu']}\n")
-            f.write(f"\n=== 原始需求文档 ===\n{requirement_text}\n")
+        if os.environ.get("BOSS_DEBUG_PARSE") == "1":
+            debug_log_path = BASE_DIR / "parse_debug.log"
+            with open(debug_log_path, 'w', encoding='utf-8') as f:
+                f.write("=== 学历解析调试日志 ===\n")
+                f.write(f"需求文档长度: {len(requirement_text)}\n")
+                f.write(f"需求文档是否含'博士': {'博士' in requirement_text}\n")
+                f.write(f"需求文档是否含'硕士': {'硕士' in requirement_text}\n")
+                f.write(f"需求文档是否含'本科': {'本科' in requirement_text}\n")
+                f.write(f"parse_job_requirements 结果: edu={parsed_detail['edu']}\n")
+                f.write(f"\n=== 原始需求文档 ===\n{requirement_text}\n")
 
         config = generate_config_from_text(requirement_text, merge_existing=False)
         ai_parse_status = "正则解析"

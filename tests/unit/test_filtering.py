@@ -206,6 +206,21 @@ def test_check_required_condition_or_uses_industry_aliases():
     assert check_required_condition("纯股票投研", condition)["passed"] is False
 
 
+def test_check_required_condition_or_uses_school_aliases():
+    """985/211 OR 必要条件应按院校标记别名匹配。"""
+    condition = {"type": "or", "items": ["985 院校", "211 院校"], "category": "院校背景"}
+    assert check_required_condition("985 本科，5 年 Java", condition)["passed"] is True
+    assert check_required_condition("211 硕士，5 年 Java", condition)["passed"] is True
+    assert check_required_condition("普通本科，5 年 Java", condition)["passed"] is False
+
+
+def test_check_required_condition_specialized_experience_years():
+    """专项经验≥N年 条件：方向命中且年限达标才通过。"""
+    assert check_required_condition("3年 Python 开发经验", "Python经验≥2年")["passed"] is True
+    assert check_required_condition("1年 Python 开发经验", "Python经验≥2年")["passed"] is False
+    assert check_required_condition("3年 Java 开发经验", "Python经验≥2年")["passed"] is False
+
+
 # ========== filter_candidate ==========
 
 def _java_rule(**overrides):
