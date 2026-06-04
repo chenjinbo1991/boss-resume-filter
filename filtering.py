@@ -24,6 +24,35 @@ from constants import (
 
 
 _major_cities_set = set(MAJOR_CITIES)
+_PREFERRED_BONUS_MAX = 10
+
+
+_CERT_ALIASES = {
+    '证券从业资格': ['证券从业', '证券行业', '证券相关', '证券背景', '证券经验'],
+    '基金从业资格': ['基金从业', '基金行业', '基金相关', '基金背景'],
+    '期货从业资格': ['期货从业', '期货行业', '期货相关'],
+    '银行从业资格': ['银行从业', '银行业', '银行相关'],
+    'CFA': ['cfa', 'CFA', '特许金融分析师'],
+    'CPA': ['cpa', 'CPA', '注册会计师'],
+    'FRM': ['frm', 'FRM', '金融风险管理师'],
+}
+
+_INDUSTRY_ALIASES = {
+    '债券': ['固收', '固定收益', '利率债', '信用债', '国债', '公司债', '企业债', '可转债'],
+    '基金': ['公募', '私募', 'ETF', 'FOF', '货币基金', '债券基金', '股票基金'],
+    '期货': ['商品期货', '金融期货', '股指期货', 'CTA'],
+    '期权': ['衍生品', '结构化产品', '场外期权', '场内期权'],
+    '量化': ['量化交易', '量化策略', '量化模型', '因子模型', 'alpha策略'],
+    '证券': ['券商', '证券公司', '证券交易'],
+}
+
+
+def _condition_item_found(candidate_text: str, item: str) -> bool:
+    """Match a required/preferred item with known aliases."""
+    if item.lower() in candidate_text.lower():
+        return True
+    aliases = _CERT_ALIASES.get(item, []) + _INDUSTRY_ALIASES.get(item, [])
+    return any(alias.lower() in candidate_text.lower() for alias in aliases)
 
 
 def _extract_city(text: str) -> str:
@@ -139,6 +168,8 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             'skill_matches': [],
             'skill_total': 0,
             'skill_matched_count': 0,
+            'preferred_matches': [],
+            'preferred_bonus': 0,
             'exp_bonus': 0,
             'edu_bonus': 0
         }
@@ -237,7 +268,24 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
         else:
             skill_score_normalized = SCORE_SKILL_MAX
 
-        score = SCORE_BASE + skill_score_normalized + details['exp_bonus'] + details['edu_bonus']
+        preferred_bonus = 0
+        preferred_matches = []
+        for keyword in rule.get("preferred_keywords", []):
+            if isinstance(keyword, dict):
+                kw_name = keyword.get("name", "")
+                kw_bonus = keyword.get("bonus", keyword.get("weight", 1))
+            else:
+                kw_name = keyword
+                kw_bonus = 1
+            if kw_name and _condition_item_found(candidate_text, kw_name):
+                preferred_matches.append(kw_name)
+                preferred_bonus += int(kw_bonus)
+        preferred_bonus = min(preferred_bonus, _PREFERRED_BONUS_MAX)
+        details['preferred_matches'] = preferred_matches
+        details['preferred_bonus'] = preferred_bonus
+
+        score = SCORE_BASE + skill_score_normalized + details['exp_bonus'] + details['edu_bonus'] + preferred_bonus
+        score = min(score, 100)
         return True, score, details
 
     except Exception as e:
@@ -264,7 +312,7 @@ def check_required_condition(candidate_text: str, condition: str | dict[str, Any
                 return {"passed": True, "reason": ""}
             return {"passed": False, "reason": f"必要条件不满足：{condition}"}
 
-        if condition not in candidate_text:
+        if not _condition_item_found(candidate_text, condition):
             return {"passed": False, "reason": f"必要条件不满足：{condition}"}
         return {"passed": True, "reason": ""}
 
@@ -276,14 +324,14 @@ def check_required_condition(candidate_text: str, condition: str | dict[str, Any
             return {"passed": True, "reason": ""}
 
         if cond_type == "or":
-            matched = any(item.lower() in candidate_text.lower() for item in items)
+            matched = any(_condition_item_found(candidate_text, item) for item in items)
             if not matched:
                 return {"passed": False, "reason": f"必要条件不满足：需要{items}中至少一项"}
             return {"passed": True, "reason": ""}
 
         elif cond_type == "and":
             for item in items:
-                if item.lower() not in candidate_text.lower():
+                if not _condition_item_found(candidate_text, item):
                     return {"passed": False, "reason": f"必要条件不满足：缺少{item}"}
             return {"passed": True, "reason": ""}
 

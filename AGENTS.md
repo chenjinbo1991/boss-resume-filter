@@ -7,6 +7,7 @@ boss-resume-filter/
 ├── bossmaster.py         # BOSS 直聘自动筛选主程序（核心）
 ├── filtering.py          # 纯筛选规则模块（评分、硬条件、薪资/经验/城市解析）
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
+├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
 ├── gui_main.py           # 图形界面主程序（v2.9.2）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、模型选择）

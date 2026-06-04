@@ -16,6 +16,14 @@ from constants import MAJOR_CITIES, CHINESE_NUMERALS
 _major_cities_set = set(MAJOR_CITIES)
 
 
+def _clean_job_title(title: str) -> str:
+    """清理岗位标题中的序号/标签前缀和多余空白。"""
+    title = re.sub(r'\s+', ' ', str(title or '')).strip()
+    title = re.sub(r'^(?:岗位|职位|招聘)\s*\d+\s*[：:、.\-]\s*', '', title)
+    title = re.sub(r'^\d+\s*[：:、.\-]\s*', '', title)
+    return title.strip()
+
+
 def _preprocess_text(text: str) -> str:
     """文本预处理：全角转半角、去零宽字符、去 emoji、统一空白"""
     if not text:
@@ -136,9 +144,30 @@ def _extract_salary_range(text: str):
 
     # --- 有标签前缀的模式（高优先级）---
     labeled_prefix = r'(?:薪资(?:范围)?|薪酬|待遇|月薪|底薪|工资)'
+
+    # --- 分级薪资（必须优先于标准模式，否则标准模式会先匹配第一个范围就返回）---
+    # 薪资范围：中级：14K-17K 高级：18K-22K → 取全局 min/max = (14, 22)
+    _tiered_pat = (
+        labeled_prefix
+        + r'[^0-9\n]{0,15}'        # prefix 后的非数字文本（如"中级："），限 15 字符防跨行
+        + r'(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]'   # 第一个范围
+        + r'(?:[·•]\d+薪)?'         # 多月薪后缀（可选）
+        + r'((?:[^0-9\n]{0,15}\d+\s*[kK]?\s*[-~～\-]\s*\d+\s*[kK](?:[·•]\d+薪)?){1,3})'  # 后续 1-3 个范围
+    )
+    _range_pat = r'(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]'
+    m = re.search(_tiered_pat, text)
+    if m:
+        all_mins = [int(m.group(1))]
+        all_maxs = [int(m.group(2))]
+        for rm in re.finditer(_range_pat, m.group(3)):
+            all_mins.append(int(rm.group(1)))
+            all_maxs.append(int(rm.group(2)))
+        return min(all_mins), max(all_maxs)
+
     labeled_patterns = [
         # 薪资范围：15k-25k / 薪酬：15K-25K / 薪资：15-25K（首个K可省略）
-        labeled_prefix + r'\s*[：:]\s*(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]',
+        # 支持多月薪格式：20-35K·15薪 / 20-35k·16薪
+        labeled_prefix + r'\s*[：:]?\s*(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK](?:[·•]\d+薪)?',
         # 薪资：15k至25k / 薪资15至25k（首个K可省略）
         labeled_prefix + r'\s*[：:]?\s*(\d+)\s*[kK]?\s*[至到]\s*(\d+)\s*[kK]',
         # 薪资：15000-25000 / 薪酬：12000-18000元（无K后缀，需4位以上数字）
@@ -231,7 +260,16 @@ def parse_job_requirements(text: str) -> Dict:
         if match:
             matched = match.group(1).strip()
             if matched:
-                job_title = matched
+                job_title = _clean_job_title(matched)
+                break
+
+    # 兜底：首行含严格职位名称后缀（工程师/分析师/架构师等），排除"开发"等动词性词尾防止误匹配正文
+    if job_title == "Java 工程师":
+        _strict_title_suffix = r'工程师|分析师|架构师|设计师|研究员|顾问|专家|经理|总监|负责人|DBA|产品经理'
+        for line in text.split('\n'):
+            line = line.strip()
+            if line and len(line) <= 30 and re.search(_strict_title_suffix, line):
+                job_title = _clean_job_title(line)
                 break
 
     # === 2. 分离不同部分 ===
@@ -547,12 +585,14 @@ def parse_job_requirements(text: str) -> Dict:
         'activiti', 'camunda', 'flowable', '工作流',
         'Java', 'Python', 'JavaScript', 'TypeScript', 'Go', 'C++', 'C#',
         'Spring', 'Spring Boot', 'SpringBoot', 'Spring Cloud', 'SpringCloud', 'Spring AI', 'Dubbo', 'MyBatis', 'MyBatis Plus',
-        'MySQL', 'Oracle', 'Redis', 'MongoDB', 'Kafka', 'RabbitMQ',
+        'MySQL', 'Oracle', 'Redis', 'MongoDB', 'Kafka', 'RabbitMQ', 'SQL',
         'Docker', 'Kubernetes', 'K8s', 'Linux',
         'Vue', 'Vue.js', 'React', 'Angular', 'HTML', 'CSS',
-        'AI', '人工智能', '机器学习', '深度学习',
+        'AI', '人工智能', '机器学习', '深度学习', 'Agent', '爬虫', '网络爬虫', '数据分析',
         'LLM', '大模型', 'AI Agent', '智能体', 'Langchain', 'LangChain', '智能问答', '知识库', 'RAG',
-        '微服务', '分布式', '消息中间件'
+        '微服务', '分布式', '消息中间件',
+        'Pandas', 'NumPy', 'Wind', 'Bloomberg', '量化', '固收', '因子模型',
+        'FastAPI', 'Flask', 'Django', 'Scrapy', 'Selenium',
     ]
 
     if required_section:
@@ -563,6 +603,48 @@ def parse_job_requirements(text: str) -> Dict:
                     if not any(keyword.lower() in existing.lower() for existing in tech_condition_keywords):
                         tech_condition_keywords.append(keyword)
                     break
+
+    # 专业资格证书（必要条件）：扫描必要条件和职位描述两段
+    cert_keywords = [
+        '证券从业资格', '基金从业资格', '期货从业资格', '银行从业资格',
+        'CFA', 'CPA', 'FRM', 'ACCA', 'CIIA',
+        '法律职业资格', '司法资格', '注册会计师', '税务师',
+        'PMP', 'PRINCE2', 'Scrum Master',
+    ]
+    cert_search_text = required_section + '\n' + position_req_section
+    for cert in cert_keywords:
+        if cert.lower() in cert_search_text.lower():
+            required_conditions.append(cert)
+
+    # 行业经验（必要条件）：检测必要条件段落中的行业领域词及其子类
+    # 多个方向应作为 OR 过滤，避免把"债券、基金、期货、期权等"误解为全部必须满足。
+    _industry_categories = {
+        '债券': {'aliases': ['债券', '固收', '固定收益', '利率债', '信用债', '国债', '公司债', '企业债', '可转债']},
+        '基金': {'aliases': ['基金', '公募', '私募', 'ETF', 'FOF', '货币基金', '债券基金', '股票基金']},
+        '期货': {'aliases': ['期货', '商品期货', '金融期货', '股指期货', 'CTA']},
+        '期权': {'aliases': ['期权', '衍生品', '结构化产品', '场外期权', '场内期权']},
+        '量化': {'aliases': ['量化', '量化交易', '量化策略', '量化模型', '因子', 'alpha']},
+        '证券': {'aliases': ['证券', '券商', '证券公司', '证券交易']},
+    }
+    _industry_experience_triggers = ['行业经验', '从业经验', '领域经验', '行业背景', '行业从业', '行业相关']
+    _industry_search_text = required_section + '\n' + position_req_section
+
+    # 只有当必要条件中出现了"行业经验"等触发词，才激活行业检测（避免误判）
+    if any(trigger in _industry_search_text for trigger in _industry_experience_triggers):
+        industry_required_items = []
+        for main_kw, info in _industry_categories.items():
+            # 主词或任一别名在搜索文本中出现 → 添加主词为必要条件
+            if any(alias in _industry_search_text for alias in info['aliases']):
+                industry_required_items.append(main_kw)
+        if len(industry_required_items) == 1:
+            if not any(industry_required_items[0] == existing for existing in required_conditions):
+                required_conditions.append(industry_required_items[0])
+        elif len(industry_required_items) > 1:
+            required_conditions.append({
+                "type": "or",
+                "items": industry_required_items,
+                "category": "金融投资行业经验"
+            })
 
     # === 6. 提取技能关键词（从所有部分）- 软性要求，用于评分 ===
     soft_skills = []
@@ -588,8 +670,13 @@ def parse_job_requirements(text: str) -> Dict:
         'Docker', 'Kubernetes', 'K8s', 'Jenkins', 'GitLab', 'CI/CD', 'Terraform', 'Ansible', 'Nginx', 'Apache',
         # 数据/AI
         'TensorFlow', 'PyTorch', 'Pandas', 'NumPy', 'Spark', 'Hadoop',
-        'AI', '人工智能', '机器学习', '深度学习', '数据分析',
+        'AI', '人工智能', '机器学习', '深度学习', '数据分析', '数据挖掘', '数据可视化',
         'LLM', '大模型', 'AI Agent', '智能体', 'Langchain', 'LangChain', '智能问答', '知识库', 'RAG', '向量数据库',
+        'Agent', '爬虫', '网络爬虫', 'SQL',
+        # 金融/量化
+        'Wind', 'Bloomberg', '量化', '固收', '因子模型',
+        # 爬虫框架
+        'Scrapy', 'Selenium',
         # 其他
         'Linux', 'Git', '微服务', '分布式', '大数据', '云计算',
         'MQTT', 'Kafka', 'RabbitMQ', '消息队列', '消息中间件', 'GraphQL', 'RESTful', 'API', 'RPC',
@@ -688,6 +775,19 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
 
     # 为技能分配权重
     weighted_keywords = []
+    preferred_keywords = []
+    preferred_seen = set()
+
+    def _is_preferred_line(line: str) -> bool:
+        return bool(re.search(r'优先|加分|更佳|优先考虑|优先录用', line))
+
+    def _add_preferred_keyword(name: str, bonus: int = 2) -> None:
+        key = re.sub(r'\s+', '', name).lower()
+        if key and key not in preferred_seen:
+            preferred_keywords.append({"name": name, "bonus": bonus})
+            preferred_seen.add(key)
+
+    preferred_lines = [line for line in requirements_text.split('\n') if _is_preferred_line(line)]
 
     # 提取职位名称中的技术关键词（Java、Python 等），这些词权重调高
     job_title = parsed.get("job_title", "").lower()
@@ -697,23 +797,13 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
     tech_keywords_in_title = [
         'java', 'python', 'javascript', 'typescript', 'go', 'c++', 'c#', 'php', 'ruby', 'swift', 'kotlin', 'scala',
         '前端', '后端', '全栈', '移动端', 'android', 'ios',
-        'ai', '算法', '数据', '测试', '运维', '开发'
+        'ai', '算法', '数据', '测试', '运维', '开发', '分析',
+        '固收', '量化', '金融', '证券', '风控',
     ]
 
     for kw in tech_keywords_in_title:
         if kw in job_title:
             position_tech_keywords.append(kw.lower())
-
-    # 先从需求原文中提取明确提到"优先"的 AI 关键词
-    # 如果需求中明确列举了 AI 关键词优先，则以需求为准；否则使用兜底列表
-    explicit_ai_keywords = []
-    for line in requirements_text.split('\n'):
-        if '优先' in line:
-            # 提取该行中提到的所有技能关键词
-            for skill in unique_skills:
-                skill_lower = skill.lower()
-                if skill_lower in line.lower():
-                    explicit_ai_keywords.append(skill_lower)
 
     # 兜底的 AI 关键词列表（当需求没有明确说明时使用）
     default_ai_keywords = ['llm', '大模型', 'ai agent', '智能体', 'langchain', '智能问答', '知识库', 'rag', '向量数据库', '生成式 ai', 'aigc', 'spring ai', 'ai']
@@ -721,10 +811,15 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
     for skill in unique_skills:
         weight = 1  # 默认权重
         skill_lower = skill.lower()
+        matching_lines = [line for line in requirements_text.split('\n') if skill_lower in line.lower()]
+        preferred_only = bool(matching_lines) and all(_is_preferred_line(line) for line in matching_lines)
+        if preferred_only:
+            _add_preferred_keyword(skill, 2)
+            continue
 
         # 检查技能在原文中的上下文，确定权重
         # 权重 3：精通、擅长、深入、核心
-        # 权重 2：熟练、熟悉、掌握、有...经验、优先、职位名称相关
+        # 权重 2：熟练、熟悉、掌握、有...经验、职位名称相关
         # 权重 1：了解、接触过、基本
         # 注意：中文和英文之间可能有空格，需要用正则匹配
 
@@ -732,15 +827,14 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
             weight = 3
         elif re.search(rf'{re.escape(skill_lower)}\s*熟练|熟练\s*{re.escape(skill_lower)}|'
                        rf'{re.escape(skill_lower)}\s*熟悉|熟悉\s*{re.escape(skill_lower)}|'
-                       rf'{re.escape(skill_lower)}\s*优先|优先\s*{re.escape(skill_lower)}|'
                        rf'{re.escape(skill_lower)}\s*深入|深入\s*{re.escape(skill_lower)}', requirements_text.lower()):
             weight = 2
         # 检查是否在"优先/熟悉/熟练"条件所在的同一行（支持同一行中多个技能共享权重）
         for line in requirements_text.split('\n'):
             line_lower = line.lower()
             if skill_lower in line_lower:
-                # 检查该行是否有"优先"、"熟悉"、"熟练"等关键词
-                if re.search(r'优先|熟悉|熟练|掌握|擅长', line_lower):
+                # 检查该行是否有"熟悉"、"熟练"等关键词；"优先"单独进入 preferred_keywords
+                if re.search(r'熟悉|熟练|掌握|擅长', line_lower):
                     weight = 2
                     break
 
@@ -751,25 +845,37 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
                     weight = 2
                     break
 
-        # AI 关键词权重处理：
-        # 1. 如果需求中明确提到某些 AI 关键词"优先"，则只对这些关键词加权
-        # 2. 如果需求中没有明确提到任何 AI 关键词优先，则使用兜底列表对所有 AI 关键词加权
-        if explicit_ai_keywords:
-            # 需求中有明确说明，只对明确提到的关键词加权
-            if skill_lower in explicit_ai_keywords:
-                weight = 2
-        else:
-            # 需求中没有明确说明，使用兜底列表
+        # AI 关键词权重处理：无明确优先语境时，AI 相关技能默认略高权重。
+        if not preferred_lines:
             if any(ai_kw in skill_lower for ai_kw in default_ai_keywords):
                 weight = 2
 
         weighted_keywords.append({"name": skill, "weight": weight})
 
+    # === 提取"优先"类行业/领域加分关键词 ===
+    # 从"X经验者优先"、"X行业优先"等表述中提取领域词，作为额外加分（非硬过滤）
+    bonus_domain_keywords = [
+        '证券', '基金', '期货', '银行', '保险', '信托', '资管', '资产管理',
+        '固收', '固定收益', '量化', '衍生品', '期权', '外汇', '大宗商品',
+        '金融', '投行', '投资', '私募', '风控', '合规',
+        '游戏', '电商', '物联网', '区块链', '芯片', '嵌入式',
+        '医疗', '医药', '生物', '教育', '通信', '汽车', '自动驾驶',
+    ]
+    for line in preferred_lines:
+        for bk in bonus_domain_keywords:
+            if bk in line.lower():
+                _add_preferred_keyword(bk, 2)
+        for match in re.finditer(r'(?:有|具备)?([\u4e00-\u9fa5A-Za-z0-9+#/. ]{2,24}?)(?:经验|背景|经历|能力)(?:者)?优先', line):
+            preferred_name = match.group(1).strip(' ，,、；;。.-')
+            preferred_name = re.sub(r'^(?:有|具备)', '', preferred_name).strip()
+            if preferred_name:
+                _add_preferred_keyword(preferred_name, 2)
+
     # 合并必要条件和技术条件
     all_required = parsed["required_conditions"].copy()
-    for tech_cond in parsed.get("tech_conditions", []):
-        if tech_cond not in all_required:
-            all_required.append(tech_cond)
+    tech_conditions = parsed.get("tech_conditions", [])
+    if tech_conditions:
+        all_required.append({"type": "or", "items": tech_conditions, "category": "技术硬性条件"})
 
     # 生成新岗位配置
     new_job_config = {
@@ -779,6 +885,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         "salary_min": parsed.get("salary_min"),
         "salary_max": parsed.get("salary_max"),
         "keywords": weighted_keywords,  # 带权重的技能列表
+        "preferred_keywords": preferred_keywords,  # 优先项：额外加分，不参与关键词分母
         "required_conditions": all_required,
         "tech_conditions": parsed.get("tech_conditions", [])  # 单独存储，用于 OR 检查
     }
@@ -808,7 +915,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         job_title = "Java 工程师"  # 使用默认名称
 
     # 规范化岗位名称：去除多余空格，统一格式
-    normalized_job_title = re.sub(r'\s+', ' ', job_title).strip()
+    normalized_job_title = _clean_job_title(job_title)
 
     # 检查是否已存在相同（规范化后）的岗位，如果存在则覆盖
     existing_key_to_delete = None

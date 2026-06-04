@@ -346,6 +346,7 @@ SOURCE_CHECK_FILES = [
     "filtering.py",
     "storage.py",
     "llm_eval.py",
+    "job_ai_parser.py",
     "doc_parser.py",
     "security.py",
     "build.py",
@@ -355,6 +356,7 @@ SOURCE_CHECK_FILES = [
     "tests/test_import.py",
     "tests/unit/test_core_logic.py",
     "tests/unit/test_llm_eval.py",
+    "tests/unit/test_job_ai_parser.py",
     "tests/unit/test_selectors.py",
 ]
 
@@ -729,7 +731,7 @@ def _check_changelog_updated():
 
     # 检查核心代码是否有变更
     core_files = ["gui_main.py", "bossmaster.py", "filtering.py", "storage.py",
-                  "llm_eval.py", "doc_parser.py", "security.py", "updater.py", "icons.py"]
+                  "llm_eval.py", "job_ai_parser.py", "doc_parser.py", "security.py", "updater.py", "icons.py"]
     result = subprocess.run(
         ["git", "diff", "--name-only", last_tag, "HEAD", "--"] + core_files,
         capture_output=True, text=True, cwd=BASE_DIR
@@ -1852,7 +1854,7 @@ def _needs_cross_platform_rebuild(changed_files):
     # 需要重建的文件（改了影响构建产物内容）
     SHARED_BUILD_FILES = {
         'gui_main.py', 'bossmaster.py', 'filtering.py', 'llm_eval.py',
-        'storage.py', 'doc_parser.py', 'security.py', 'constants.py',
+        'job_ai_parser.py', 'storage.py', 'doc_parser.py', 'security.py', 'constants.py',
         'paths.py', 'icons.py', 'updater.py', 'selectors.json',
         'job_config.json', 'api_config.json', 'requirements.txt',
         'build.py',  # 打包脚本本身的变化影响产物内容

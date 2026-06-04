@@ -175,6 +175,37 @@ def test_check_required_condition_plain_string():
     assert check_required_condition("没有相关经验", "Kubernetes")["passed"] is False
 
 
+def test_check_required_condition_industry_alias_bond():
+    """'债券'必要条件：'固收'/'固定收益'等别名应通过"""
+    assert check_required_condition("5年固收经验", "债券")["passed"] is True
+    assert check_required_condition("固定收益投资", "债券")["passed"] is True
+    assert check_required_condition("利率债研究", "债券")["passed"] is True
+    assert check_required_condition("纯股票投资", "债券")["passed"] is False
+
+
+def test_check_required_condition_industry_alias_fund():
+    """'基金'必要条件：'公募'/'私募'等别名应通过"""
+    assert check_required_condition("公募基金运营", "基金")["passed"] is True
+    assert check_required_condition("私募股权", "基金")["passed"] is True
+    assert check_required_condition("ETF产品设计", "基金")["passed"] is True
+    assert check_required_condition("银行理财", "基金")["passed"] is False
+
+
+def test_check_required_condition_industry_alias_quant():
+    """'量化'必要条件：别名匹配"""
+    assert check_required_condition("量化交易策略", "量化")["passed"] is True
+    assert check_required_condition("因子模型开发", "量化")["passed"] is True
+    assert check_required_condition("纯主观交易", "量化")["passed"] is False
+
+
+def test_check_required_condition_or_uses_industry_aliases():
+    """OR 必要条件应支持行业别名：固收满足债券方向。"""
+    condition = {"type": "or", "items": ["债券", "基金", "期货", "期权"]}
+    assert check_required_condition("5年固收研究经验", condition)["passed"] is True
+    assert check_required_condition("商品期货策略经验", condition)["passed"] is True
+    assert check_required_condition("纯股票投研", condition)["passed"] is False
+
+
 # ========== filter_candidate ==========
 
 def _java_rule(**overrides):
@@ -290,6 +321,24 @@ def test_filter_candidate_weighted_skill_scoring():
     assert score == SCORE_BASE + expected_skill
     assert details["skill_matched_count"] == 1
     assert details["skill_total"] == 4
+
+
+def test_filter_candidate_preferred_keywords_add_bonus_without_skill_denominator():
+    rule = {
+        "min_exp": 0,
+        "edu": "不限",
+        "keywords": [{"name": "Java", "weight": 2}],
+        "preferred_keywords": [{"name": "证券", "bonus": 4}],
+    }
+
+    _, score_without_preferred, details_without = filter_candidate("5年 Java 开发", rule)
+    _, score_with_preferred, details_with = filter_candidate("5年 Java 开发，证券行业经验", rule)
+
+    assert details_without["skill_total"] == 2
+    assert details_without["preferred_bonus"] == 0
+    assert details_with["skill_total"] == 2
+    assert details_with["preferred_matches"] == ["证券"]
+    assert score_with_preferred == score_without_preferred + 4
 
 
 def test_filter_candidate_chinese_experience_years():

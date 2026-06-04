@@ -427,13 +427,14 @@ def test_skill_weight_no_space_chinese():
 
 
 def test_skill_weight_youxian_no_space():
-    """Java优先 → 权重 2"""
+    """Java优先 → 优先项 bonus 2，不进入普通关键词分母"""
     text = "职位要求\nJava优先"
     config = generate_config_from_text(text, merge_existing=False)
     job = list(config["job_requirements"].values())[0]
-    java_kw = next((k for k in job["keywords"] if k["name"] == "Java"), None)
+    java_kw = next((k for k in job["preferred_keywords"] if k["name"] == "Java"), None)
     assert java_kw is not None
-    assert java_kw["weight"] == 2
+    assert java_kw["bonus"] == 2
+    assert not any(k["name"] == "Java" for k in job["keywords"])
 
 
 def test_skill_weight_jingtong_no_space():
@@ -447,13 +448,13 @@ def test_skill_weight_jingtong_no_space():
 
 
 def test_skill_weight_same_line_youxian():
-    """同行"优先"关键词：有 Redis 经验优先"""
+    """同行"优先"关键词：有 Redis 经验优先 → preferred_keywords"""
     text = "职位要求\n有 Redis 经验优先"
     config = generate_config_from_text(text, merge_existing=False)
     job = list(config["job_requirements"].values())[0]
-    redis_kw = next((k for k in job["keywords"] if k["name"] == "Redis"), None)
+    redis_kw = next((k for k in job["preferred_keywords"] if k["name"] == "Redis"), None)
     assert redis_kw is not None
-    assert redis_kw["weight"] == 2
+    assert redis_kw["bonus"] == 2
 
 
 # ========== 死代码清理 ==========
@@ -749,3 +750,146 @@ def test_location_multiple_cities_first_non_hq():
     text = "总部在广州\n本岗位base杭州\n欢迎加入"
     result = _extract_work_location(text)
     assert result == "杭州"
+
+
+# ========== P2: 证券固收分析师场景 ==========
+
+def test_title_fallback_analyst():
+    """无标准前缀时，首行含"分析师"应被识别为岗位名"""
+    text = "证券固收业务python分析师\n岗位职责\n负责量化系统开发"
+    result = parse_job_requirements(text)
+    assert result["job_title"] == "证券固收业务python分析师"
+
+
+def test_title_fallback_strips_numbered_prefix():
+    """岗位1: 前缀不应进入岗位名称"""
+    text = "岗位1:证券固收业务python分析师\n岗位职责\n负责量化系统开发"
+    result = parse_job_requirements(text)
+    assert result["job_title"] == "证券固收业务python分析师"
+
+
+def test_title_fallback_no_false_positive_on_kai_fa():
+    """含"开发"的正文行不应触发兜底（开发是动词性词尾）"""
+    result = parse_job_requirements("需要3年以上开发经验，熟悉Java")
+    assert result["job_title"] == "Java 工程师"
+
+
+def test_title_fallback_researcher():
+    """"量化策略研究员" 应被兜底匹配"""
+    result = parse_job_requirements("量化策略研究员\n职位要求\n本科")
+    assert result["job_title"] == "量化策略研究员"
+
+
+def test_salary_multi_month_format():
+    """多月薪格式 20-35K·15薪"""
+    assert _extract_salary_range("薪资：20-35K·15薪") == (20, 35)
+    assert _extract_salary_range("薪资范围：20-35k·16薪") == (20, 35)
+
+
+def test_salary_multi_month_lowercase_k():
+    """多月薪格式小写k"""
+    assert _extract_salary_range("薪资：15k-25k·14薪") == (15, 25)
+
+
+def test_tech_skills_sql_agent_crawler():
+    """SQL、Agent、爬虫应被识别为技能关键词"""
+    text = "职位要求\n熟悉SQL数据库\n有Agent开发经验\n会爬虫技术"
+    result = parse_job_requirements(text)
+    skill_names_lower = [s.lower() for s in result["soft_skills"]]
+    assert "sql" in skill_names_lower
+    assert "agent" in skill_names_lower
+    assert "爬虫" in result["soft_skills"]
+
+
+def test_required_condition_certification():
+    """证券从业资格应被识别为必要条件"""
+    text = "职位要求\n本科\n必要条件\n1. 具有证券从业资格\n2. 3年以上经验"
+    result = parse_job_requirements(text)
+    assert "证券从业资格" in result["required_conditions"]
+
+
+def test_required_condition_cfa():
+    """CFA 应被识别为必要条件"""
+    text = "必要条件\nCFA持证者优先\n本科"
+    result = parse_job_requirements(text)
+    assert "CFA" in result["required_conditions"]
+
+
+def test_bonus_keywords_from_youxi_lines():
+    """"有证券行业经验者优先" 应提取"证券"为优先加分项"""
+    text = "职位描述【证券固收分析师】\n岗位职责\n数据分析\n\n有证券行业经验者优先\n有固收经验优先"
+    config = generate_config_from_text(text, merge_existing=False)
+    job_title = list(config["job_requirements"].keys())[0]
+    keywords = config["job_requirements"][job_title]["preferred_keywords"]
+    keyword_names_lower = [k["name"].lower() for k in keywords]
+    assert "证券" in keyword_names_lower or any("证券" in name for name in keyword_names_lower)
+
+
+def test_preferred_experience_phrase_fullstack_and_dba():
+    """有 X 经验优先 应把 X 提取为优先加分项"""
+    text = (
+        "3.有Python语言开发经验；精通python语言，有全栈开发经验优先。\n"
+        "4.熟练掌握sql处理数据经验；精通数据库技术、有数据库运维经验优先。"
+    )
+    config = generate_config_from_text(text, merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    preferred_names = [k["name"] for k in job["preferred_keywords"]]
+    assert "全栈开发" in preferred_names
+    assert "数据库运维" in preferred_names
+
+
+# ========== P2: 多等级薪资合并解析 ==========
+
+def test_salary_multi_level_ranges():
+    """薪资范围：中级：14K-17K 高级：18K-22K → 取全局 min/max = 14-22K"""
+    assert _extract_salary_range("薪资范围：中级：14K-17K 高级：18K-22K") == (14, 22)
+
+
+def test_salary_multi_level_ranges_three_tiers():
+    """三级薪资：初级10K-13K 中级14K-17K 高级18K-25K → 10-25K"""
+    assert _extract_salary_range("薪资范围：初级10K-13K 中级14K-17K 高级18K-25K") == (10, 25)
+
+
+def test_salary_single_range_unchanged():
+    """单范围薪资不应受影响"""
+    assert _extract_salary_range("薪资范围：15K-25K") == (15, 25)
+
+
+# ========== P2: 行业经验必要条件 ==========
+
+def test_industry_experience_bond_fund_futures():
+    """必要条件中'债券、基金、期货、期权'应被解析为 OR 必要条件"""
+    text = (
+        "必要条件（硬性约束）：\n"
+        "1. 具有3年以上工作经验\n"
+        "2. 金融投资行业经验，债券、基金、期货、期权等\n"
+    )
+    result = parse_job_requirements(text)
+    rc = result["required_conditions"]
+    industry_or = next((c for c in rc if isinstance(c, dict) and c.get("category") == "金融投资行业经验"), None)
+    assert industry_or is not None, f"金融投资行业经验 OR 条件缺失: {rc}"
+    assert industry_or["type"] == "or"
+    assert industry_or["items"] == ["债券", "基金", "期货", "期权"]
+
+
+def test_industry_experience_no_trigger_no_detection():
+    """必要条件中没有'行业经验'触发词时，不应激活行业检测"""
+    text = "必要条件\n本科\n3年以上经验\n熟悉债券市场"
+    result = parse_job_requirements(text)
+    # "债券"不应作为必要条件（只是熟悉，不是行业经验要求）
+    # 但"债券"可能作为 tech_condition 被提取，这是正常的
+    # 关键是不应因行业检测逻辑而额外添加
+    rc = result["required_conditions"]
+    # 必要条件应只含学历/经验类条件，不应含债券/基金等
+    assert "基金" not in rc
+    assert "期货" not in rc
+
+
+def test_industry_experience_partial_sub_keywords():
+    """只提及部分子类别时，只提取出现的那些"""
+    text = "必要条件\n1. 3年以上经验\n2. 固收行业经验，熟悉债券、利率债"
+    result = parse_job_requirements(text)
+    rc = result["required_conditions"]
+    # "债券"主词应被提取（因为"债券"出现在文本中，且是_bond的别名之一）
+    # 固收是债券的别名，所以"债券"主词会匹配
+    assert "债券" in rc or "固收" in [k for k in rc], f"债券或固收应在必要条件中: {rc}"

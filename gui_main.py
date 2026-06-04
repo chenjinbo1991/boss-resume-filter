@@ -1409,9 +1409,9 @@ class BossFilterGUI:
         parse_btn_frame = self._parse_btn_frame
         parse_btn_frame.pack(fill="x", pady=int(10 * self.dpi_scale * self.zoom_factor))
         icon_search_parse = self.icons.button('search', self.colors['text_primary'])
-        btn_parse = ttk.Button(parse_btn_frame, image=icon_search_parse, text=" 解析招聘需求", compound=tk.LEFT, command=self.parse_requirement)
-        btn_parse._icon_ref = icon_search_parse
-        btn_parse.pack(side="left")
+        self.btn_parse_requirement = ttk.Button(parse_btn_frame, image=icon_search_parse, text=" 解析招聘需求", compound=tk.LEFT, command=self.parse_requirement)
+        self.btn_parse_requirement._icon_ref = icon_search_parse
+        self.btn_parse_requirement.pack(side="left")
         # "<-点击解析招聘需求" 提示标签（粘贴或填入模板后显示）
         self.parse_hint_label = ttk.Label(
             parse_btn_frame, text="<-点击解析招聘需求", font=self.font_label,
@@ -1421,8 +1421,9 @@ class BossFilterGUI:
 
         # 解析结果展示
         self.parse_result_label = ttk.Label(parse_frame, text="", font=self.font_label,
-                                           foreground=self.colors['success'], background=self.colors['bg_card'])
-        self.parse_result_label.pack(anchor="w", pady=int(10 * self.dpi_scale * self.zoom_factor))
+                                           foreground=self.colors['success'], background=self.colors['bg_card'],
+                                           justify="left")
+        self.parse_result_label.pack(fill="x", anchor="w", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         # ===== 解析结果详细展示区域 =====
         self.result_detail_frame = ttk.Frame(config_container, style='Card.TFrame')
@@ -1694,7 +1695,7 @@ class BossFilterGUI:
         btn_export._icon_ref = icon_export_cfg
         btn_export.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
 
-        # 存储技能数据的列表（带权重）
+        # 存储技能数据的列表（带权重）；source="优先" 时保存到 preferred_keywords
         self.skills_data = []  # [{"name": "Java", "weight": 2, "source": "解析"}, ...]
         self.required_conditions_data = []  # ["统招本科", ...]
 
@@ -5237,6 +5238,20 @@ class BossFilterGUI:
                     "weight": 1,
                     "source": "配置"
                 })
+        preferred_keywords = rule.get("preferred_keywords", [])
+        for kw in preferred_keywords:
+            if isinstance(kw, dict):
+                self.skills_data.append({
+                    "name": kw.get("name", ""),
+                    "weight": kw.get("bonus", kw.get("weight", 1)),
+                    "source": "优先"
+                })
+            else:
+                self.skills_data.append({
+                    "name": kw,
+                    "weight": 1,
+                    "source": "优先"
+                })
         self.refresh_skills_tree()
 
         # 加载必要条件
@@ -5603,76 +5618,111 @@ class BossFilterGUI:
             messagebox.showwarning("警告", "请输入招聘需求文档内容")
             return
 
+        ai_provider = self.api_config.get("api_provider", "") if getattr(self, "api_config", None) else ""
+        ai_base_url = self.api_config.get("base_url", "") if getattr(self, "api_config", None) else ""
+        ai_model = self.api_config.get("model", "") if getattr(self, "api_config", None) else ""
+        ai_key = get_api_key(ai_provider, ai_base_url) if ai_provider and ai_base_url and ai_model else None
+        if hasattr(self, "btn_parse_requirement"):
+            self.btn_parse_requirement.config(state="disabled")
+        status = f"正在 AI 增强解析（{ai_model}）..." if ai_key else "正在正则解析..."
+        self._set_parse_result_text(f"⏳ {status}", self.colors['warning'])
+
+        def _worker():
+            try:
+                result = self._build_requirement_parse_result(
+                    requirement_text, ai_provider, ai_base_url, ai_model, ai_key
+                )
+                self.root.after(0, lambda: self._apply_requirement_parse_result(result))
+            except Exception as exc:
+                self.root.after(0, lambda e=exc: self._handle_requirement_parse_error(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _build_requirement_parse_result(self, requirement_text, ai_provider, ai_base_url, ai_model, ai_key):
+        """后台线程中构建解析结果，不直接操作 Tk 控件。"""
+        from doc_parser import generate_config_from_text, parse_job_requirements
+
+        debug_log_path = BASE_DIR / "parse_debug.log"
+        parsed_detail = parse_job_requirements(requirement_text)
+        with open(debug_log_path, 'w', encoding='utf-8') as f:
+            f.write(f"=== 学历解析调试日志 ===\n")
+            f.write(f"需求文档长度: {len(requirement_text)}\n")
+            f.write(f"需求文档是否含'博士': {'博士' in requirement_text}\n")
+            f.write(f"需求文档是否含'硕士': {'硕士' in requirement_text}\n")
+            f.write(f"需求文档是否含'本科': {'本科' in requirement_text}\n")
+            f.write(f"parse_job_requirements 结果: edu={parsed_detail['edu']}\n")
+            f.write(f"\n=== 原始需求文档 ===\n{requirement_text}\n")
+
+        config = generate_config_from_text(requirement_text, merge_existing=False)
+        ai_parse_status = "正则解析"
+        ai_parse_warnings = []
+        if ai_key:
+            try:
+                from job_ai_parser import enhance_config_with_ai
+                ai_result = enhance_config_with_ai(
+                    requirement_text,
+                    config,
+                    {"api_provider": ai_provider, "base_url": ai_base_url, "model": ai_model},
+                    ai_key,
+                )
+                if ai_result.success:
+                    config = ai_result.config
+                    ai_parse_status = f"AI增强解析（{ai_result.model}）"
+                    ai_parse_warnings = ai_result.warnings or []
+                else:
+                    ai_parse_status = f"正则解析（AI增强跳过：{ai_result.reason}）"
+            except Exception as ai_exc:
+                ai_parse_status = f"正则解析（AI增强失败：{str(ai_exc)[:50]}）"
+        elif ai_provider and ai_base_url and ai_model:
+            ai_parse_status = "正则解析（未找到当前模型 API Key）"
+
+        return {
+            "config": config,
+            "ai_parse_status": ai_parse_status,
+            "ai_parse_warnings": ai_parse_warnings,
+        }
+
+    def _apply_requirement_parse_result(self, result):
+        """在主线程中把解析结果填回界面。"""
         try:
-            # 直接调用 doc_parser.generate_config_from_text 生成完整配置
-            from doc_parser import generate_config_from_text, parse_job_requirements
-
-            # 先调试：记录原始文本和中间结果
-            debug_log_path = BASE_DIR / "parse_debug.log"
-            parsed_detail = parse_job_requirements(requirement_text)
-            with open(debug_log_path, 'w', encoding='utf-8') as f:
-                f.write(f"=== 学历解析调试日志 ===\n")
-                f.write(f"需求文档长度: {len(requirement_text)}\n")
-                f.write(f"需求文档是否含'博士': {'博士' in requirement_text}\n")
-                f.write(f"需求文档是否含'硕士': {'硕士' in requirement_text}\n")
-                f.write(f"需求文档是否含'本科': {'本科' in requirement_text}\n")
-                f.write(f"parse_job_requirements 结果: edu={parsed_detail['edu']}\n")
-                f.write(f"\n=== 原始需求文档 ===\n{requirement_text}\n")
-
-            config = generate_config_from_text(requirement_text, merge_existing=False)
+            config = result["config"]
+            ai_parse_status = result["ai_parse_status"]
+            ai_parse_warnings = result["ai_parse_warnings"]
             job_title = list(config["job_requirements"].keys())[0]
             job_config = config["job_requirements"][job_title]
 
-            # 填充基本信息
-            # 规范化岗位名称：去除多余空格
-            job_title = re.sub(r'\s+', ' ', job_title).strip()
+            job_title = self._clean_display_job_title(job_title)
             self.job_name_var.set(job_title)
-            # 更新选择岗位下拉框，显示提取到的新岗位名称
             self.config_job_combo.set(job_title)
 
-            # 设置经验
             self.min_exp_var.set(str(job_config.get("min_exp", 0)))
             self.max_age_var.set(_optional_int_to_entry(job_config.get("max_age", 35)))
-
-            # 设置学历
             self.edu_var.set(job_config.get("edu", "本科"))
-
-            # 设置工作地点
             self.work_location_var.set(job_config.get("work_location") or "")
 
-            # 设置薪资范围
             salary_min = job_config.get("salary_min")
             salary_max = job_config.get("salary_max")
             self.salary_min_var.set(str(salary_min) if salary_min is not None else "")
             self.salary_max_var.set(str(salary_max) if salary_max is not None else "")
 
-            # 加载技能列表（带权重）- 直接使用 doc_parser 生成的结果
             self.skills_data = []
-            keywords = job_config.get("keywords", [])
-            for kw in keywords:
+            for kw in job_config.get("keywords", []):
                 if isinstance(kw, dict):
-                    self.skills_data.append({
-                        "name": kw.get("name", ""),
-                        "weight": kw.get("weight", 1),
-                        "source": "解析"
-                    })
+                    self.skills_data.append({"name": kw.get("name", ""), "weight": kw.get("weight", 1), "source": "解析"})
                 else:
-                    self.skills_data.append({
-                        "name": kw,
-                        "weight": 1,
-                        "source": "解析"
-                    })
+                    self.skills_data.append({"name": kw, "weight": 1, "source": "解析"})
+            for kw in job_config.get("preferred_keywords", []):
+                if isinstance(kw, dict):
+                    self.skills_data.append({"name": kw.get("name", ""), "weight": kw.get("bonus", kw.get("weight", 1)), "source": "优先"})
+                else:
+                    self.skills_data.append({"name": kw, "weight": 1, "source": "优先"})
             self.refresh_skills_tree()
 
-            # 加载必要条件
-            self.required_conditions_data = []
-            required_conditions = job_config.get("required_conditions", [])
-            for cond in required_conditions:
-                self.required_conditions_data.append(cond)
+            self.required_conditions_data = list(job_config.get("required_conditions", []))
             self.refresh_required_listbox()
 
-            # 显示解析结果
-            skills_count = len(self.skills_data)
+            skills_count = len([s for s in self.skills_data if s.get("source") != "优先"])
+            preferred_count = len([s for s in self.skills_data if s.get("source") == "优先"])
             required_count = len(self.required_conditions_data)
             parsed_min_exp = job_config.get("min_exp", 0)
             parsed_edu = job_config.get("edu", "本科")
@@ -5686,56 +5736,77 @@ class BossFilterGUI:
                 salary_part = f"，薪资≤{salary_max}K"
             else:
                 salary_part = ""
-            summary_base = f"岗位={job_title}, 经验={parsed_min_exp}年，学历={parsed_edu}{loc_part}{salary_part}, 技能={skills_count}个，必要条件={required_count}条"
+            preferred_part = f"，优先项={preferred_count}个" if preferred_count else ""
+            summary_base = (
+                f"岗位={job_title}\n"
+                f"经验={parsed_min_exp}年，学历={parsed_edu}{loc_part}{salary_part}，"
+                f"技能={skills_count}个{preferred_part}，必要条件={required_count}条，方式={ai_parse_status}"
+            )
 
-            # 关键字不足警告
             if skills_count == 0:
-                self.parse_result_label.config(
-                    text=f"⚠ 解析成功但无技术关键字：{summary_base}",
-                    foreground=self.colors['warning']
-                )
+                self._set_parse_result_text(f"⚠ 解析成功但无技术关键字：{summary_base}", self.colors['warning'])
                 messagebox.showwarning(
                     "关键字缺失",
-                    f"解析成功，但未提取到任何技术关键字。\n\n"
-                    f"没有技术关键字无法精确筛选简历，筛选将仅依赖\n"
-                    f"经验和学历，匹配精度会大幅下降。\n\n"
-                    f"建议：\n"
-                    f"1. 完善招聘需求文档，详细列出技术栈要求\n"
-                    f"2. 在下方「技能关键词」区域手工添加关键字"
+                    "解析成功，但未提取到任何技术关键字。\n\n"
+                    "没有技术关键字无法精确筛选简历，筛选将仅依赖\n"
+                    "经验和学历，匹配精度会大幅下降。\n\n"
+                    "建议：\n"
+                    "1. 完善招聘需求文档，详细列出技术栈要求\n"
+                    "2. 在下方「技能关键词」区域手工添加关键字"
                 )
             elif skills_count <= 5:
-                self.parse_result_label.config(
-                    text=f"⚠ 关键字较少：{summary_base}",
-                    foreground=self.colors['warning']
-                )
+                self._set_parse_result_text(f"⚠ 关键字较少：{summary_base}", self.colors['warning'])
                 messagebox.showwarning(
                     "关键字偏少",
                     f"仅提取到 {skills_count} 个技术关键字（建议 6 个以上）。\n\n"
-                    f"关键字偏少会导致评分区分度不足，\n"
-                    f"无法有效排序候选人。\n\n"
-                    f"建议：\n"
-                    f"1. 完善招聘需求文档，补充更多技术栈要求\n"
-                    f"2. 在下方「技能关键词」区域手工添加关键字"
+                    "关键字偏少会导致评分区分度不足，\n"
+                    "无法有效排序候选人。\n\n"
+                    "建议：\n"
+                    "1. 完善招聘需求文档，补充更多技术栈要求\n"
+                    "2. 在下方「技能关键词」区域手工添加关键字"
                 )
             else:
-                self.parse_result_label.config(
-                    text=f"✓ 解析成功：{summary_base}"
-                )
+                self._set_parse_result_text(f"✓ 解析成功：{summary_base}", self.colors['success'])
+                if ai_parse_warnings:
+                    messagebox.showwarning(
+                        "AI 解析提醒",
+                        "AI 增强解析完成，但有需要人工确认的点：\n\n"
+                        + "\n".join(f"- {w}" for w in ai_parse_warnings[:5])
+                    )
 
-            # 显示详细结果区域
-            self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
-
-            # 步骤推进：解析成功，进入检查结果步骤
+            self.result_detail_frame.pack(
+                fill="both", expand=True,
+                padx=int(25 * self.dpi_scale * self.zoom_factor),
+                pady=int(15 * self.dpi_scale * self.zoom_factor)
+            )
             if self._job_step_active >= 0:
                 self._update_job_step(2)
                 self._bind_job_step_advance()
             else:
-                # 非新建流程，直接显示保存提示
                 self._show_save_hint()
+        finally:
+            if hasattr(self, "btn_parse_requirement"):
+                self.btn_parse_requirement.config(state="normal")
 
-        except Exception as e:
-            messagebox.showerror("解析失败", f"解析需求文档时出错：{e}")
-            self.parse_result_label.config(text=f"✗ 解析失败：{e}", foreground=self.colors['danger'])
+    def _handle_requirement_parse_error(self, exc):
+        if hasattr(self, "btn_parse_requirement"):
+            self.btn_parse_requirement.config(state="normal")
+        messagebox.showerror("解析失败", f"解析需求文档时出错：{exc}")
+        self._set_parse_result_text(f"✗ 解析失败：{exc}", self.colors['danger'])
+
+    def _set_parse_result_text(self, text, foreground=None):
+        try:
+            wraplength = max(360, self.parse_result_label.winfo_width() - int(20 * self.dpi_scale * self.zoom_factor))
+            self.parse_result_label.config(wraplength=wraplength)
+        except Exception:
+            pass
+        self.parse_result_label.config(text=text, foreground=foreground or self.colors['success'])
+
+    def _clean_display_job_title(self, title):
+        title = re.sub(r'\s+', ' ', str(title or '')).strip()
+        title = re.sub(r'^(?:岗位|职位|招聘)\s*\d+\s*[：:、.\-]\s*', '', title)
+        title = re.sub(r'^\d+\s*[：:、.\-]\s*', '', title)
+        return title.strip()
 
     def _update_job_step(self, active_step: int):
         """更新新建岗位步骤引导条，active_step: 0-3 表示当前步骤"""
@@ -5846,8 +5917,17 @@ class BossFilterGUI:
             else:
                 return
 
-        # 从 skills_data 构建带权重的 keywords 列表
-        keywords = [{"name": s["name"], "weight": s["weight"]} for s in self.skills_data]
+        # 从 skills_data 构建带权重的 keywords / preferred_keywords 列表
+        keywords = [
+            {"name": s["name"], "weight": s["weight"]}
+            for s in self.skills_data
+            if s.get("source") != "优先"
+        ]
+        preferred_keywords = [
+            {"name": s["name"], "bonus": s["weight"]}
+            for s in self.skills_data
+            if s.get("source") == "优先"
+        ]
 
         # 从 required_conditions_data 构建必要条件列表
         required_conditions = list(self.required_conditions_data)  # 已是正确格式（str 或 dict）
@@ -5888,6 +5968,7 @@ class BossFilterGUI:
             "salary_min": salary_min,
             "salary_max": salary_max,
             "keywords": keywords,
+            "preferred_keywords": preferred_keywords,
             "required_conditions": required_conditions,
             "original_requirement": original_requirement if original_requirement else None
         }
