@@ -3089,11 +3089,28 @@ def main():
             r"%LOCALAPPDATA%",
         ]
 
+    def _generate_clean_api_config():
+        """生成干净的默认 api_config.json，不含个人配置（打包时临时生成）"""
+        clean_config = {
+            "api_provider": "deepseek",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-chat",
+            "saved_models": [],
+            "providers": {},
+            "fetched_models": {}
+        }
+        temp_path = BASE_DIR / "build" / "api_config.json"
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.write_text(json.dumps(clean_config, indent=2, ensure_ascii=False), encoding="utf-8")
+        return temp_path
+
+    clean_api_config = _generate_clean_api_config()
+
     cmd += [
         '--name', 'BOSS_ResumeFilter',
         '--additional-hooks-dir', str(BASE_DIR / 'pyinstaller-hooks'),
         '--add-data', f'{BASE_DIR / "job_config.json"}{SEP}.',
-        '--add-data', f'{BASE_DIR / "api_config.json"}{SEP}.',
+        '--add-data', f'{clean_api_config}{SEP}.',
         '--add-data', f'{BASE_DIR / "selectors.json"}{SEP}.',
         '--add-data', f'{BASE_DIR / "CHANGELOG.md"}{SEP}.',
     ]
