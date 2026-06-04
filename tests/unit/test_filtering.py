@@ -119,6 +119,13 @@ def test_keyword_found_case_insensitive():
     assert _keyword_found("SPRING BOOT", "Spring Boot") is True
 
 
+def test_keyword_found_ai_agent_aliases():
+    assert _keyword_found("有 Agent 开发经验", "AI Agent") is True
+    assert _keyword_found("熟悉智能体应用开发", "AI Agent") is True
+    assert _keyword_found("大模型Agent项目经验", "AI Agent") is True
+    assert _keyword_found("普通大模型应用经验", "AI Agent") is False
+
+
 # ========== _calc_edu_bonus ==========
 
 def test_calc_edu_bonus_tiers():
@@ -280,6 +287,13 @@ def test_filter_candidate_age_over_limit_rejected():
 def test_filter_candidate_age_at_limit_passes():
     rule = {"min_exp": 0, "edu": "不限", "max_age": 35, "keywords": ["Java"]}
     passed, _, _ = filter_candidate("35岁，Java 开发", rule)
+    assert passed is True
+
+
+def test_filter_candidate_max_age_none_means_unlimited():
+    """手动清空最大年龄保存为 None 时，筛选不启用年龄限制。"""
+    rule = {"min_exp": 0, "edu": "不限", "max_age": None, "keywords": ["Java"]}
+    passed, _, _ = filter_candidate("年龄：99 岁，Java 开发", rule)
     assert passed is True
 
 

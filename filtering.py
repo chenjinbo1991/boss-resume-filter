@@ -53,6 +53,10 @@ _EDU_ALIASES = {
     '全日制本科': ['全日制本科', '统招本科'],
 }
 
+_SKILL_ALIASES = {
+    'AI Agent': ['Agent', 'AIAgent', '智能体', '大模型Agent', '大模型 Agent'],
+}
+
 
 def _condition_item_found(candidate_text: str, item: str) -> bool:
     """Match a required/preferred item with known aliases."""
@@ -64,7 +68,12 @@ def _condition_item_found(candidate_text: str, item: str) -> bool:
 
     if item.lower() in candidate_text.lower():
         return True
-    aliases = _CERT_ALIASES.get(item, []) + _INDUSTRY_ALIASES.get(item, []) + _EDU_ALIASES.get(item, [])
+    aliases = (
+        _CERT_ALIASES.get(item, [])
+        + _INDUSTRY_ALIASES.get(item, [])
+        + _EDU_ALIASES.get(item, [])
+        + _SKILL_ALIASES.get(item, [])
+    )
     return any(alias.lower() in candidate_text.lower() for alias in aliases)
 
 
@@ -144,6 +153,8 @@ def _parse_candidate_salary_range(text: str) -> tuple[Optional[int], Optional[in
 
 def _keyword_found(text: str, keyword: str) -> bool:
     """检查关键词是否在文本中作为独立词出现，避免英文子串误匹配。"""
+    if keyword in _SKILL_ALIASES:
+        return _condition_item_found(text, keyword)
     if any('一' <= c <= '鿿' for c in keyword):
         return keyword.lower() in text.lower()
     try:

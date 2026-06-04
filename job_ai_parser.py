@@ -10,24 +10,31 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import requests
 
-from constants import USER_AGENT
+from constants import CHINESE_NUMERALS, MAJOR_CITIES, USER_AGENT
 
 
-AI_PARSE_TIMEOUT = (8, 45)
+AI_PARSE_TIMEOUT = (8, 75)
+AI_PARSE_MAX_RETRIES = 3
 AI_PARSE_MAX_TOKENS = 1200
 AI_PARSE_TEMPERATURE = 0.1
+AI_PARSE_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 _EDU_VALUES = {"不限", "高中", "中专", "大专", "本科", "硕士", "博士"}
 _NOISY_KEYWORD_RE = re.compile(
-    r"^(?:API|Wind|Bloomberg|万得(?:API)?|彭博|数据库(?:技术)?|数据开发工具)$",
+    r"^(?:AI|人工智能|API|Wind|Bloomberg|万得(?:API)?|彭博|数据库(?:技术)?|数据开发工具|"
+    r"数据清洗|数据加工|因子|因子计算|因子结果|报表|报表开发|证券|证券行业)$",
     re.IGNORECASE,
 )
 _SOFT_TRAIT_RE = re.compile(r"服务意识|团队精神|学习能力|执行能力|沟通能力|责任心|抗压能力|主动性|积极性")
+_GENERAL_EXPERIENCE_RE = re.compile(
+    r"(?:^|[，,、;；\s])([0-9零一二三四五六七八九十两]+)\s*年\s*(?:以上|及以上|起|\+)?\s*(?:相关)?(?:工作)?经验"
+)
 
 
 @dataclass
@@ -64,7 +71,7 @@ def enhance_config_with_ai(
         messages = _build_messages(requirements_text, base_config)
         content = _call_chat_completion(base_url, model, api_key, messages)
         patch = _parse_json_response(content)
-        enhanced = _merge_patch(base_config, patch)
+        enhanced = _merge_patch(base_config, patch, requirements_text)
         warnings = [str(w).strip() for w in patch.get("warnings", []) if str(w).strip()]
         return AIParseEnhancementResult(True, enhanced, "AI 增强完成", model=model, warnings=warnings)
     except Exception as exc:
@@ -80,14 +87,18 @@ def _build_messages(requirements_text: str, regex_config: dict[str, Any]) -> lis
         "目标：在正则解析初稿基础上增强岗位配置。\n\n"
         "关键规则：\n"
         "1. '优先'、'加分'、'更佳'类条件进入 preferred_keywords_add，不进入 required_conditions_add。\n"
-        "2. '必须'、'要求'、'具备'、'需要'类硬性条件才进入 required_conditions_add。\n"
+        "2. 只有'必须'、'硬性'、'必要条件'、'一票否决'等明确硬约束才进入 required_conditions_add；"
+        "普通任职要求里的'具备/有/熟练掌握/精通 X 经验'进入 keywords_add。\n"
         "3. 'A、B、C 等'、'A/B'、'A 或 B'、'至少一种'通常解析为 OR："
         "{\"type\":\"or\",\"items\":[\"A\",\"B\",\"C\"]}。\n"
         "4. 只有出现'同时'、'均需'、'全部'才解析为 AND。\n"
         "5. 学历最低门槛不要被'硕士优先'、'博士优先'覆盖。\n"
-        "6. keywords 是核心技能匹配项，weight 只能 1-3；preferred_keywords 是优先加分项，bonus 只能 1-10。\n\n"
-        "7. 万得/Wind、彭博/Bloomberg、API、数据库技术这类数据来源或泛化词不要加入 keywords。\n"
-        "8. 服务意识、团队精神、学习能力、执行能力等软素质不要加入 required_conditions。\n\n"
+        "6. keywords 是核心技能匹配项，weight 只能 1-3；preferred_keywords 是优先加分项，bonus 默认 2，不要自行放大。\n\n"
+        "7. AI、人工智能、万得/Wind、彭博/Bloomberg、API、数据库技术、数据清洗、因子计算、报表开发、证券行业"
+        "这类泛化词、数据来源、职责产出或行业词不要加入 keywords。\n"
+        "8. 服务意识、团队精神、学习能力、执行能力等软素质不要加入 required_conditions。\n"
+        "9. 本科及以上、3年以上工作经验这类基础门槛放进 basic_info.edu/min_exp，"
+        "不要作为 required_conditions 字符串；统招本科可保留为 required_conditions 的'统招本科'。\n\n"
         "返回 JSON schema：\n"
         "{\n"
         "  \"job_title\": \"可选，岗位名修正\",\n"
@@ -116,29 +127,72 @@ def _call_chat_completion(base_url: str, model: str, api_key: str, messages: lis
     except ImportError:
         verify_path = True
 
-    response = requests.post(
-        f"{base_url}/chat/completions",
-        json={
-            "model": model,
-            "messages": messages,
-            "max_tokens": AI_PARSE_MAX_TOKENS,
-            "temperature": AI_PARSE_TEMPERATURE,
-            "stream": False,
-        },
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-            "User-Agent": USER_AGENT,
-            "Connection": "close",
-        },
-        timeout=AI_PARSE_TIMEOUT,
-        verify=verify_path,
-    )
-    if response.status_code != 200:
-        raise ValueError(f"AI HTTP {response.status_code}: {response.text[:160]}")
+    last_error = ""
+    for attempt in range(AI_PARSE_MAX_RETRIES):
+        try:
+            response = requests.post(
+                f"{base_url}/chat/completions",
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "max_tokens": AI_PARSE_MAX_TOKENS,
+                    "temperature": AI_PARSE_TEMPERATURE,
+                    "stream": False,
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "User-Agent": USER_AGENT,
+                    "Connection": "close",
+                },
+                timeout=AI_PARSE_TIMEOUT,
+                verify=verify_path,
+            )
+        except requests.exceptions.Timeout as exc:
+            last_error = f"AI 请求超时：模型服务 {AI_PARSE_TIMEOUT[1]} 秒内未返回"
+            if attempt < AI_PARSE_MAX_RETRIES - 1:
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            raise ValueError(last_error) from exc
+        except requests.exceptions.SSLError as exc:
+            raise ValueError("AI SSL 证书错误：请检查 Base URL、代理或证书配置") from exc
+        except requests.exceptions.ConnectionError as exc:
+            last_error = "AI 连接失败：无法连接到 Base URL，或连接被代理/服务端重置"
+            if attempt < AI_PARSE_MAX_RETRIES - 1:
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            raise ValueError(last_error) from exc
+        except requests.exceptions.RequestException as exc:
+            raise ValueError(f"AI 请求异常：{type(exc).__name__}: {str(exc)[:100]}") from exc
 
-    data = response.json()
-    return str(data.get("choices", [{}])[0].get("message", {}).get("content", ""))
+        if response.status_code == 200:
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise ValueError("AI 返回不是合法 JSON 响应") from exc
+            return str(data.get("choices", [{}])[0].get("message", {}).get("content", ""))
+
+        last_error = _format_ai_http_error(response)
+        if response.status_code in AI_PARSE_RETRYABLE_STATUS and attempt < AI_PARSE_MAX_RETRIES - 1:
+            time.sleep(0.8 * (attempt + 1))
+            continue
+        raise ValueError(last_error)
+
+    raise ValueError(last_error or "AI 请求失败")
+
+
+def _format_ai_http_error(response: requests.Response) -> str:
+    status = response.status_code
+    body = (response.text or "").strip()[:160]
+    if status in {401, 403}:
+        return f"AI 鉴权失败 HTTP {status}：请检查 API Key、服务商权限或模型开通状态"
+    if status == 404:
+        return "AI 接口不存在 HTTP 404：请检查 Base URL 是否为 OpenAI 兼容接口地址"
+    if status == 429:
+        return "AI 请求限流 HTTP 429：服务商额度不足、并发过高或触发限流"
+    if status in {500, 502, 503, 504}:
+        return f"AI 服务端错误 HTTP {status}：模型服务暂时不可用"
+    return f"AI HTTP {status}: {body}"
 
 
 def _parse_json_response(text: str) -> dict[str, Any]:
@@ -159,7 +213,7 @@ def _parse_json_response(text: str) -> dict[str, Any]:
     return data
 
 
-def _merge_patch(regex_config: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+def _merge_patch(regex_config: dict[str, Any], patch: dict[str, Any], requirements_text: str = "") -> dict[str, Any]:
     config = copy.deepcopy(regex_config)
     jobs = config.get("job_requirements")
     if not isinstance(jobs, dict) or not jobs:
@@ -171,20 +225,34 @@ def _merge_patch(regex_config: dict[str, Any], patch: dict[str, Any]) -> dict[st
 
     basic = patch.get("basic_info", {})
     if isinstance(basic, dict):
-        for key in ("min_exp", "max_age", "salary_min", "salary_max"):
+        for key in ("min_exp", "salary_min", "salary_max"):
             if key in basic:
                 job[key] = _optional_int(basic.get(key), job.get(key))
+        if "max_age" in basic and basic.get("max_age") not in (None, ""):
+            job["max_age"] = _optional_int(basic.get("max_age"), job.get("max_age"))
         if "edu" in basic:
             edu = _clean_text(basic.get("edu"))
             if edu in _EDU_VALUES:
                 job["edu"] = edu
         if "work_location" in basic:
-            loc = _clean_text(basic.get("work_location"))
-            job["work_location"] = loc or None
+            loc = _normalize_work_location(basic.get("work_location"))
+            if loc:
+                job["work_location"] = loc
+
+    preferred_additions = _filter_preferred_additions(
+        patch.get("preferred_keywords_add", []),
+        requirements_text,
+    )
+    existing_keyword_keys = _weighted_name_keys(job.get("keywords", []))
+    preferred_addition_keys = _weighted_name_keys(preferred_additions)
+    keywords_add = [
+        item for item in patch.get("keywords_add", [])
+        if _normalized_weighted_key(item) not in (preferred_addition_keys - existing_keyword_keys)
+    ] if isinstance(patch.get("keywords_add", []), list) else []
 
     job["keywords"] = _merge_weighted_items(
         job.get("keywords", []),
-        patch.get("keywords_add", []),
+        keywords_add,
         patch.get("keywords_update", []),
         value_key="weight",
         min_value=1,
@@ -192,16 +260,24 @@ def _merge_patch(regex_config: dict[str, Any], patch: dict[str, Any]) -> dict[st
     )
     job["preferred_keywords"] = _merge_weighted_items(
         job.get("preferred_keywords", []),
-        patch.get("preferred_keywords_add", []),
+        preferred_additions,
         [],
         value_key="bonus",
         min_value=1,
         max_value=10,
+        addition_max_value=2,
     )
+    required_additions = patch.get("required_conditions_add", [])
+    exp_from_required = _max_general_experience_years(required_additions)
+    if exp_from_required:
+        current_exp = job.get("min_exp") if isinstance(job.get("min_exp"), int) else 0
+        job["min_exp"] = max(current_exp, exp_from_required)
+
     job["required_conditions"] = _merge_required_conditions(
         job.get("required_conditions", []),
-        patch.get("required_conditions_add", []),
+        required_additions,
         patch.get("required_conditions_remove", []),
+        job.get("keywords", []),
     )
 
     config["job_requirements"] = {new_title: job}
@@ -216,22 +292,24 @@ def _merge_weighted_items(
     value_key: str,
     min_value: int,
     max_value: int,
+    addition_max_value: int | None = None,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     index: dict[str, int] = {}
 
-    def add_or_update(raw: Any, default_value: int, allow_add: bool = True) -> None:
+    def add_or_update(raw: Any, default_value: int, allow_add: bool = True, item_max_value: int | None = None) -> None:
         if isinstance(raw, dict):
             name = _clean_text(raw.get("name"))
             raw_value = raw.get(value_key, raw.get("weight", raw.get("bonus", default_value)))
         else:
             name = _clean_text(raw)
             raw_value = default_value
+        name = _normalize_weighted_name(name)
         if not name:
             return
         if value_key == "weight" and _is_noisy_keyword(name):
             return
-        value = _clamp_int(raw_value, default_value, min_value, max_value)
+        value = _clamp_int(raw_value, default_value, min_value, item_max_value or max_value)
         key = re.sub(r"\s+", "", name).lower()
         if key in index:
             items[index[key]][value_key] = max(items[index[key]].get(value_key, min_value), value)
@@ -244,12 +322,13 @@ def _merge_weighted_items(
     for raw in updates if isinstance(updates, list) else []:
         add_or_update(raw, 1, allow_add=False)
     for raw in additions if isinstance(additions, list) else []:
-        add_or_update(raw, 1)
+        add_or_update(raw, 1, item_max_value=addition_max_value)
     return items
 
 
-def _merge_required_conditions(existing: Any, additions: Any, removals: Any) -> list[Any]:
+def _merge_required_conditions(existing: Any, additions: Any, removals: Any, keywords: Any = None) -> list[Any]:
     conditions = list(existing) if isinstance(existing, list) else []
+    keyword_names = _keyword_name_set(keywords)
     remove_set = {_normalize_condition_key(item) for item in removals if _normalize_condition_key(item)} if isinstance(removals, list) else set()
     if remove_set:
         conditions = [cond for cond in conditions if _normalize_condition_key(cond) not in remove_set]
@@ -258,6 +337,8 @@ def _merge_required_conditions(existing: Any, additions: Any, removals: Any) -> 
     for raw in additions if isinstance(additions, list) else []:
         cond = _normalize_condition(raw)
         if _is_soft_trait_condition(cond):
+            continue
+        if _is_keyword_requirement_condition(cond, keyword_names):
             continue
         key = _normalize_condition_key(cond)
         if cond is not None and key and key not in seen:
@@ -268,7 +349,17 @@ def _merge_required_conditions(existing: Any, additions: Any, removals: Any) -> 
 
 def _normalize_condition(raw: Any) -> Any:
     if isinstance(raw, str):
-        return _clean_text(raw) or None
+        text = _clean_text(raw)
+        if not text:
+            return None
+        compact = re.sub(r"\s+", "", text)
+        if "统招本科" in compact:
+            return "统招本科"
+        if "全日制本科" in compact:
+            return "全日制"
+        if _is_generic_education_condition(compact) or _general_experience_years(text):
+            return None
+        return text
     if not isinstance(raw, dict):
         return None
     cond_type = str(raw.get("type", "or")).lower()
@@ -284,6 +375,152 @@ def _normalize_condition(raw: Any) -> Any:
     return result
 
 
+def _normalize_work_location(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    cities: list[str] = []
+    seen: set[str] = set()
+    for city in MAJOR_CITIES:
+        if re.search(rf"{re.escape(city)}市?", text):
+            if city not in seen:
+                cities.append(city)
+                seen.add(city)
+    return "/".join(cities)
+
+
+def _normalize_weighted_name(name: str) -> str:
+    cleaned = _clean_text(name)
+    compact = re.sub(r"\s+", "", cleaned)
+    if re.fullmatch(r"(?:AI)?Agent|AIAgent|智能体|大模型Agent", compact, re.IGNORECASE):
+        return "AI Agent"
+    if re.fullmatch(r"LangChain", compact, re.IGNORECASE):
+        return "LangChain"
+    if re.fullmatch(r"证券(?:行业|从业|相关)?(?:经验|背景|经历)?", compact):
+        return "证券"
+    return cleaned
+
+
+def _filter_preferred_additions(additions: Any, requirements_text: str) -> list[Any]:
+    if not isinstance(additions, list):
+        return []
+    evidence_text = _preferred_evidence_text(requirements_text)
+    if not evidence_text:
+        return additions
+    return [item for item in additions if _weighted_name_in_text(item, evidence_text)]
+
+
+def _preferred_evidence_text(requirements_text: str) -> str:
+    evidence: list[str] = []
+    for line in (requirements_text or "").splitlines():
+        if not re.search(r"优先|加分|更佳|优先考虑|优先录用", line):
+            continue
+        clauses = re.split(r"[；;。！？!?]", line)
+        for clause in clauses:
+            clause = clause.strip()
+            if not re.search(r"优先|加分|更佳|优先考虑|优先录用", clause):
+                continue
+            comma_parts = [part.strip() for part in re.split(r"[,，]", clause) if part.strip()]
+            if len(comma_parts) > 1 and re.search(r"优先|加分|更佳|优先考虑|优先录用", comma_parts[-1]):
+                evidence.append(comma_parts[-1])
+            else:
+                evidence.append(clause)
+    return "\n".join(evidence)
+
+
+def _weighted_name_in_text(item: Any, text: str) -> bool:
+    if isinstance(item, dict):
+        raw_name = _clean_text(item.get("name"))
+    else:
+        raw_name = _clean_text(item)
+    name = _normalize_weighted_name(raw_name)
+    compact_text = re.sub(r"\s+", "", text or "").lower()
+    for variant in _weighted_name_variants(name):
+        compact_variant = re.sub(r"\s+", "", variant).lower()
+        if compact_variant and compact_variant in compact_text:
+            return True
+    return False
+
+
+def _weighted_name_variants(name: str) -> list[str]:
+    variants = [name]
+    compact = re.sub(r"\s+", "", name or "").lower()
+    if compact == "aiagent":
+        variants.extend(["AI Agent", "AIAgent", "Al Agent", "AlAgent", "Agent", "智能体", "大模型Agent", "大模型 Agent"])
+    elif compact == "langchain":
+        variants.extend(["LangChain", "Langchain"])
+    elif compact == "证券":
+        variants.extend(["证券行业", "证券从业", "证券相关", "证券经验", "证券背景"])
+    return variants
+
+
+def _weighted_name_keys(items: Any) -> set[str]:
+    keys: set[str] = set()
+    for item in items if isinstance(items, list) else []:
+        key = _normalized_weighted_key(item)
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _normalized_weighted_key(item: Any) -> str:
+    if isinstance(item, dict):
+        name = _clean_text(item.get("name"))
+    else:
+        name = _clean_text(item)
+    name = _normalize_weighted_name(name)
+    return re.sub(r"\s+", "", name).lower() if name else ""
+
+
+def _max_general_experience_years(raw_items: Any) -> int:
+    years: list[int] = []
+    if not isinstance(raw_items, list):
+        return 0
+    for raw in raw_items:
+        if isinstance(raw, str):
+            year = _general_experience_years(raw)
+            if year:
+                years.append(year)
+        elif isinstance(raw, dict):
+            for item in raw.get("items", []):
+                year = _general_experience_years(_clean_text(item))
+                if year:
+                    years.append(year)
+    return max(years) if years else 0
+
+
+def _general_experience_years(text: str) -> int:
+    compact = re.sub(r"\s+", "", text or "")
+    match = _GENERAL_EXPERIENCE_RE.search(compact)
+    if not match:
+        return 0
+    return _chinese_or_int(match.group(1))
+
+
+def _is_generic_education_condition(compact: str) -> bool:
+    return bool(re.fullmatch(r"(?:高中|中专|大专|本科|硕士|博士)(?:及以上|以上)?(?:学历|学位)?", compact))
+
+
+def _chinese_or_int(value: str) -> int:
+    if value in CHINESE_NUMERALS:
+        return CHINESE_NUMERALS[value]
+    if value == "十":
+        return 10
+    if value.startswith("十") and len(value) > 1:
+        return 10 + CHINESE_NUMERALS.get(value[1], 0)
+    if value.endswith("十") and len(value) > 1:
+        return CHINESE_NUMERALS.get(value[0], 0) * 10
+    if "十" in value:
+        first, _, second = value.partition("十")
+        tens = CHINESE_NUMERALS.get(first, 1)
+        ones = CHINESE_NUMERALS.get(second, 0)
+        return tens * 10 + ones
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
 def _normalize_condition_key(cond: Any) -> str:
     if isinstance(cond, str):
         return cond.strip().lower()
@@ -292,6 +529,24 @@ def _normalize_condition_key(cond: Any) -> str:
         items = [_clean_text(item).lower() for item in cond.get("items", []) if _clean_text(item)]
         return f"{cond_type}:{','.join(items)}" if items else ""
     return ""
+
+
+def _keyword_name_set(keywords: Any) -> set[str]:
+    names: set[str] = set()
+    for raw in keywords if isinstance(keywords, list) else []:
+        name = _clean_text(raw.get("name")) if isinstance(raw, dict) else _clean_text(raw)
+        if name:
+            names.add(re.sub(r"\s+", "", name).lower())
+    return names
+
+
+def _is_keyword_requirement_condition(cond: Any, keyword_names: set[str]) -> bool:
+    if not isinstance(cond, str) or not keyword_names:
+        return False
+    compact = re.sub(r"\s+", "", cond).lower()
+    if not re.search(r"具备|具有|有|熟悉|熟练|掌握|精通|开发经验|使用经验|处理数据经验", cond):
+        return False
+    return any(name and name in compact for name in keyword_names)
 
 
 def _is_noisy_keyword(name: str) -> bool:

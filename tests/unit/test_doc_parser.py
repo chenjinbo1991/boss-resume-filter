@@ -493,6 +493,20 @@ def test_age_no_false_positive_experience():
     assert result["max_age"] is None
 
 
+def test_generated_config_defaults_max_age_to_35_when_missing():
+    """岗位解析未明确年龄上限时，配置默认最大年龄 35。"""
+    config = generate_config_from_text("职位要求\n本科\n3年以上Java经验", merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    assert job["max_age"] == 35
+
+
+def test_generated_config_keeps_explicit_max_age():
+    """岗位解析有明确年龄上限时，配置使用原文限制。"""
+    config = generate_config_from_text("职位要求\n本科\n年龄40岁以内\n3年以上Java经验", merge_existing=False)
+    job = list(config["job_requirements"].values())[0]
+    assert job["max_age"] == 40
+
+
 # ========== P0 权重正则空格修复 ==========
 
 def test_skill_weight_no_space_chinese():
@@ -536,6 +550,61 @@ def test_skill_weight_same_line_youxian():
     redis_kw = next((k for k in job["preferred_keywords"] if k["name"] == "Redis"), None)
     assert redis_kw is not None
     assert redis_kw["bonus"] == 2
+
+
+def test_golden_sample_mid_senior_ai_engineer_template():
+    """Golden sample: 中高级 AI 工程师，局部优先项不污染整行技能。"""
+    text = """职位描述【中高级AI工程师】：
+1. Java/Python基础扎实，具有实际开发经验，能够独立完成开发任务；
+2. 熟悉mysql、oracle其中一种数据库的使用及优化；
+3. 熟练使用Spring Cloud、Dubbo或类似的微服务框架,Dubbo优先；
+4. 熟练使用SpringBoot/Spring Mvc/Mybatis等常用java框架；
+5. 了解缓存技术Redis、消息中间件Kafka；
+6. 熟悉activiti、camunda、flowable等相关技术；
+7. 有AI开发背景（LLM、Al Agent、智能体、Spring AI、Langchain、智能问答、知识库）的优先；
+
+职位要求：
+1. 4-10年工作经验
+2. 本科学历
+3. 薪资范围：12k-15k
+4. 工作地点：南京市雨花区凯润大厦2号楼5层
+
+必要条件（硬性约束）：
+1. 具有4年以上工作经验
+2. 统招本科学历；"""
+
+    config = generate_config_from_text(text, merge_existing=False)
+    job = config["job_requirements"]["中高级AI工程师"]
+    keywords = {item["name"]: item["weight"] for item in job["keywords"]}
+    preferred = {item["name"]: item["bonus"] for item in job["preferred_keywords"]}
+
+    assert job["min_exp"] == 4
+    assert job["edu"] == "本科"
+    assert job["salary_min"] == 12
+    assert job["salary_max"] == 15
+    assert job["work_location"] == "南京"
+    assert "统招本科" in job["required_conditions"]
+
+    assert keywords["Java"] == 2
+    assert keywords["Python"] == 1
+    assert keywords["MySQL"] == 2
+    assert keywords["Oracle"] == 2
+    assert keywords["Spring Cloud"] == 2
+    assert keywords["Spring Boot"] == 2
+    assert keywords["Spring MVC"] == 2
+    assert keywords["MyBatis"] == 2
+    assert keywords["activiti"] == 2
+    assert keywords["camunda"] == 2
+    assert keywords["flowable"] == 2
+
+    assert "LangChain" in preferred
+    assert "AI Agent" in preferred
+    assert "Spring AI" in preferred
+    assert "Dubbo" in preferred
+    assert "Spring Cloud" not in preferred
+    assert "微服务" not in preferred
+    assert "Langchain" not in preferred
+    assert "Al Agent" not in preferred
 
 
 # ========== 死代码清理 ==========
@@ -884,12 +953,13 @@ def test_salary_multi_month_lowercase_k():
 
 
 def test_tech_skills_sql_agent_crawler():
-    """SQL、Agent、爬虫应被识别为技能关键词"""
+    """SQL、Agent、爬虫应被识别为技能关键词，Agent 归一为 AI Agent。"""
     text = "职位要求\n熟悉SQL数据库\n有Agent开发经验\n会爬虫技术"
     result = parse_job_requirements(text)
     skill_names_lower = [s.lower() for s in result["soft_skills"]]
     assert "sql" in skill_names_lower
-    assert "agent" in skill_names_lower
+    assert "ai agent" in skill_names_lower
+    assert "agent" not in skill_names_lower
     assert "爬虫" in result["soft_skills"]
 
 
@@ -968,6 +1038,8 @@ def test_securities_fixed_income_python_analyst_real_template():
     assert "Python" in keyword_names
     assert "SQL" in keyword_names
     assert "API" not in keyword_names
+    assert "AI" not in keyword_names
+    assert "人工智能" not in keyword_names
     assert "Wind" not in keyword_names
     assert "Bloomberg" not in keyword_names
     assert "固收" not in keyword_names
@@ -975,8 +1047,10 @@ def test_securities_fixed_income_python_analyst_real_template():
     assert "证券" in preferred_names
     assert "全栈开发" in preferred_names
     assert "数据库运维" in preferred_names
-    assert "大模型 Agent" in preferred_names
+    assert "AI Agent" in preferred_names
+    assert "大模型 Agent" not in preferred_names
     assert "Agent" not in preferred_names
+    assert "大模型" not in preferred_names
     assert all(not name.startswith(("2.", "5.")) for name in preferred_names)
 
     assert "统招本科" in job["required_conditions"]

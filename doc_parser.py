@@ -25,7 +25,8 @@ SKILL_ALIASES = {
     'MyBatis': ['MyBatis'],
     'Node.js': ['Node.js', 'NodeJs', 'Node'],
     'Vue.js': ['Vue.js', 'VueJs', 'Vue'],
-    'AI Agent': ['AI Agent', 'AIAgent', '智能体'],
+    'AI Agent': ['AI Agent', 'AIAgent', 'Al Agent', 'AlAgent', 'Agent', '智能体', '大模型Agent', '大模型 Agent'],
+    'LangChain': ['LangChain', 'Langchain'],
     'Kubernetes': ['Kubernetes', 'K8s'],
     'PostgreSQL': ['PostgreSQL', 'Postgres'],
     'SQL': ['SQL', 'sql'],
@@ -47,8 +48,8 @@ TECH_SKILLS = [
     'Docker', 'Kubernetes', 'Jenkins', 'GitLab', 'CI/CD', 'Terraform', 'Ansible', 'Nginx', 'Apache',
     # 数据/AI
     'TensorFlow', 'PyTorch', 'Pandas', 'NumPy', 'Spark', 'Hadoop',
-    'AI', '人工智能', '机器学习', '深度学习', '数据分析', '数据挖掘', '数据可视化',
-    'LLM', '大模型', 'AI Agent', 'Agent', '智能问答', '知识库', 'RAG', '向量数据库',
+    '机器学习', '深度学习', '数据分析', '数据挖掘', '数据可视化',
+    'LLM', '大模型', 'AI Agent', 'LangChain', '智能问答', '知识库', 'RAG', '向量数据库',
     '爬虫', '网络爬虫',
     # 金融/量化
     '量化', '因子模型',
@@ -212,15 +213,25 @@ def _find_industry_terms(text: str) -> list[str]:
 def _preferred_clause_text(line: str) -> str:
     """只保留带“优先/加分”的子句，避免整行技能被优先语境污染。"""
     clauses = re.split(r'[；;。！？!?]', _strip_list_marker(line or ""))
-    return "；".join(clause.strip() for clause in clauses if PREFERRED_HINT_RE.search(clause))
+    preferred_clauses = []
+    for clause in clauses:
+        clause = clause.strip()
+        if not PREFERRED_HINT_RE.search(clause):
+            continue
+        comma_parts = [part.strip() for part in re.split(r'[,，]', clause) if part.strip()]
+        if len(comma_parts) > 1 and PREFERRED_HINT_RE.search(comma_parts[-1]):
+            preferred_clauses.append(comma_parts[-1])
+        else:
+            preferred_clauses.append(clause)
+    return "；".join(preferred_clauses)
 
 
 def _normalize_preferred_name(name: str) -> str:
     cleaned = _strip_list_marker(name)
     cleaned = re.sub(r'^(?:有|具备|使用)', '', cleaned).strip(' ，,、；;。.-')
     cleaned = re.sub(r'(?:行业)?(?:从业|相关)$', '', cleaned).strip()
-    if re.search(r'大模型', cleaned, re.IGNORECASE) and re.search(r'agent', cleaned, re.IGNORECASE):
-        return '大模型 Agent'
+    if re.search(r'(?:大模型|AI)', cleaned, re.IGNORECASE) and re.search(r'agent', cleaned, re.IGNORECASE):
+        return 'AI Agent'
     terms = _find_terms(cleaned, TECH_SKILLS)
     if len(terms) == 1:
         return terms[0]
@@ -899,8 +910,9 @@ def parse_job_requirements(text: str) -> Dict:
         # 年龄35以下 / 年龄 35 以内（岁/周岁 可省略，但必须有范围限定词）
         r'年龄[^\d]{0,5}(\d+)\s*(?=以下|以内|及以下)',
     ]
+    age_search_text = required_section + "\n" + position_req_section
     for pat in age_patterns:
-        age_match = re.search(pat, required_section)
+        age_match = re.search(pat, age_search_text)
         if age_match:
             max_age = int(age_match.group(1))
             break
@@ -1044,16 +1056,16 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
             position_tech_keywords.append(kw.lower())
 
     # 兜底的 AI 关键词列表（当需求没有明确说明时使用）
-    default_ai_keywords = ['llm', '大模型', 'ai agent', '智能体', 'langchain', '智能问答', '知识库', 'rag', '向量数据库', '生成式 ai', 'aigc', 'spring ai', 'ai']
+    default_ai_keywords = ['llm', '大模型', 'ai agent', '智能体', 'langchain', '智能问答', '知识库', 'rag', '向量数据库', '生成式 ai', 'aigc', 'spring ai']
 
     for skill in unique_skills:
         weight = 1  # 默认权重
         skill_lower = skill.lower()
-        matching_lines = [line for line in requirements_text.split('\n') if skill_lower in line.lower()]
-        preferred_matching_lines = [line for line in preferred_lines if skill_lower in line.lower()]
+        matching_lines = [line for line in requirements_text.split('\n') if _term_in_text(skill, line)]
+        preferred_matching_lines = [line for line in preferred_lines if _term_in_text(skill, line)]
         preferred_only = bool(matching_lines) and len(preferred_matching_lines) == len(matching_lines)
         if preferred_only:
-            if skill_lower == 'agent' and any('大模型' in line for line in preferred_matching_lines):
+            if skill_lower in {'agent', 'ai agent', '大模型'} and any(re.search(r'agent', line, re.IGNORECASE) and '大模型' in line for line in preferred_matching_lines):
                 continue
             _add_preferred_keyword(skill, 2)
             continue
@@ -1073,10 +1085,13 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         # 检查是否在"优先/熟悉/熟练"条件所在的同一行（支持同一行中多个技能共享权重）
         for line in requirements_text.split('\n'):
             line_lower = line.lower()
-            if skill_lower in line_lower:
-                # 检查该行是否有"熟悉"、"熟练"等关键词；"优先"单独进入 preferred_keywords
-                if re.search(r'熟悉|熟练|掌握|擅长', line_lower):
-                    weight = 2
+            if _term_in_text(skill, line):
+                # 检查该行是否有技能熟练度关键词；"优先"单独进入 preferred_keywords
+                if re.search(r'精通|擅长|深入|核心', line_lower):
+                    weight = 3
+                    break
+                if re.search(r'熟悉|熟练|掌握', line_lower):
+                    weight = max(weight, 2)
                     break
 
         # 如果技能与职位名称相关，权重设为 2
@@ -1128,6 +1143,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         "work_location": parsed.get("work_location", ""),
         "salary_min": parsed.get("salary_min"),
         "salary_max": parsed.get("salary_max"),
+        "max_age": parsed["max_age"] if parsed["max_age"] is not None else 35,
         "keywords": weighted_keywords,  # 带权重的技能列表
         "preferred_keywords": preferred_keywords,  # 优先项：额外加分，不参与关键词分母
         "required_conditions": all_required,
