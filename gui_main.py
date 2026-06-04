@@ -71,6 +71,26 @@ if DateEntry is None:
     DateEntry = TextDateEntry
 
 
+def _optional_int_to_entry(value):
+    """Format optional integer config values for editable entry/spinbox fields."""
+    if value is None:
+        return ""
+    if value == "":
+        return ""
+    return str(value)
+
+
+def _parse_optional_int_entry(value, field_name):
+    """Parse an optional integer entry, returning None for blank input."""
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise ValueError(f"{field_name}必须为数字") from exc
+
+
 def get_font_family():
     """获取字体 - 支持跨平台降级"""
     # 优先使用微软雅黑，macOS/Linux 降级到系统字体
@@ -5193,9 +5213,9 @@ class BossFilterGUI:
         job_name = self.config_job_combo.get()
         self.job_name_var.set(job_name)
         self.min_exp_var.set(str(rule.get("min_exp", 0)))
-        self.max_age_var.set(str(rule.get("max_age", 35)))
+        self.max_age_var.set(_optional_int_to_entry(rule.get("max_age", 35)))
         self.edu_var.set(rule.get("edu", "不限"))
-        self.work_location_var.set(rule.get("work_location", ""))
+        self.work_location_var.set(rule.get("work_location") or "")
         salary_min = rule.get("salary_min")
         salary_max = rule.get("salary_max")
         self.salary_min_var.set(str(salary_min) if salary_min is not None else "")
@@ -5612,13 +5632,13 @@ class BossFilterGUI:
 
             # 设置经验
             self.min_exp_var.set(str(job_config.get("min_exp", 0)))
-            self.max_age_var.set(str(job_config.get("max_age", 35)))
+            self.max_age_var.set(_optional_int_to_entry(job_config.get("max_age", 35)))
 
             # 设置学历
             self.edu_var.set(job_config.get("edu", "本科"))
 
             # 设置工作地点
-            self.work_location_var.set(job_config.get("work_location", ""))
+            self.work_location_var.set(job_config.get("work_location") or "")
 
             # 设置薪资范围
             salary_min = job_config.get("salary_min")
@@ -5853,10 +5873,17 @@ class BossFilterGUI:
                 messagebox.showwarning("警告", "薪资范围最高值必须为数字（如：15）")
                 return
 
+        try:
+            min_exp = int(self.min_exp_var.get())
+            max_age = _parse_optional_int_entry(self.max_age_var.get(), "最大年龄")
+        except ValueError as e:
+            messagebox.showwarning("警告", str(e))
+            return
+
         self.job_rules[normalized_job_name] = {
-            "min_exp": int(self.min_exp_var.get()),
+            "min_exp": min_exp,
             "edu": self.edu_var.get(),
-            "max_age": int(self.max_age_var.get()) if self.max_age_var.get().strip() else None,
+            "max_age": max_age,
             "work_location": self.work_location_var.get().strip() or None,
             "salary_min": salary_min,
             "salary_max": salary_max,
