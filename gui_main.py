@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.9.2"
+__version__ = "2.9.3"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
