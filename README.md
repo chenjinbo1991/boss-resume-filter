@@ -200,13 +200,14 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── constants.py          # 共享常量（评分阈值、城市列表）
+├── constants.py          # 共享常量（评分模型参数、阈值、学历档位、滚动参数、城市列表）
 ├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
-├── gui_main.py            # 图形界面主程序（v2.9.2）
-├── updater.py             # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
-├── icons.py               # 图标绘制模块（Pillow 矢量图标）
-├── doc_parser.py          # 文档解析器（简历解析）
-├── security.py           # API Key 安全存储模块（keyring 加密）
+├── gui_main.py           # 图形界面主程序（v2.9.2）
+├── gui_dialogs.py        # 独立对话框模块（更新日志、模型选择）
+├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
+├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
+├── doc_parser.py         # 文档解析器（简历解析）
+├── security.py           # API Key 安全存储模块（keyring 加密，按 provider+base_url 组合存储）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
 ├── latest.json           # 版本清单（Gitee 更新源，build.py --release 自动维护）
@@ -216,7 +217,8 @@ boss-resume-filter/
 ├── selectors.json        # 页面选择器配置（CSS/XPath/关键词，DOM 变化时修改）
 ├── candidates_all.json   # 累积的候选人数据（累积、去重）
 ├── candidates_all.xlsx   # Excel 导出文件（多工作表 + 统计摘要）
-├── CLAUDE.md             # AI 协作规范
+├── CLAUDE.md             # AI 协作规范（Claude / Codex 通用）
+├── AGENTS.md             # Codex 专用项目规范（内容与 CLAUDE.md 一致）
 ├── README.md             # 项目主文档
 ├── CHANGELOG.md          # 更新日志（嵌入 EXE，运行时从 _MEIPASS 读取）
 ├── GUI 使用说明.md        # 图形界面详细说明
@@ -228,7 +230,8 @@ boss-resume-filter/
 ├── tests/                # 测试脚本目录
 ├── scripts/              # 辅助脚本目录
 │   └── watch_progress.py # 发布进度监控脚本
-└── .build_progress.json  # 发布进度文件（build.py 实时更新）
+├── pyinstaller-hooks/    # PyInstaller 自定义 hook（控制模块收集范围，减小产物体积）
+└── .build_progress.json  # 发布进度文件（build.py 实时更新，供外部监控）
 ```
 
 ## 📊 匹配规则
