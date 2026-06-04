@@ -51,12 +51,12 @@ TECH_SKILLS = [
     'LLM', '大模型', 'AI Agent', 'Agent', '智能问答', '知识库', 'RAG', '向量数据库',
     '爬虫', '网络爬虫',
     # 金融/量化
-    'Wind', 'Bloomberg', '量化', '固收', '因子模型',
+    '量化', '因子模型',
     # 爬虫框架
     'Scrapy', 'Selenium',
     # 其他
     'Linux', 'Git', '微服务', '分布式', '大数据', '云计算',
-    'MQTT', 'Kafka', 'RabbitMQ', '消息队列', '消息中间件', 'GraphQL', 'RESTful', 'API', 'RPC',
+    'MQTT', 'Kafka', 'RabbitMQ', '消息队列', '消息中间件', 'GraphQL', 'RESTful', 'RPC',
     # 工作流
     'activiti', 'camunda', 'flowable', '工作流',
 ]
@@ -147,6 +147,8 @@ def _classify_requirement_line(line: str, section: str = "") -> str:
     """粗分类单行需求：硬条件、优先项、普通技能或其他。"""
     if section == 'preferred' or PREFERRED_HINT_RE.search(line):
         return 'preferred'
+    if section == 'desc':
+        return 'skill' if (SKILL_HINT_RE.search(line) or _find_terms(line, TECH_SKILLS)) else 'other'
     if section == 'hard' or HARD_HINT_RE.search(line):
         return 'hard'
     if section == 'req' and (SKILL_HINT_RE.search(line) or _find_terms(line, TECH_SKILLS)):
@@ -205,6 +207,24 @@ def _find_industry_terms(text: str) -> list[str]:
         if any(alias.lower() in text.lower() for alias in aliases):
             found.append(main_kw)
     return found
+
+
+def _preferred_clause_text(line: str) -> str:
+    """只保留带“优先/加分”的子句，避免整行技能被优先语境污染。"""
+    clauses = re.split(r'[；;。！？!?]', _strip_list_marker(line or ""))
+    return "；".join(clause.strip() for clause in clauses if PREFERRED_HINT_RE.search(clause))
+
+
+def _normalize_preferred_name(name: str) -> str:
+    cleaned = _strip_list_marker(name)
+    cleaned = re.sub(r'^(?:有|具备|使用)', '', cleaned).strip(' ，,、；;。.-')
+    cleaned = re.sub(r'(?:行业)?(?:从业|相关)$', '', cleaned).strip()
+    if re.search(r'大模型', cleaned, re.IGNORECASE) and re.search(r'agent', cleaned, re.IGNORECASE):
+        return '大模型 Agent'
+    terms = _find_terms(cleaned, TECH_SKILLS)
+    if len(terms) == 1:
+        return terms[0]
+    return cleaned
 
 
 def _unique_cities(text: str) -> list[str]:
@@ -913,7 +933,10 @@ def parse_job_requirements(text: str) -> Dict:
     # 行业经验（必要条件）：检测必要条件段落中的行业领域词及其子类
     # 多个方向应作为 OR 过滤，避免把"债券、基金、期货、期权等"误解为全部必须满足。
     _industry_experience_triggers = ['行业经验', '从业经验', '领域经验', '行业背景', '行业从业', '行业相关']
-    _industry_search_text = required_section + '\n' + position_req_section
+    _industry_search_text = "\n".join(
+        row["text"] for row in structured_rows
+        if row["section"] == "hard" or row["kind"] == "hard"
+    )
 
     # 只有当必要条件中出现了"行业经验"等触发词，才激活行业检测（避免误判）
     if any(trigger in _industry_search_text for trigger in _industry_experience_triggers):
@@ -1001,7 +1024,8 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
             preferred_keywords.append({"name": name, "bonus": bonus})
             preferred_seen.add(key)
 
-    preferred_lines = [line for line in requirements_text.split('\n') if _is_preferred_line(line)]
+    preferred_lines = [_preferred_clause_text(line) for line in requirements_text.split('\n') if _is_preferred_line(line)]
+    preferred_lines = [line for line in preferred_lines if line]
 
     # 提取职位名称中的技术关键词（Java、Python 等），这些词权重调高
     job_title = parsed.get("job_title", "").lower()
@@ -1026,8 +1050,11 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         weight = 1  # 默认权重
         skill_lower = skill.lower()
         matching_lines = [line for line in requirements_text.split('\n') if skill_lower in line.lower()]
-        preferred_only = bool(matching_lines) and all(_is_preferred_line(line) for line in matching_lines)
+        preferred_matching_lines = [line for line in preferred_lines if skill_lower in line.lower()]
+        preferred_only = bool(matching_lines) and len(preferred_matching_lines) == len(matching_lines)
         if preferred_only:
+            if skill_lower == 'agent' and any('大模型' in line for line in preferred_matching_lines):
+                continue
             _add_preferred_keyword(skill, 2)
             continue
 
@@ -1083,8 +1110,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
             if bk in line.lower():
                 _add_preferred_keyword(bk, 2)
         for match in re.finditer(r'(?:有|具备)?([\u4e00-\u9fa5A-Za-z0-9+#/. ]{2,24}?)(?:经验|背景|经历|能力)(?:者)?优先', line):
-            preferred_name = match.group(1).strip(' ，,、；;。.-')
-            preferred_name = re.sub(r'^(?:有|具备)', '', preferred_name).strip()
+            preferred_name = _normalize_preferred_name(match.group(1))
             if preferred_name:
                 _add_preferred_keyword(preferred_name, 2)
 

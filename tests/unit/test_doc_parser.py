@@ -930,6 +930,69 @@ def test_preferred_experience_phrase_fullstack_and_dba():
     assert "数据库运维" in preferred_names
 
 
+def test_securities_fixed_income_python_analyst_real_template():
+    """真实固收 Python 分析师模板：数据源/业务方向不应污染技能关键词。"""
+    text = """岗位1：证券固收业务python分析师
+一、岗位职责：
+1.数据分析，数据挖掘，将市场多种来源数据处理成投研需要的数据类型及因子结果。
+2.使用数据开发工具处理数据，实现业务逻辑和数据处理，形成报表。
+3.使用git对项目代码进行管理。
+4.使用python获取数据库、万得API、彭博等数据，对数据进行清洗加工。
+5.通过爬虫等技术获取数据，使用大模型AI技术进行代码优化
+二、任职要求：
+1.本科及以上学历，三年以上相关工作经验。
+2.有证券行业从业经验者优先。
+3.有Python语言开发经验；精通python语言，有全栈开发经验优先。
+4.熟练掌握sql处理数据经验；精通数据库技术、有数据库运维经验优先。
+5.有使用大模型Agent经验优先；
+6.具备较强的服务意识和团队精神，较强的学习能力和执行能力。
+三、薪资范围：中级：14K-17K 高级：18K-22K
+四、工作地点：北京市丰台区西营街青海大厦银河证券
+
+必要条件（硬性约束）
+1、统招本科及以上学历，3年以上工作经验
+2、金融投资行业经验，债券、基金、期货、期权等
+"""
+    config = generate_config_from_text(text, merge_existing=False)
+    job = config["job_requirements"]["证券固收业务python分析师"]
+
+    keyword_names = [k["name"] for k in job["keywords"]]
+    preferred_names = [k["name"] for k in job["preferred_keywords"]]
+
+    assert job["min_exp"] == 3
+    assert job["edu"] == "本科"
+    assert job["work_location"] == "北京"
+    assert job["salary_min"] == 14
+    assert job["salary_max"] == 22
+
+    assert "Python" in keyword_names
+    assert "SQL" in keyword_names
+    assert "API" not in keyword_names
+    assert "Wind" not in keyword_names
+    assert "Bloomberg" not in keyword_names
+    assert "固收" not in keyword_names
+
+    assert "证券" in preferred_names
+    assert "全栈开发" in preferred_names
+    assert "数据库运维" in preferred_names
+    assert "大模型 Agent" in preferred_names
+    assert "Agent" not in preferred_names
+    assert all(not name.startswith(("2.", "5.")) for name in preferred_names)
+
+    assert "统招本科" in job["required_conditions"]
+    finance_or = next(
+        c for c in job["required_conditions"]
+        if isinstance(c, dict) and c.get("category") == "金融投资行业经验"
+    )
+    assert finance_or["type"] == "or"
+    assert "债券" in finance_or["items"]
+    assert "基金" in finance_or["items"]
+    assert "期货" in finance_or["items"]
+    assert "期权" in finance_or["items"]
+    assert "量化" not in finance_or["items"]
+    assert "证券" not in finance_or["items"]
+
+
 # ========== P2: 多等级薪资合并解析 ==========
 
 def test_salary_multi_level_ranges():
