@@ -71,6 +71,35 @@ def test_merge_patch_clamps_weights_and_deduplicates():
     assert job["preferred_keywords"] == [{"name": "证券", "bonus": 10}]
 
 
+def test_merge_patch_filters_ai_keyword_noise_and_soft_trait_conditions():
+    patch_data = {
+        "keywords_add": [
+            {"name": "万得API", "weight": 2},
+            {"name": "彭博", "weight": 2},
+            {"name": "API", "weight": 2},
+            {"name": "数据库技术", "weight": 3},
+            {"name": "Python", "weight": 3},
+        ],
+        "required_conditions_add": [
+            "具备较强的服务意识和团队精神",
+            "较强的学习能力和执行能力",
+            {"type": "or", "items": ["债券", "基金"], "category": "金融投资行业经验"},
+        ],
+    }
+
+    job = list(_merge_patch(_base_config(), patch_data)["job_requirements"].values())[0]
+    keyword_names = [item["name"] for item in job["keywords"]]
+
+    assert "Python" in keyword_names
+    assert "万得API" not in keyword_names
+    assert "彭博" not in keyword_names
+    assert "API" not in keyword_names
+    assert "数据库技术" not in keyword_names
+    assert "具备较强的服务意识和团队精神" not in job["required_conditions"]
+    assert "较强的学习能力和执行能力" not in job["required_conditions"]
+    assert {"type": "or", "items": ["债券", "基金"], "category": "金融投资行业经验"} in job["required_conditions"]
+
+
 @patch("job_ai_parser.requests.post")
 def test_enhance_config_with_ai_success(mock_post):
     response = Mock()
