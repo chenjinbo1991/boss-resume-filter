@@ -894,8 +894,11 @@ def show_update_dialog(root, result, gui=None):
     dialog.configure(bg=colors['bg_card'])
 
     # 居中显示（按缩放调整尺寸）
+    # Mac 上 font_scale 可能大于 layout_scale（font_boost 补偿），窗口高度需用 font_scale
+    # 否则 Text 控件内容会溢出，导致底部按钮不可见
+    height_scale = max(layout_scale, font_scale)
     dw = int(700 * layout_scale)
-    dh = int(520 * layout_scale)
+    dh = int(520 * height_scale)
     _place_dialog_centered(dialog, root, dw, dh)
 
     pad = lambda v: int(v * layout_scale)

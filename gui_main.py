@@ -2638,7 +2638,7 @@ class BossFilterGUI:
         self._wrap_date_dropdown_mutex(self.result_date_end_entry, self.result_date_start_entry)
 
         ttk.Button(filter_frame, text="重置日期", command=self._clear_result_dates).pack(
-            side="left", padx=int(8 * self.dpi_scale * self.zoom_factor))
+            side="left", padx=(int(15 * self.dpi_scale * self.zoom_factor), int(8 * self.dpi_scale * self.zoom_factor)))
 
         # 统计卡片区（纵向卡片布局）
         stats_container = ttk.Frame(self.result_page, style='Page.TFrame')
