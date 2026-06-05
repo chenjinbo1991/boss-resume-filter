@@ -3295,6 +3295,9 @@ def main():
             enable_ci_sync=not args.no_ci_sync,
             old_tag_commit=old_tag_commit,
         )
+        # 清理 Gitee 旧版本产物（如果启用 Gitee）
+        if not args.no_gitee:
+            _gitee_clean_old_assets(version, apply=True)
         progress.end_step()
 
         # ---- 步骤 6：latest.json 更新 ----
