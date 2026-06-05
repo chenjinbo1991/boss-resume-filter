@@ -19,8 +19,8 @@ import requests
 from constants import CHINESE_NUMERALS, MAJOR_CITIES, USER_AGENT
 
 
-AI_PARSE_TIMEOUT = (8, 75)
-AI_PARSE_MAX_RETRIES = 3
+AI_PARSE_TIMEOUT = (6, 35)
+AI_PARSE_MAX_RETRIES = 2
 AI_PARSE_MAX_TOKENS = 1200
 AI_PARSE_TEMPERATURE = 0.1
 AI_PARSE_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -109,7 +109,8 @@ def _build_messages(requirements_text: str, regex_config: dict[str, Any]) -> lis
         "  \"preferred_keywords_add\": [{\"name\":\"优先项\", \"bonus\":1-10}],\n"
         "  \"required_conditions_add\": [\"字符串条件\", {\"type\":\"or|and\", \"items\":[\"项1\",\"项2\"], \"category\":\"可选\"}],\n"
         "  \"required_conditions_remove\": [\"要移除的字符串条件\"],\n"
-        "  \"warnings\": [\"不确定或需要人工确认的点\"]\n"
+        "  \"warnings\": [\"不确定或需要人工确认的点，用普通业务语言说明，不要出现 keywords、"
+        "preferred_keywords、required_conditions、JSON 等内部字段名\"]\n"
         "}\n\n"
         "原始招聘需求：\n"
         f"{requirements_text}\n\n"

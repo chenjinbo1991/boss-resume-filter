@@ -1,4 +1,4 @@
-from gui_main import _optional_int_to_entry, _parse_optional_int_entry
+from gui_main import BossFilterGUI, _optional_int_to_entry, _parse_optional_int_entry
 
 
 def test_optional_max_age_none_displays_as_blank():
@@ -21,3 +21,18 @@ def test_invalid_max_age_is_rejected_with_field_name():
         assert str(e) == "最大年龄必须为数字"
     else:
         raise AssertionError("invalid max age should raise ValueError")
+
+
+def test_humanize_ai_parse_warning_replaces_internal_field_names():
+    gui = BossFilterGUI.__new__(BossFilterGUI)
+
+    text = gui._humanize_ai_parse_warning(
+        "`keywords_add` 中的 Python weight 建议确认，required_conditions 里 OR 条件需要看一下"
+    )
+
+    assert "keywords" not in text
+    assert "required_conditions" not in text
+    assert "技能关键词" in text
+    assert "权重" in text
+    assert "必要条件" in text
+    assert "满足任一项" in text

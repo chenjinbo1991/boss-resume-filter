@@ -390,4 +390,4 @@ def test_enhance_config_with_ai_failure_returns_regex_config(mock_post, mock_sle
     assert result.success is False
     assert result.config == base
     assert "服务端错误" in result.reason
-    assert mock_post.call_count == 3
+    assert mock_post.call_count == 2

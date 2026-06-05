@@ -5526,6 +5526,8 @@ class BossFilterGUI:
 
     def _show_requirement_hint(self):
         """显示「点击查看需求示例->」提示标签（重建控件并启动呼吸动画）"""
+        if hasattr(self, 'requirement_hint_label') and self.requirement_hint_label.winfo_exists():
+            return
         self.requirement_hint_label = ttk.Label(
             self._req_header_frame, text="点击查看需求示例->", font=self.font_label,
             foreground=self.colors['success'], background=self.colors['bg_card'])
@@ -5555,6 +5557,8 @@ class BossFilterGUI:
 
     def _show_parse_hint(self):
         """显示「<-点击解析招聘需求」提示标签（重建控件并启动呼吸动画）"""
+        if hasattr(self, 'parse_hint_label') and self.parse_hint_label.winfo_exists():
+            return
         self.parse_hint_label = ttk.Label(
             self._parse_btn_frame, text="<-点击解析招聘需求", font=self.font_label,
             foreground=self.colors['success'], background=self.colors['bg_card'])
@@ -5623,9 +5627,14 @@ class BossFilterGUI:
         ai_model = self.api_config.get("model", "") if getattr(self, "api_config", None) else ""
         ai_key = get_api_key(ai_provider, ai_base_url) if ai_provider and ai_base_url and ai_model else None
         if hasattr(self, "btn_parse_requirement"):
-            self.btn_parse_requirement.config(state="disabled")
-        status = f"正在 AI 增强解析（{ai_model}）..." if ai_key else "正在正则解析..."
-        self._set_parse_result_text(f"⏳ {status}", self.colors['warning'])
+            self._parse_requirement_button_text = self.btn_parse_requirement.cget("text")
+            self.btn_parse_requirement.config(state="disabled", text=" 解析中...")
+        if ai_key:
+            status = "正在解析：先提取基础信息，再请 AI 帮忙检查和补全。"
+        else:
+            status = "正在解析：使用本地规则提取岗位要求。"
+        self._set_parse_result_text(status, self.colors['warning'])
+        self._start_requirement_parse_progress(bool(ai_key))
 
         def _worker():
             try:
@@ -5668,14 +5677,16 @@ class BossFilterGUI:
                 )
                 if ai_result.success:
                     config = ai_result.config
-                    ai_parse_status = f"AI增强解析（{ai_result.model}）"
+                    ai_parse_status = "本地规则 + AI 优化"
                     ai_parse_warnings = ai_result.warnings or []
                 else:
-                    ai_parse_status = f"正则解析（AI增强跳过：{ai_result.reason}）"
+                    ai_parse_status = f"本地规则（AI 暂时不可用，已自动回退：{self._friendly_ai_parse_reason(ai_result.reason)}）"
             except Exception as ai_exc:
-                ai_parse_status = f"正则解析（AI增强失败：{str(ai_exc)[:50]}）"
+                ai_parse_status = f"本地规则（AI 暂时不可用，已自动回退：{self._friendly_ai_parse_reason(str(ai_exc))}）"
         elif ai_provider and ai_base_url and ai_model:
-            ai_parse_status = "正则解析（未找到当前模型 API Key）"
+            ai_parse_status = "本地规则（当前模型还没配置密钥）"
+        else:
+            ai_parse_status = "本地规则"
 
         return {
             "config": config,
@@ -5683,9 +5694,63 @@ class BossFilterGUI:
             "ai_parse_warnings": ai_parse_warnings,
         }
 
+    def _friendly_ai_parse_reason(self, reason):
+        """把底层 AI 错误转成普通用户能理解的回退原因。"""
+        text = str(reason or "")
+        if any(token in text for token in ("超时", "Timeout", "timed out")):
+            return "响应太慢"
+        if any(token in text for token in ("鉴权", "401", "403", "API Key", "权限")):
+            return "密钥或模型权限需要检查"
+        if any(token in text for token in ("限流", "429", "额度", "quota", "rate")):
+            return "额度不足或请求太频繁"
+        if any(token in text for token in ("无法连接", "连接失败", "Connection", "DNS")):
+            return "网络连接不稳定"
+        if any(token in text for token in ("SSL", "证书")):
+            return "网络证书校验失败"
+        if any(token in text for token in ("404", "接口不存在", "Base URL")):
+            return "服务地址可能填错了"
+        if any(token in text for token in ("500", "502", "503", "504", "服务端错误")):
+            return "模型服务临时不可用"
+        if any(token in text for token in ("JSON", "返回为空")):
+            return "模型返回内容无法识别"
+        return "连接不稳定"
+
+    def _humanize_ai_parse_warning(self, warning):
+        """把 AI 提醒里的内部字段名转换为用户能看懂的说法。"""
+        text = re.sub(r'[`"\'“”‘’]', '', str(warning or "")).strip()
+        replacements = [
+            ("preferred_keywords_add", "优先项"),
+            ("preferred_keywords", "优先项"),
+            ("keywords_update", "技能关键词"),
+            ("keywords_add", "技能关键词"),
+            ("keywords", "技能关键词"),
+            ("required_conditions_remove", "必要条件"),
+            ("required_conditions_add", "必要条件"),
+            ("required_conditions", "必要条件"),
+            ("basic_info", "基本信息"),
+            ("job_title", "岗位名称"),
+            ("work_location", "工作地点"),
+            ("salary_min", "最低薪资"),
+            ("salary_max", "最高薪资"),
+            ("min_exp", "最低经验"),
+            ("max_age", "最大年龄"),
+            ("weight", "权重"),
+            ("bonus", "加分"),
+            ("JSON", "解析结果"),
+            ("json", "解析结果"),
+            ("null", "空"),
+            ("OR", "满足任一项"),
+            ("AND", "需要同时满足"),
+        ]
+        for old, new in replacements:
+            text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text or "有一处解析结果需要人工确认"
+
     def _apply_requirement_parse_result(self, result):
         """在主线程中把解析结果填回界面。"""
         try:
+            self._stop_requirement_parse_progress()
             config = result["config"]
             ai_parse_status = result["ai_parse_status"]
             ai_parse_warnings = result["ai_parse_warnings"]
@@ -5769,10 +5834,15 @@ class BossFilterGUI:
             else:
                 self._set_parse_result_text(f"✓ 解析成功：{summary_base}", self.colors['success'])
                 if ai_parse_warnings:
+                    friendly_warnings = [
+                        self._humanize_ai_parse_warning(w)
+                        for w in ai_parse_warnings[:5]
+                    ]
                     messagebox.showwarning(
-                        "AI 解析提醒",
-                        "AI 增强解析完成，但有需要人工确认的点：\n\n"
-                        + "\n".join(f"- {w}" for w in ai_parse_warnings[:5])
+                        "请确认解析结果",
+                        "AI 已帮你补全解析结果。下面这些地方可能需要你看一眼：\n\n"
+                        + "\n".join(f"- {w}" for w in friendly_warnings)
+                        + "\n\n不影响继续使用；确认无误后保存岗位配置即可。"
                     )
 
             self.result_detail_frame.pack(
@@ -5787,13 +5857,46 @@ class BossFilterGUI:
                 self._show_save_hint()
         finally:
             if hasattr(self, "btn_parse_requirement"):
-                self.btn_parse_requirement.config(state="normal")
+                self.btn_parse_requirement.config(
+                    state="normal",
+                    text=getattr(self, "_parse_requirement_button_text", " 解析招聘需求"),
+                )
 
     def _handle_requirement_parse_error(self, exc):
+        self._stop_requirement_parse_progress()
         if hasattr(self, "btn_parse_requirement"):
-            self.btn_parse_requirement.config(state="normal")
-        messagebox.showerror("解析失败", f"解析需求文档时出错：{exc}")
-        self._set_parse_result_text(f"✗ 解析失败：{exc}", self.colors['danger'])
+            self.btn_parse_requirement.config(
+                state="normal",
+                text=getattr(self, "_parse_requirement_button_text", " 解析招聘需求"),
+            )
+        messagebox.showerror("解析失败", f"这段招聘需求暂时没能解析出来。\n\n原因：{self._friendly_ai_parse_reason(str(exc))}\n\n可以稍后再试，或先手工填写岗位配置。")
+        self._set_parse_result_text(f"解析失败：{self._friendly_ai_parse_reason(str(exc))}", self.colors['danger'])
+
+    def _start_requirement_parse_progress(self, use_ai):
+        self._stop_requirement_parse_progress()
+        messages = [
+            (7000, "还在处理：正在整理技能、优先项和必要条件。"),
+        ]
+        if use_ai:
+            messages.extend([
+                (16000, "AI 还没返回：网络或模型可能有点慢，请耐心等待。"),
+                (30000, "继续等待 AI：如果服务超时，会保留本地解析结果，不会丢失内容。"),
+            ])
+        self._requirement_parse_after_ids = []
+        for delay, message in messages:
+            after_id = self.root.after(
+                delay,
+                lambda m=message: self._set_parse_result_text(m, self.colors['warning'])
+            )
+            self._requirement_parse_after_ids.append(after_id)
+
+    def _stop_requirement_parse_progress(self):
+        for after_id in getattr(self, "_requirement_parse_after_ids", []):
+            try:
+                self.root.after_cancel(after_id)
+            except Exception:
+                pass
+        self._requirement_parse_after_ids = []
 
     def _set_parse_result_text(self, text, foreground=None):
         try:
