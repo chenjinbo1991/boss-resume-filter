@@ -307,21 +307,20 @@ def capture_changelog_dialog(root: tk.Tk, app: gui_main.BossFilterGUI, filename:
 def capture_update_dialog(root: tk.Tk, app: gui_main.BossFilterGUI, filename: str) -> None:
     """Capture a sample auto-update prompt without downloading anything."""
     sample_result = {
-        "current": "2.9.1",
-        "latest": "2.9.2",
+        "current": "2.9.2",
+        "latest": "2.9.3",
         "download_url": "https://example.com/BOSS_ResumeFilter.exe",
         "download_url_fallback": "https://example.com/BOSS_ResumeFilter.exe",
         "asset_info": {},
-        "changelog_body": """### 新增功能
-- **已保存模型连通性测试**：已保存模型列表右键菜单新增测试连通性选项。
-- **多接入方式支持**：API Key 按 provider+base_url 组合存储。
-
-### 体验优化
-- **新建岗位全流程呼吸提示**：岗位配置页新增动态提示。
-- **运行控制页优化**：打招呼等级备注动态显示实际阈值。
+        "changelog_body": """### 体验优化
+- **AI 解析更稳定**：网络不稳定或模型响应慢时，会自动重试或回退到本地解析。
+- **解析结果更精准**：泛化词不再被误识别为技能关键词。
+- **基础条件自动归类**：学历要求、工作年限等基础条件自动归入基本信息。
+- **优先项权重更合理**：优先项的加分权重不再被过度放大。
 
 ### 问题修复
-- **服务商切换配置丢失**：修复切换服务商时配置显示异常的问题。
+- **AI Agent 变体匹配**：修复多种 Agent 写法无法正确匹配的问题。
+- **工作地点匹配**：修复 AI 返回的地点格式不统一导致筛选失败的问题。
 """,
     }
     gui_main.updater.show_update_dialog(root, sample_result, gui=app)
