@@ -301,6 +301,10 @@ style.map('TEntry', fieldbackground=[('!disabled', bg_card)])
 
 PATCH release 必须带 `tag_name` 和 `body`（只传 `name` 返回 400）。releases 列表不返回附件 ID，删除附件需通过 `GET /releases/{id}/attach_files`。版本号参数需先移除 `v` 前缀（`v2.9` → `2.9`），否则 tag 变成 `vv2.9`。
 
+### CI 模式下 babel locale-data 路径查找
+
+CI 使用 `.venv-ci` 目录，但本地打包用 `pack_venv`。`build.py` 中 babel locale-data 的搜索路径必须同时覆盖两种虚拟环境目录（`pack_venv` 和 `.venv-ci`），否则 CI 构建的 Mac 产物会缺少 locale .dat 文件，导致 `tkcalendar.DateEntry` 运行时 `FileNotFoundError` 崩溃。搜索路径缺失时 `build.py` 会打印显式告警，不再静默跳过。
+
 ### provider 显示名称与内部键不一致
 
 GUI 中 `api_provider_var.get()` 返回显示名称（如「通义千问」），但 `get_api_key()` / keyring 存的是内部键（如 `qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换，否则 keyring 查不到 Key。`get_api_key(provider, base_url)` 按 provider + base_url 组合查找，新 key 找不到时自动回退旧格式（仅 provider）实现向后兼容。
