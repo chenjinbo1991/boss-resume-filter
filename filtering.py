@@ -58,6 +58,50 @@ _SKILL_ALIASES = {
 }
 
 
+def _text_snippet(text: str, start: int, end: int, radius: int = 18) -> str:
+    """Return a compact evidence snippet around a matched span."""
+    left = max(0, start - radius)
+    right = min(len(text), end + radius)
+    snippet = text[left:right].replace('\n', ' ').strip()
+    if left > 0:
+        snippet = '...' + snippet
+    if right < len(text):
+        snippet += '...'
+    return snippet
+
+
+def _find_item_evidence(candidate_text: str, item: str) -> str:
+    """Find a short candidate-text snippet for a keyword or aliased condition."""
+    special_exp = re.match(r'(.+?)经验≥(\d+)年$', item)
+    if special_exp:
+        item = special_exp.group(1).strip()
+
+    terms = [item]
+    terms.extend(_CERT_ALIASES.get(item, []))
+    terms.extend(_INDUSTRY_ALIASES.get(item, []))
+    terms.extend(_EDU_ALIASES.get(item, []))
+    terms.extend(_SKILL_ALIASES.get(item, []))
+
+    for term in terms:
+        if not term:
+            continue
+        if any('一' <= c <= '鿿' for c in term):
+            idx = candidate_text.lower().find(term.lower())
+            if idx >= 0:
+                return _text_snippet(candidate_text, idx, idx + len(term))
+            continue
+        try:
+            match = re.search(r'\b' + re.escape(term) + r'\b', candidate_text, re.IGNORECASE)
+        except re.error:
+            match = None
+        if match:
+            return _text_snippet(candidate_text, match.start(), match.end())
+        idx = candidate_text.lower().find(term.lower())
+        if idx >= 0:
+            return _text_snippet(candidate_text, idx, idx + len(term))
+    return ""
+
+
 def _condition_item_found(candidate_text: str, item: str) -> bool:
     """Match a required/preferred item with known aliases."""
     special_exp = re.match(r'(.+?)经验≥(\d+)年$', item)
@@ -195,8 +239,12 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             'preferred_matches': [],
             'preferred_bonus': 0,
             'exp_bonus': 0,
-            'edu_bonus': 0
+            'edu_bonus': 0,
+            'score_breakdown': {},
+            'score_explanation': [],
+            'keyword_evidence': []
         }
+        hard_checks: list[str] = []
 
         edu_bonus = 0
         if rule.get("edu", "不限") != "不限":
@@ -220,6 +268,9 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
                 return False, 0, {"reason": f"学历不足：要求{rule.get('edu')}，实际未达要求"}
 
             edu_bonus = _calc_edu_bonus(candidate_text)
+            hard_checks.append(f"学历：通过，要求{rule.get('edu')}，学历加分{edu_bonus}")
+        else:
+            hard_checks.append("学历：未设置硬性要求")
         details['edu_bonus'] = edu_bonus
 
         min_exp = rule.get("min_exp", 0)
@@ -229,12 +280,21 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
                 if min_exp > exp_years:
                     return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
                 details['exp_bonus'] = min((exp_years - min_exp) * SCORE_EXP_MULTIPLIER, SCORE_EXP_MAX)
+                hard_checks.append(f"经验：通过，要求{min_exp}年，实际{exp_years}年，超额加分{details['exp_bonus']}")
+            else:
+                hard_checks.append(f"经验：未识别明确年限，要求{min_exp}年")
+        else:
+            hard_checks.append("经验：未设置硬性要求")
 
         max_age = rule.get("max_age")
         if max_age is not None:
             age_match = re.search(r'(?:年龄[：:\s]*)?(\d+)\s*岁', candidate_text)
             if age_match and int(age_match.group(1)) > max_age:
                 return False, 0, {"reason": f"年龄不符：要求≤{max_age}岁，实际{age_match.group(1)}岁"}
+            if age_match:
+                hard_checks.append(f"年龄：通过，要求≤{max_age}岁，实际{age_match.group(1)}岁")
+            else:
+                hard_checks.append(f"年龄：未识别明确年龄，要求≤{max_age}岁")
 
         work_location = rule.get("work_location")
         if work_location and work_location.strip():
@@ -244,17 +304,25 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             if candidate_city and required_locations:
                 if not any(loc in candidate_city for loc in required_locations):
                     return False, 0, {"reason": f"地点不符：要求{work_location}，期望{candidate_city}"}
+                hard_checks.append(f"地点：通过，要求{work_location}，期望{candidate_city}")
+            else:
+                hard_checks.append(f"地点：未识别明确城市，要求{work_location}")
 
         salary_max = rule.get("salary_max")
         if rule.get("salary_min") is not None and salary_max is not None:
             cand_min_k, _ = _parse_candidate_salary_range(candidate_text)
             if cand_min_k is not None and cand_min_k >= salary_max + 1:
                 return False, 0, {"reason": f"薪资不匹配：岗位最高{salary_max}K，候选人期望最低{cand_min_k}K"}
+            if cand_min_k is not None:
+                hard_checks.append(f"薪资：通过，岗位最高{salary_max}K，候选人期望最低{cand_min_k}K")
+            else:
+                hard_checks.append(f"薪资：未识别明确期望，岗位最高{salary_max}K")
 
         for condition in rule.get("required_conditions", []):
             cond_result = check_required_condition(candidate_text, condition)
             if not cond_result['passed']:
                 return False, 0, {"reason": cond_result['reason']}
+            hard_checks.append(f"必要条件：通过，{condition}")
         details['required_conditions_matched'] = True
 
         tech_keywords_or = rule.get("tech_conditions", [])
@@ -262,12 +330,14 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             tech_found = any(tech.lower() in candidate_text.lower() for tech in tech_keywords_or)
             if not tech_found:
                 return False, 0, {"reason": f"技术不匹配：需要{tech_keywords_or}中至少一项"}
+            hard_checks.append(f"技术条件：通过，{tech_keywords_or} 至少一项")
         details['tech_matched'] = True
 
         keywords = rule.get("keywords", [])
         skill_score = 0
         total_possible_weight = 0
         matched_skills = []
+        keyword_evidence = []
 
         if keywords:
             for keyword in keywords:
@@ -282,6 +352,13 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
                 if _keyword_found(candidate_text, kw_name):
                     matched_skills.append(kw_name)
                     skill_score += kw_weight
+                    evidence = _find_item_evidence(candidate_text, kw_name)
+                    keyword_evidence.append({
+                        'type': 'skill',
+                        'name': kw_name,
+                        'weight': kw_weight,
+                        'evidence': evidence
+                    })
 
             details['skill_matched_count'] = len(matched_skills)
             details['skill_matches'] = matched_skills
@@ -304,12 +381,36 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             if kw_name and _condition_item_found(candidate_text, kw_name):
                 preferred_matches.append(kw_name)
                 preferred_bonus += int(kw_bonus)
+                evidence = _find_item_evidence(candidate_text, kw_name)
+                keyword_evidence.append({
+                    'type': 'preferred',
+                    'name': kw_name,
+                    'weight': int(kw_bonus),
+                    'evidence': evidence
+                })
         preferred_bonus = min(preferred_bonus, _PREFERRED_BONUS_MAX)
         details['preferred_matches'] = preferred_matches
         details['preferred_bonus'] = preferred_bonus
 
         score = SCORE_BASE + skill_score_normalized + details['exp_bonus'] + details['edu_bonus'] + preferred_bonus
         score = min(score, 100)
+        details['keyword_evidence'] = keyword_evidence
+        details['score_breakdown'] = {
+            'base': SCORE_BASE,
+            'skill': skill_score_normalized,
+            'experience': details['exp_bonus'],
+            'education': details['edu_bonus'],
+            'preferred': preferred_bonus,
+            'total': score
+        }
+        details['score_explanation'] = [
+            f"基础分：{SCORE_BASE}",
+            f"技能分：{skill_score_normalized}/{SCORE_SKILL_MAX}，命中 {len(matched_skills)} 个关键词，权重 {skill_score}/{total_possible_weight or 0}",
+            f"经验加分：{details['exp_bonus']}/{SCORE_EXP_MAX}",
+            f"学历加分：{details['edu_bonus']}",
+            f"优先项加分：{preferred_bonus}/{_PREFERRED_BONUS_MAX}",
+            *hard_checks
+        ]
         return True, score, details
 
     except Exception as e:

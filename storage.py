@@ -12,6 +12,14 @@ from constants import SCORE_THRESHOLD_PASS
 
 CANDIDATES_FILE = "candidates_all.json"
 BACKUP_FILE = CANDIDATES_FILE + ".bak"
+_FEEDBACK_FIELDS = (
+    'feedback_status',
+    'feedback_note',
+    'feedback_updated_at',
+    'followup_status',
+    'followup_note',
+    'followup_updated_at',
+)
 
 
 def _candidate_paths(path: Optional[str] = None) -> tuple[Path, Path]:
@@ -86,6 +94,11 @@ def _dedupe_candidates(candidates_all: list[dict[str, Any]]) -> list[dict[str, A
     """按 (geek_id, job_name) 去重，并合并打招呼状态。"""
     seen: dict[tuple[str, str], dict[str, Any]] = {}
 
+    def _merge_manual_fields(target: dict[str, Any], source: dict[str, Any]) -> None:
+        for field in _FEEDBACK_FIELDS:
+            if source.get(field) and not target.get(field):
+                target[field] = source[field]
+
     for c in candidates_all:
         geek_id = c.get('geek_id')
         job_name = c.get('job_name', '')
@@ -100,7 +113,10 @@ def _dedupe_candidates(candidates_all: list[dict[str, Any]]) -> list[dict[str, A
                         c['greet_sent'] = True
                     if old_c.get('greeting_in_progress', False):
                         c['greeting_in_progress'] = True
+                    _merge_manual_fields(c, old_c)
                     seen[key] = c
+                else:
+                    _merge_manual_fields(old_c, c)
 
     unique_candidates = list(seen.values())
 

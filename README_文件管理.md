@@ -24,6 +24,7 @@ candidates_all.xlsx    # Excel 导出（覆盖）
 | 详细信息 | 候选人摘要 |
 
 **AI 评估附加字段**（仅开启 LLM 评估时存在）：
+
 | 字段 | 说明 |
 |------|------|
 | rule_score | 原始规则评分（LLM 调整前） |
@@ -31,6 +32,30 @@ candidates_all.xlsx    # Excel 导出（覆盖）
 | llm_adjustment | LLM 调整值（-10 ~ +10） |
 | llm_reason | LLM 评估理由（50 字以内） |
 | llm_model | 使用的 LLM 模型名称 |
+
+**评分可解释字段**（所有候选人均包含）：
+
+| 字段 | 说明 |
+|------|------|
+| score_breakdown | 评分拆解（基础/技能/经验/学历/优先项各项分值） |
+| score_explanation | 评分解释文本（含硬条件检查过程和各项得分明细） |
+| keyword_evidence | 命中证据（关键词名 + 候选人原文匹配片段） |
+
+**人工反馈字段**（GUI 右键标记后写入）：
+
+| 字段 | 说明 |
+|------|------|
+| feedback_status | 反馈状态：合适/误推/误杀/放弃 |
+| feedback_note | 反馈备注（自由文本） |
+| feedback_updated_at | 反馈更新时间（YYYYMMDD_HHMMSS） |
+
+**跟进状态字段**（GUI 右键标记后写入）：
+
+| 字段 | 说明 |
+|------|------|
+| followup_status | 跟进状态：未沟通/已打招呼/已回复/待约面/已约面/不合适/已归档 |
+| followup_note | 跟进备注（自由文本） |
+| followup_updated_at | 跟进更新时间（YYYYMMDD_HHMMSS） |
 
 ## 运行参数
 

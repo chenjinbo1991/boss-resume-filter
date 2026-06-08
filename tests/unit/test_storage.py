@@ -47,6 +47,82 @@ def test_dedupe_merges_greet_sent_from_old_to_new():
     assert result[0]["match_score"] == 80
 
 
+def test_dedupe_preserves_feedback_from_old_to_new():
+    """高分新记录替换旧记录时，保留旧记录上的人工反馈。"""
+    result = _dedupe_candidates([
+        {
+            "geek_id": "g1",
+            "job_name": "Java",
+            "match_score": 70,
+            "feedback_status": "误推",
+            "feedback_note": "项目深度不足",
+            "feedback_updated_at": "20260608_100000",
+        },
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+    ])
+    assert len(result) == 1
+    assert result[0]["match_score"] == 80
+    assert result[0]["feedback_status"] == "误推"
+    assert result[0]["feedback_note"] == "项目深度不足"
+
+
+def test_dedupe_preserves_feedback_from_new_to_old():
+    """低分新记录不替换旧记录时，也要把新记录上的人工反馈合并回旧记录。"""
+    result = _dedupe_candidates([
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+        {
+            "geek_id": "g1",
+            "job_name": "Java",
+            "match_score": 70,
+            "feedback_status": "合适",
+            "feedback_note": "可约面",
+            "feedback_updated_at": "20260608_110000",
+        },
+    ])
+    assert len(result) == 1
+    assert result[0]["match_score"] == 80
+    assert result[0]["feedback_status"] == "合适"
+    assert result[0]["feedback_note"] == "可约面"
+
+
+def test_dedupe_preserves_followup_from_old_to_new():
+    """高分新记录替换旧记录时，保留旧记录上的跟进状态。"""
+    result = _dedupe_candidates([
+        {
+            "geek_id": "g1",
+            "job_name": "Java",
+            "match_score": 70,
+            "followup_status": "已回复",
+            "followup_note": "等候选人确认时间",
+            "followup_updated_at": "20260608_120000",
+        },
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+    ])
+    assert len(result) == 1
+    assert result[0]["match_score"] == 80
+    assert result[0]["followup_status"] == "已回复"
+    assert result[0]["followup_note"] == "等候选人确认时间"
+
+
+def test_dedupe_preserves_followup_from_new_to_old():
+    """低分新记录不替换旧记录时，也要把新记录上的跟进状态合并回旧记录。"""
+    result = _dedupe_candidates([
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+        {
+            "geek_id": "g1",
+            "job_name": "Java",
+            "match_score": 70,
+            "followup_status": "待约面",
+            "followup_note": "周三沟通",
+            "followup_updated_at": "20260608_130000",
+        },
+    ])
+    assert len(result) == 1
+    assert result[0]["match_score"] == 80
+    assert result[0]["followup_status"] == "待约面"
+    assert result[0]["followup_note"] == "周三沟通"
+
+
 def test_dedupe_merges_greet_sent_from_new_to_old():
     """new 有 greet_sent=True → 直接替换。"""
     result = _dedupe_candidates([

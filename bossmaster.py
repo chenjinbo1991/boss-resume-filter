@@ -224,6 +224,40 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
     if not PANDAS_AVAILABLE:
         return False
 
+    def _format_score_breakdown(c: dict[str, Any]) -> str:
+        breakdown = c.get('score_breakdown') or {}
+        if not breakdown:
+            return ""
+        parts = [
+            f"基础{breakdown.get('base', 0)}",
+            f"技能{breakdown.get('skill', 0)}",
+            f"经验{breakdown.get('experience', 0)}",
+            f"学历{breakdown.get('education', 0)}",
+            f"优先{breakdown.get('preferred', 0)}",
+            f"总分{breakdown.get('total', c.get('match_score', 0))}",
+        ]
+        return " / ".join(parts)
+
+    def _format_score_explanation(c: dict[str, Any]) -> str:
+        explanation = c.get('score_explanation') or []
+        if isinstance(explanation, list):
+            return "\n".join(str(item) for item in explanation if item)
+        return str(explanation)
+
+    def _format_keyword_evidence(c: dict[str, Any]) -> str:
+        evidence_items = c.get('keyword_evidence') or []
+        lines = []
+        for item in evidence_items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get('name', '')
+            evidence = item.get('evidence', '')
+            if name and evidence:
+                lines.append(f"{name}: {evidence}")
+            elif name:
+                lines.append(str(name))
+        return "\n".join(lines)
+
     try:
         # 按匹配分从高到低排序
         sorted_candidates = sorted(candidates, key=lambda x: x.get('match_score', 0), reverse=True)
@@ -249,7 +283,16 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                 '匹配分': score,
                 '推荐指数': recommend_level,
                 '是否打招呼': '是' if c.get('greet_sent', False) else '否',
+                '跟进状态': c.get('followup_status') or ('已打招呼' if c.get('greet_sent', False) else '未沟通'),
+                '跟进备注': c.get('followup_note', ''),
+                '跟进时间': c.get('followup_updated_at', ''),
+                '人工反馈': c.get('feedback_status', ''),
+                '反馈备注': c.get('feedback_note', ''),
+                '反馈时间': c.get('feedback_updated_at', ''),
                 '技能匹配': c.get('skill_match_ratio', ''),
+                '评分拆解': _format_score_breakdown(c),
+                '评分解释': _format_score_explanation(c),
+                '命中证据': _format_keyword_evidence(c),
                 '薪资': summary_info['salary'],
                 '年龄': summary_info['age'],
                 '工作年限': summary_info['exp_years'],
@@ -267,8 +310,10 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
         df = pd.DataFrame(data)
 
         # 列顺序调整：岗位提前
-        columns = ['序号', '岗位', '姓名', '匹配分', '推荐指数', '是否打招呼', '技能匹配', '薪资', '年龄',
-                   '工作年限', '学历', '求职状态', '公司', '城市', '技能', 'geek_id', '批次', '详细信息']
+        columns = ['序号', '岗位', '姓名', '匹配分', '推荐指数', '是否打招呼', '跟进状态',
+                   '跟进备注', '跟进时间', '人工反馈', '反馈备注', '反馈时间', '技能匹配',
+                   '评分拆解', '评分解释', '命中证据', '薪资', '年龄', '工作年限', '学历',
+                   '求职状态', '公司', '城市', '技能', 'geek_id', '批次', '详细信息']
         df = df[[col for col in columns if col in df.columns]]
 
         # 使用 ExcelWriter 创建多工作表
@@ -300,6 +345,13 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                     pending = len(job_df[job_df['推荐指数'] == '待定'])
                     greeted = len(job_df[job_df['是否打招呼'] == '是'])
                     avg_score = job_df['匹配分'].mean() if '匹配分' in job_df.columns else 0
+                    replied = len(job_df[job_df['跟进状态'] == '已回复']) if '跟进状态' in job_df.columns else 0
+                    interview_pending = len(job_df[job_df['跟进状态'] == '待约面']) if '跟进状态' in job_df.columns else 0
+                    interviewed = len(job_df[job_df['跟进状态'] == '已约面']) if '跟进状态' in job_df.columns else 0
+                    rejected = len(job_df[job_df['跟进状态'] == '不合适']) if '跟进状态' in job_df.columns else 0
+                    suitable = len(job_df[job_df['人工反馈'] == '合适']) if '人工反馈' in job_df.columns else 0
+                    false_positive = len(job_df[job_df['人工反馈'] == '误推']) if '人工反馈' in job_df.columns else 0
+                    abandoned = len(job_df[job_df['人工反馈'] == '放弃']) if '人工反馈' in job_df.columns else 0
 
                     summary_data.append({
                         '岗位': job_name,
@@ -308,6 +360,13 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                         '推荐': recommend,
                         '待定': pending,
                         '已打招呼': greeted,
+                        '已回复': replied,
+                        '待约面': interview_pending,
+                        '已约面': interviewed,
+                        '不合适': rejected,
+                        '反馈合适': suitable,
+                        '反馈误推': false_positive,
+                        '反馈放弃': abandoned,
                         '平均分': f"{avg_score:.1f}"
                     })
 
@@ -325,8 +384,9 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             # 设置列宽
             column_widths = {
                 'A': 6, 'B': 20, 'C': 10, 'D': 10, 'E': 10, 'F': 12, 'G': 12,
-                'H': 10, 'I': 6, 'J': 10, 'K': 10, 'L': 12, 'M': 20, 'N': 10,
-                'O': 30, 'P': 15, 'Q': 10, 'R': 80
+                'H': 30, 'I': 16, 'J': 12, 'K': 30, 'L': 16, 'M': 12, 'N': 12,
+                'O': 28, 'P': 55, 'Q': 55, 'R': 10, 'S': 6, 'T': 10, 'U': 10,
+                'V': 12, 'W': 20, 'X': 10, 'Y': 30, 'Z': 15, 'AA': 10, 'AB': 80
             }
             for col, width in column_widths.items():
                 if col in ws.column_dimensions:
@@ -1236,8 +1296,12 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 "match_score": score,
                 "skill_matches": details.get('skill_matches', []),
                 "skill_match_ratio": f"{details.get('skill_matched_count', 0)}/{details.get('skill_total', 0)}",
+                "score_breakdown": details.get('score_breakdown', {}),
+                "score_explanation": details.get('score_explanation', []),
+                "keyword_evidence": details.get('keyword_evidence', []),
                 "recommend_level": recommend_level,
                 "batch_timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+                "followup_status": "未沟通",
                 "greet_sent": False
             }
             passed_candidates.append(candidate_record)
@@ -1397,6 +1461,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                     greet_success_count += 1
                     consecutive_failures = 0  # 重置连续失败计数
                     candidate['greet_sent'] = True
+                    candidate['followup_status'] = "已打招呼"
                     candidates_all.append(candidate)
                     greeted_in_this_run.append(candidate['geek_id'])
                     print(f"OK")
@@ -1404,6 +1469,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                     greet_fail_count += 1
                     consecutive_failures += 1  # 累加连续失败计数
                     candidate['greet_sent'] = False
+                    candidate.setdefault('followup_status', "未沟通")
                     candidates_all.append(candidate)
                     print(f"失败：{msg}")
 

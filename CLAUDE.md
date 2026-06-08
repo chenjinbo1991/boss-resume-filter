@@ -162,6 +162,9 @@ boss-resume-filter/
 - 推荐等级：>=75 强烈推荐, >=65 推荐, >=55 待定
 - 淘汰原因排序：学历→经验→年龄→地点→薪资→评分→其他
 - 硬条件检查顺序：学历→经验→年龄→地点→薪资→必要条件→技术关键词
+- 评分输出：`score_breakdown`（各项分拆）、`score_explanation`（文本解释）、`keyword_evidence`（命中证据含原文片段）
+- 人工反馈：`feedback_status`（合适/误推/误杀/放弃）、`feedback_note`、`feedback_updated_at`；去重时保留反馈字段
+- 跟进状态：`followup_status`（未沟通/已打招呼/已回复/待约面/已约面/不合适/已归档）、`followup_note`、`followup_updated_at`；去重时保留
 - 实现位置：`filtering.py:filter_candidate()`
 
 ### AI 辅助评估
@@ -185,6 +188,8 @@ boss-resume-filter/
 ### 数据统计看板
 
 - 按岗位聚合，4 张汇总卡片 + 明细 Treeview；只统计 ≥55 分；支持时间范围过滤
+- 明细 Treeview 9 列精简展示：岗位名称、筛选分布（总数+强推/推荐/待定）、已打招呼(率)、已反馈、合适率、误推率、已回复(率)、已约面(率)、平均分
+- 合适率/误推率只按有效人工反馈计算（合适/误推/误杀/放弃）；已回复/已约面列内嵌百分比（按已打招呼及后续状态计算）
 
 ### 页面选择器配置（selectors.json）
 

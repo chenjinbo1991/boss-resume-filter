@@ -370,6 +370,38 @@ def test_filter_candidate_preferred_keywords_add_bonus_without_skill_denominator
     assert score_with_preferred == score_without_preferred + 4
 
 
+def test_filter_candidate_returns_score_explanation_and_breakdown():
+    rule = _java_rule(preferred_keywords=[{"name": "证券", "bonus": 3}])
+    passed, score, details = filter_candidate(
+        "15-16K\n南京，统招本科，6 年 Java 经验，熟悉 Spring Cloud、MySQL、Redis，证券行业经验",
+        rule,
+    )
+
+    assert passed is True
+    assert details["score_breakdown"]["total"] == score
+    assert details["score_breakdown"]["base"] == SCORE_BASE
+    assert details["score_breakdown"]["preferred"] == 3
+    assert any("技能分" in line for line in details["score_explanation"])
+    assert any("学历：通过" in line for line in details["score_explanation"])
+    assert any("经验：通过" in line for line in details["score_explanation"])
+
+
+def test_filter_candidate_returns_keyword_evidence_snippets():
+    rule = _java_rule(preferred_keywords=[{"name": "证券", "bonus": 2}])
+    passed, _, details = filter_candidate(
+        "南京，统招本科，6 年 Java 经验\n项目：Spring Cloud 微服务，MySQL，证券交易系统",
+        rule,
+    )
+
+    assert passed is True
+    evidence = details["keyword_evidence"]
+    java_item = next(item for item in evidence if item["name"] == "Java")
+    preferred_item = next(item for item in evidence if item["name"] == "证券")
+    assert "Java" in java_item["evidence"]
+    assert "证券交易系统" in preferred_item["evidence"]
+    assert preferred_item["type"] == "preferred"
+
+
 def test_filter_candidate_chinese_experience_years():
     rule = {"min_exp": 3, "edu": "不限", "keywords": ["Java"]}
     passed, _, _ = filter_candidate("五年 Java 经验", rule)
