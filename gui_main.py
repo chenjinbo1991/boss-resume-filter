@@ -773,10 +773,11 @@ class BossFilterGUI:
         if _NEED_COCOA_SCROLL_HOOK:
             self.root.after(500, self._setup_cocoa_scroll_hook)
 
-        # 启动时自动检查更新（延迟 3 秒，避免启动卡顿）
-        updater.auto_check_on_startup(self.root, delay_ms=3000, gui=self)
+        # 启动时自动检查更新（延迟执行，避开 GUI 初始化和 PyInstaller 释放窗口）
+        updater.auto_check_on_startup(self.root, delay_ms=12000, gui=self)
         if getattr(sys, 'frozen', False):
             self.root.after(1000, updater.mark_update_success_and_cleanup)
+            self.root.after(2500, lambda: updater.notify_previous_update_failure(self.root))
 
     def _setup_macos_reopen_handler(self):
         """点击 macOS Dock 图标时恢复主窗口。"""
@@ -7329,9 +7330,9 @@ class BossFilterGUI:
         ttk.Label(
             frame,
             text=f"{candidate.get('name', '未知')}｜{candidate.get('job_name', '未知')}",
-            font=(FONT_FAMILY_SEMIBOLD, int(13 * self.font_scale)),
-            foreground=self.colors['text_primary'],
-            style='Page.TLabel'
+            font=(FONT_FAMILY, int(13 * self.font_scale)),
+            foreground=self.colors['primary'],
+            background=self.colors['bg_main']
         ).pack(anchor='w', pady=(0, int(12 * self.dpi_scale * self.zoom_factor)))
 
         ttk.Label(
@@ -7457,9 +7458,9 @@ class BossFilterGUI:
         ttk.Label(
             frame,
             text=f"{candidate.get('name', '未知')}｜{candidate.get('job_name', '未知')}",
-            font=(FONT_FAMILY_SEMIBOLD, int(13 * self.font_scale)),
-            foreground=self.colors['text_primary'],
-            style='Page.TLabel'
+            font=(FONT_FAMILY, int(13 * self.font_scale)),
+            foreground=self.colors['primary'],
+            background=self.colors['bg_main']
         ).pack(anchor='w', pady=(0, int(12 * self.dpi_scale * self.zoom_factor)))
 
         ttk.Label(

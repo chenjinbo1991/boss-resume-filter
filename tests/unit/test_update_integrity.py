@@ -873,7 +873,8 @@ def test_windows_update_script_resets_pyinstaller_runtime_env():
 
         try:
             updater.subprocess.Popen = lambda *args, **kwargs: FakeProcess()
-            ok, error = updater.update_windows(str(new_exe), str(current_exe))
+            ok, error = updater.update_windows(
+                str(new_exe), str(current_exe), source="startup")
         finally:
             updater.subprocess.Popen = original_popen
 
@@ -884,4 +885,9 @@ def test_windows_update_script_resets_pyinstaller_runtime_env():
     assert 'set "PYINSTALLER_RESET_ENVIRONMENT=1"' in bat_content
     assert "set _PYI_" in bat_content
     assert "_MEI*" not in bat_content
+    assert 'set "UPDATE_SOURCE=startup"' in bat_content
+    assert "Source=%UPDATE_SOURCE%" in bat_content
+    assert 'if exist "%OLD_EXE%.old" del' not in bat_content
+    assert 'Previous version kept at %OLD_EXE%.old' in bat_content
+    assert 'if exist "%FAILED_FILE%" del /f /q "%FAILED_FILE%"' in bat_content
 

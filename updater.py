@@ -393,7 +393,10 @@ def download_and_verify_file(url, dest_path, asset_info=None, progress_callback=
 
 
 def mark_update_success_and_cleanup():
-    """新版本成功进入 GUI 后写入启动标记，并清理平台相关旧版本备份。"""
+    """新版本成功进入 GUI 后写入启动标记。
+
+    Windows 下保留 .old，便于用户在新版本异常时快速恢复上一版。
+    """
     if not getattr(sys, 'frozen', False):
         return
 
@@ -403,17 +406,36 @@ def mark_update_success_and_cleanup():
             Path(marker).write_text(str(time.time()), encoding="utf-8")
             print(f"[更新] 已写入启动成功标记: {marker}")
 
-        if sys.platform == 'win32':
-            for suffix in (".old", ".old.previous"):
-                old_exe = Path(sys.executable + suffix)
-                if old_exe.exists():
-                    old_exe.unlink()
-                    print(f"[更新] 已清理旧版本备份: {old_exe}")
     except OSError as e:
-        print(f"[更新] 清理旧版本备份失败: {e}")
+        print(f"[更新] 写入启动成功标记失败: {e}")
 
 
-def update_windows(new_exe_path, current_exe_path):
+def notify_previous_update_failure(root):
+    """启动后提示上次自动更新脚本留下的失败信息。"""
+    if not getattr(sys, 'frozen', False):
+        return
+
+    failed_file = Path(sys.executable + ".update_failed.txt")
+    if not failed_file.exists():
+        return
+
+    try:
+        detail = failed_file.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        detail = ""
+
+    message = "上次自动更新没有完成，程序已保留或回滚到可用版本。"
+    if detail:
+        message += f"\n\n{detail}"
+    message += "\n\n如需继续更新，请点“检查更新”重试。"
+
+    try:
+        messagebox.showwarning("上次更新未完成", message, parent=root)
+    except tk.TclError:
+        pass
+
+
+def update_windows(new_exe_path, current_exe_path, source="manual"):
     """
     Windows EXE 更新逻辑
 
@@ -432,6 +454,7 @@ def update_windows(new_exe_path, current_exe_path):
         temp_dir = Path(new_exe_path).parent
         marker_path = Path(current_exe_path).with_suffix(Path(current_exe_path).suffix + ".update_ok")
         current_pid = os.getpid()
+        update_source = str(source or "manual")
 
         bat_content = f"""@echo off
 setlocal
@@ -440,10 +463,12 @@ set "NEW_EXE={new_exe_path}"
 set "TEMP_DIR={temp_dir}"
 set "MARKER_FILE={marker_path}"
 set "OLD_PID={current_pid}"
+set "UPDATE_SOURCE={update_source}"
 set "LOG_FILE=%TEMP%\\boss_resume_filter_update.log"
 set "FAILED_FILE=%OLD_EXE%.update_failed.txt"
 
 echo [%date% %time%] Starting update > "%LOG_FILE%"
+echo [%date% %time%] Source=%UPDATE_SOURCE% >> "%LOG_FILE%"
 echo 正在更新 BOSS 简历筛选器...
 
 echo 等待旧程序退出...
@@ -533,11 +558,12 @@ exit /b 1
 :update_confirmed
 echo [%date% %time%] Startup marker found, update confirmed >> "%LOG_FILE%"
 if exist "%MARKER_FILE%" del /f /q "%MARKER_FILE%" >> "%LOG_FILE%" 2>&1
-if exist "%OLD_EXE%.old" del /f /q "%OLD_EXE%.old" >> "%LOG_FILE%" 2>&1
+if exist "%FAILED_FILE%" del /f /q "%FAILED_FILE%" >> "%LOG_FILE%" 2>&1
 if exist "%OLD_EXE%.old.previous" del /f /q "%OLD_EXE%.old.previous" >> "%LOG_FILE%" 2>&1
 if exist "%TEMP_DIR%" rmdir /s /q "%TEMP_DIR%" >> "%LOG_FILE%" 2>&1
 
 echo 更新完成！
+echo [%date% %time%] Previous version kept at %OLD_EXE%.old >> "%LOG_FILE%"
 echo [%date% %time%] Update completed >> "%LOG_FILE%"
 del "%~f0"
 """
@@ -775,7 +801,8 @@ def exit_for_update(root):
     os._exit(0)
 
 
-def check_and_update_gui(root, silent=False, on_complete=None, gui=None):
+def check_and_update_gui(root, silent=False, on_complete=None, gui=None,
+                         source="manual", on_defer=None):
     """
     GUI 版本的更新检查和执行
 
@@ -783,6 +810,8 @@ def check_and_update_gui(root, silent=False, on_complete=None, gui=None):
         root: tkinter 根窗口
         silent: 是否静默检查（不显示"已是最新版本"提示）
         gui: BossFilterGUI 实例（用于字体缩放和配色）
+        source: 更新触发来源，用于日志区分 startup/manual
+        on_defer: 用户选择稍后提醒时的回调
     """
     def do_check():
         # 优先尝试 Gitee（国内快）
@@ -828,7 +857,7 @@ def check_and_update_gui(root, silent=False, on_complete=None, gui=None):
             return
 
         # 有新版本，显示更新对话框
-        show_update_dialog(root, result, gui=gui)
+        show_update_dialog(root, result, gui=gui, source=source, on_defer=on_defer)
         if on_complete:
             on_complete(result)
 
@@ -860,7 +889,7 @@ def _fetch_changelog_section(target_version):
     return extract_changelog_section(content, target_version)
 
 
-def show_update_dialog(root, result, gui=None):
+def show_update_dialog(root, result, gui=None, source="manual", on_defer=None):
     """显示更新对话框（使用 GUI 实例的字体缩放和配色方案）"""
     from tkinter import ttk
     from gui_dialogs import render_changelog_text
@@ -947,6 +976,8 @@ def show_update_dialog(root, result, gui=None):
     button_frame.pack(pady=pad(20))
 
     def on_cancel():
+        if on_defer:
+            on_defer()
         dialog.destroy()
 
     def on_update():
@@ -990,11 +1021,11 @@ def show_update_dialog(root, result, gui=None):
 
                 root.after(0, lambda: progress_label.config(text="正在安装..."))
                 current_exe = sys.executable
-                success, error = update_windows(str(temp_exe), current_exe)
+                success, error = update_windows(str(temp_exe), current_exe, source=source)
 
                 if success:
                     root.after(0, lambda: (
-                        progress_label.config(text="更新成功，程序即将重启"),
+                        progress_label.config(text="正在重启并安装..."),
                         dialog.destroy(),
                         exit_for_update(root)
                     ))
@@ -1110,6 +1141,7 @@ def show_update_dialog(root, result, gui=None):
     update_btn.pack(side="left", padx=pad(6))
 
     dialog.bind('<Escape>', lambda e: on_cancel())
+    dialog.protocol("WM_DELETE_WINDOW", on_cancel)
 
 
 def _read_cooldown(base_dir: Path) -> dict:
@@ -1169,6 +1201,11 @@ def _adaptive_cooldown(result: str, fail_count: int) -> float:
     return 900 * (2 ** min(fail_count, 2))
 
 
+def _write_update_defer_cooldown(base_dir: Path) -> None:
+    """用户明确选择稍后提醒后，写入发现新版本冷却。"""
+    _write_cooldown(base_dir, "found", 0)
+
+
 def auto_check_on_startup(root, delay_ms=3000, gui=None):
     """
     启动时自动检查更新（延迟执行），自适应冷却机制
@@ -1192,12 +1229,17 @@ def auto_check_on_startup(root, delay_ms=3000, gui=None):
         def record_result(result):
             if result.get("error"):
                 _write_cooldown(base_dir, "failed", state["fail_count"] + 1)
-            elif result.get("has_update"):
-                _write_cooldown(base_dir, "found", 0)
-            else:
+            elif not result.get("has_update"):
                 _write_cooldown(base_dir, "no_update", 0)
 
-        check_and_update_gui(root, silent=True, on_complete=record_result, gui=gui)
+        check_and_update_gui(
+            root,
+            silent=True,
+            on_complete=record_result,
+            gui=gui,
+            source="startup",
+            on_defer=lambda: _write_update_defer_cooldown(base_dir),
+        )
 
     root.after(delay_ms, _do_check_and_record)
 

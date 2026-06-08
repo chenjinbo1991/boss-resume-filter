@@ -206,7 +206,8 @@ def show_about_dialog(gui, version):
         return frame
 
     _icon_btn(btn_frame, icon_refresh, '检查更新',
-              lambda: updater.check_and_update_gui(gui.root, silent=False, gui=gui)
+              lambda: updater.check_and_update_gui(
+                  gui.root, silent=False, gui=gui, source="manual")
               ).pack(side="left", padx=_pad)
     _icon_btn(btn_frame, icon_close, '关闭', dialog.destroy).pack(side="left", padx=_pad)
 
