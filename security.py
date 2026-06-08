@@ -11,9 +11,11 @@ API Key 按服务商 + Base URL 组合存储，同一服务商不同接入方式
 from __future__ import annotations
 
 import hashlib
+import logging
 import keyring
 
 SERVICE_NAME = "boss-resume-filter"
+logger = logging.getLogger(__name__)
 
 
 def get_storage_key(provider: str, base_url: str | None = None) -> str:
@@ -51,7 +53,7 @@ def save_api_key(provider: str, api_key: str, base_url: str | None = None) -> bo
         keyring.set_password(SERVICE_NAME, key, api_key)
         return True
     except Exception as e:
-        print(f"保存 API Key 失败：{e}")
+        logger.warning("保存 API Key 失败：%s", e)
         return False
 
 
@@ -77,7 +79,7 @@ def get_api_key(provider: str, base_url: str | None = None) -> str | None:
         key = get_storage_key(provider)
         return keyring.get_password(SERVICE_NAME, key)
     except Exception as e:
-        print(f"读取 API Key 失败：{e}")
+        logger.warning("读取 API Key 失败：%s", e)
         return None
 
 
@@ -97,7 +99,7 @@ def delete_api_key(provider: str, base_url: str | None = None) -> bool:
         keyring.delete_password(SERVICE_NAME, key)
         return True
     except Exception as e:
-        print(f"删除 API Key 失败：{e}")
+        logger.warning("删除 API Key 失败：%s", e)
         return False
 
 

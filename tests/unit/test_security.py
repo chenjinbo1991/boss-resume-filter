@@ -54,11 +54,15 @@ def test_save_api_key_with_base_url(mock_keyring):
 
 
 @patch("security.keyring")
-def test_save_api_key_failure(mock_keyring):
+@patch("security.logger.warning")
+def test_save_api_key_failure(mock_warning, mock_keyring):
     """keyring 异常时返回 False"""
     mock_keyring.set_password = MagicMock(side_effect=Exception("keyring error"))
     result = security.save_api_key("qwen", "sk-test")
     assert result is False
+    mock_warning.assert_called_once()
+    assert mock_warning.call_args[0][0] == "保存 API Key 失败：%s"
+    assert str(mock_warning.call_args[0][1]) == "keyring error"
 
 
 @patch("security.keyring")
@@ -109,11 +113,15 @@ def test_get_api_key_not_found(mock_keyring):
 
 
 @patch("security.keyring")
-def test_get_api_key_exception(mock_keyring):
+@patch("security.logger.warning")
+def test_get_api_key_exception(mock_warning, mock_keyring):
     """keyring 异常时返回 None"""
     mock_keyring.get_password = MagicMock(side_effect=Exception("keyring error"))
     result = security.get_api_key("qwen")
     assert result is None
+    mock_warning.assert_called_once()
+    assert mock_warning.call_args[0][0] == "读取 API Key 失败：%s"
+    assert str(mock_warning.call_args[0][1]) == "keyring error"
 
 
 @patch("security.keyring")
@@ -138,11 +146,15 @@ def test_delete_api_key_with_base_url(mock_keyring):
 
 
 @patch("security.keyring")
-def test_delete_api_key_failure(mock_keyring):
+@patch("security.logger.warning")
+def test_delete_api_key_failure(mock_warning, mock_keyring):
     """keyring 异常时返回 False"""
     mock_keyring.delete_password = MagicMock(side_effect=Exception("delete error"))
     result = security.delete_api_key("qwen")
     assert result is False
+    mock_warning.assert_called_once()
+    assert mock_warning.call_args[0][0] == "删除 API Key 失败：%s"
+    assert str(mock_warning.call_args[0][1]) == "delete error"
 
 
 def test_list_all_providers_returns_list():

@@ -10,7 +10,8 @@ boss-resume-filter/
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
 ├── gui_main.py           # 图形界面主程序（v2.9.3）
-├── gui_dialogs.py        # 独立对话框模块（更新日志、模型选择）
+├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
+├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
 ├── doc_parser.py         # 文档解析器（简历解析）
@@ -252,9 +253,11 @@ DMG 只含 .app + Applications 快捷方式，配置文件不在 DMG 中。`_get
 
 `wait_window()` 在 `root.after()` 回调中创建嵌套事件循环，macOS 上与 Cocoa scroll hook 和浏览器轮询冲突导致崩溃。正确做法是用 `grab_set()` 实现模态（不阻塞主事件循环），`protocol("WM_DELETE_WINDOW")` + `_close_dialog()` 清理引用。`self.root.update()` 也有重入风险，应移除。
 
-### Windows DPI 缩放（DPI Unaware 方案）
+### Windows DPI 缩放（System DPI Aware 方案）
 
-**保持 DPI Unaware**，不启用任何 DPI 感知。Windows 后台自动按系统缩放倍数放大 Tk 渲染内容。用 `EnumDisplaySettingsW(None, -1)` 获取物理像素宽度计算真实 `display_scale`。**所有 UI 元素统一使用同一个缩放比例**，分开缩放会导致布局错乱。macOS 不受影响。
+**保持 System DPI Aware**，启动时调用 `_enable_high_dpi_awareness()`，优先用 `SetProcessDPIAware()` / `SetProcessDpiAwareness(1)`，避免 Windows 对 Tk 窗口做位图缩放导致字体模糊。不要启用 Per-Monitor DPI V2；Tk 8.6 在 V2 下坐标和布局容易错乱。
+
+`_resolve_display_scale()` 同时兼容两种环境：System DPI Aware 下 Tk 已报告真实 DPI，优先使用 `root.tk.call('tk', 'scaling')` 推导的 DPI；DPI Unaware 或异常回退时，用 `EnumDisplaySettingsW(None, -1)` 获取物理像素宽度，与 Tk 虚拟屏幕宽度比值计算真实 `display_scale`。**布局/间距/图标/窗口/rowheight 统一使用 `dpi_scale × zoom_factor`，字体使用 `font_scale`**，不要把不同区域拆成各自的缩放公式。macOS 不受 Windows DPI 感知设置影响。
 
 ### macOS Tk 8.6 字体物理像素减半
 

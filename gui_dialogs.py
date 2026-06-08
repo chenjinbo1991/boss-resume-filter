@@ -4,7 +4,219 @@ GUI 对话框模块 - 从 gui_main.py 提取的独立对话框
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
-from pathlib import Path
+
+from changelog_parser import parse_changelog_versions, resolve_local_changelog_path
+
+
+def render_changelog_text(
+    text_widget,
+    body,
+    colors,
+    font_family,
+    font_family_bold,
+    font_scale,
+    layout_scale,
+    *,
+    section_font_size=13,
+    item_font_size=12,
+    include_version_title=False,
+):
+    """Render a small CHANGELOG markdown subset into a Tk Text widget."""
+    fs = lambda size: int(size * font_scale)
+    pad = lambda value: int(value * layout_scale)
+
+    section_font = (font_family_bold, fs(section_font_size))
+    item_font = (font_family, fs(item_font_size))
+    item_bold_font = (font_family_bold, fs(item_font_size))
+    item_left_margin = pad(18)
+    item_wrap_margin = pad(36)
+
+    text_widget.tag_configure("section_new", font=section_font, foreground=colors.get('success', '#48BB78'))
+    text_widget.tag_configure("section_opt", font=section_font, foreground=colors['primary'])
+    text_widget.tag_configure("section_ui", font=section_font, foreground=colors.get('purple', '#805AD5'))
+    text_widget.tag_configure("section_fix", font=section_font, foreground=colors.get('danger', '#E53E3E'))
+    text_widget.tag_configure("section_build", font=section_font, foreground=colors.get('warning', '#D69E2E'))
+    text_widget.tag_configure("item", font=item_font, foreground=colors['text_secondary'],
+                              lmargin1=item_left_margin, lmargin2=item_wrap_margin)
+    text_widget.tag_configure("item_bold", font=item_bold_font, foreground=colors['text_primary'])
+
+    section_map = {
+        '新增功能': 'section_new',
+        '体验优化': 'section_opt',
+        '行为优化': 'section_opt',
+        '性能优化': 'section_opt',
+        'UI 改进': 'section_ui',
+        'UI改进': 'section_ui',
+        '问题修复': 'section_fix',
+        'Bug 修复': 'section_fix',
+        'Bug修复': 'section_fix',
+        '构建改进': 'section_build',
+    }
+
+    for line in body.splitlines():
+        stripped = line.lstrip('#').strip()
+        header_level = len(line) - len(line.lstrip('#'))
+        is_section = (header_level in (2, 3)) and stripped and not stripped.startswith('v')
+
+        if line.startswith("## v") and not include_version_title:
+            continue
+        if is_section:
+            stag = section_map.get(stripped, 'section_opt')
+            text_widget.insert("end", "\n" + stripped + "\n\n", stag)
+        elif line.startswith("- "):
+            item_text = line[2:]
+            if item_text.startswith("**"):
+                end_pos = item_text.find("**", 2)
+                if end_pos > 0:
+                    title_part = item_text[2:end_pos]
+                    rest = item_text[end_pos + 2:]
+                    full_text = "• " + title_part + rest + "\n"
+                    line_start = text_widget.index("end")
+                    text_widget.insert("end", full_text, "item")
+                    bold_start = f"{line_start} + 2 chars"
+                    bold_end = f"{line_start} + {2 + len(title_part)} chars"
+                    text_widget.tag_add("item_bold", bold_start, bold_end)
+                else:
+                    text_widget.insert("end", "• " + item_text + "\n", "item")
+            else:
+                text_widget.insert("end", "• " + item_text + "\n", "item")
+
+
+def show_about_dialog(gui, version):
+    """显示关于弹窗"""
+    import webbrowser
+    import updater
+    from gui_main import FONT_FAMILY
+
+    dialog = tk.Toplevel(gui.root)
+    dialog.title("关于 BOSS 简历筛选器")
+    dialog.transient(gui.root)
+    dialog.resizable(False, False)
+    dialog.configure(background=gui.colors['bg_main'])
+
+    _s = gui.dpi_scale * gui.zoom_factor
+    about_fs = gui.font_scale * 0.88
+    dialog_width = max(580, int(580 * _s))
+    dialog_height = max(380, int(380 * _s))
+    gui._center_window(dialog, dialog_width, dialog_height)
+
+    tk.Label(dialog, text="BOSS 简历筛选器",
+             font=(FONT_FAMILY, int(20 * about_fs), 'bold'),
+             bg=gui.colors['bg_main'],
+             fg=gui.colors['text_primary']).pack(pady=(int(25 * _s), int(5 * _s)))
+
+    tk.Label(dialog, text=f"v{version}",
+             font=(FONT_FAMILY, int(13 * about_fs)),
+             bg=gui.colors['bg_main'],
+             fg=gui.colors['text_secondary']).pack(pady=(0, int(15 * _s)))
+
+    tk.Label(dialog, text="智能候选人筛选 · 自动打招呼 · Excel 导出",
+             font=(FONT_FAMILY, int(12 * about_fs)),
+             bg=gui.colors['bg_main'],
+             fg=gui.colors['text_primary']).pack(pady=(0, int(5 * _s)))
+
+    tk.Label(dialog, text="基于 DrissionPage 的 BOSS 直聘自动化工具",
+             font=(FONT_FAMILY, int(12 * about_fs)),
+             bg=gui.colors['bg_main'],
+             fg=gui.colors['text_secondary']).pack(pady=(0, int(15 * _s)))
+
+    tk.Frame(dialog, bg=gui.colors['border'], height=1).pack(
+        fill="x", padx=int(40 * _s), pady=int(10 * _s))
+
+    links_card = tk.Frame(dialog, bg=gui.colors['bg_card'],
+                          highlightbackground=gui.colors['border'],
+                          highlightthickness=1)
+    links_card.pack(fill="x", padx=int(40 * _s), pady=(int(10 * _s), int(5 * _s)))
+    link_pad_x = int(15 * _s)
+    link_pad_y = int(8 * _s)
+
+    github_url = "https://github.com/yaoyouzhong/boss-resume-filter"
+    github_row = tk.Frame(links_card, bg=gui.colors['bg_card'])
+    github_row.pack(fill="x", padx=link_pad_x, pady=(link_pad_y, int(2 * _s)))
+    tk.Label(github_row, text="项目",
+             font=(FONT_FAMILY, int(12 * about_fs)),
+             bg=gui.colors['bg_card'],
+             fg=gui.colors['text_secondary']).pack(side="left", padx=(0, int(10 * _s)))
+    github_label = tk.Label(github_row, text=github_url,
+                            font=(FONT_FAMILY, int(12 * about_fs)),
+                            bg=gui.colors['bg_card'],
+                            fg=gui.colors['primary'],
+                            cursor="hand2")
+    github_label.pack(side="left")
+    github_label.bind("<Button-1>", lambda e: webbrowser.open(github_url))
+
+    issue_url = "https://github.com/yaoyouzhong/boss-resume-filter/issues"
+    issue_row = tk.Frame(links_card, bg=gui.colors['bg_card'])
+    issue_row.pack(fill="x", padx=link_pad_x, pady=(int(2 * _s), link_pad_y))
+    tk.Label(issue_row, text="反馈",
+             font=(FONT_FAMILY, int(12 * about_fs)),
+             bg=gui.colors['bg_card'],
+             fg=gui.colors['text_secondary']).pack(side="left", padx=(0, int(10 * _s)))
+    issue_label = tk.Label(issue_row, text="问题反馈与建议",
+                           font=(FONT_FAMILY, int(12 * about_fs)),
+                           bg=gui.colors['bg_card'],
+                           fg=gui.colors['primary'],
+                           cursor="hand2")
+    issue_label.pack(side="left")
+    issue_label.bind("<Button-1>", lambda e: webbrowser.open(issue_url))
+
+    btn_frame = tk.Frame(dialog, bg=gui.colors['bg_main'])
+    btn_frame.pack(pady=(int(20 * _s), int(10 * _s)))
+
+    icon_refresh = gui.icons.button('refresh', gui.colors['primary'])
+    icon_close = gui.icons.button('close', gui.colors['text_secondary'])
+    _pad = int(10 * _s)
+    btn_w = int(130 * _s)
+    btn_h = int(32 * _s)
+
+    def _icon_btn(parent, icon, text, command):
+        frame = tk.Frame(parent, bg=gui.colors['bg_card'],
+                       highlightbackground=gui.colors['border'],
+                       highlightthickness=1, cursor='hand2',
+                       width=btn_w, height=btn_h)
+        frame.pack_propagate(False)
+        content = tk.Frame(frame, bg=gui.colors['bg_card'])
+        content.pack(expand=True)
+        tk.Label(content, image=icon, bg=gui.colors['bg_card']).pack(
+            side='left', padx=(0, 2), anchor='center')
+        tk.Label(content, text=text, bg=gui.colors['bg_card'],
+                font=(FONT_FAMILY, int(13 * about_fs)), fg=gui.colors['text_primary']).pack(
+            side='left', padx=(2, 0), anchor='center')
+
+        def _all_descendants(w):
+            result = [w]
+            for child in w.winfo_children():
+                result.extend(_all_descendants(child))
+            return result
+
+        _children = _all_descendants(frame)
+
+        def _on_enter(e, ch=_children, c=gui.colors['bg_hover']):
+            for w in ch:
+                w.config(bg=c)
+
+        def _on_leave(e, ch=_children, c=gui.colors['bg_card']):
+            for w in ch:
+                w.config(bg=c)
+
+        for widget in _children:
+            widget.bind('<Enter>', _on_enter)
+            widget.bind('<Leave>', _on_leave)
+            widget.bind('<Button-1>', lambda e, cmd=command: cmd())
+        return frame
+
+    _icon_btn(btn_frame, icon_refresh, '检查更新',
+              lambda: updater.check_and_update_gui(gui.root, silent=False, gui=gui)
+              ).pack(side="left", padx=_pad)
+    _icon_btn(btn_frame, icon_close, '关闭', dialog.destroy).pack(side="left", padx=_pad)
+
+    tk.Label(dialog, text="MIT License · 开源免费",
+             font=(FONT_FAMILY, int(10 * about_fs)),
+             bg=gui.colors['bg_main'],
+             fg=gui.colors['text_muted']).pack(pady=(int(10 * _s), int(10 * _s)))
+
+    dialog.bind('<Escape>', lambda e: dialog.destroy())
+    dialog.grab_set()
 
 
 def show_changelog_dialog(gui):
@@ -13,13 +225,9 @@ def show_changelog_dialog(gui):
     Args:
         gui: BossFilterGUI 实例
     """
-    # PyInstaller --add-data 解压到 _MEIPASS，优先从那里读取
-    meipass = getattr(sys, '_MEIPASS', None)
-    changelog_path = (Path(meipass) / "CHANGELOG.md") if meipass else None
-    if not changelog_path or not changelog_path.exists():
-        from paths import BASE_DIR
-        changelog_path = BASE_DIR / "CHANGELOG.md"
-    if not changelog_path.exists():
+    from paths import BASE_DIR
+    changelog_path = resolve_local_changelog_path(BASE_DIR)
+    if not changelog_path:
         messagebox.showinfo("更新日志", "CHANGELOG.md 文件不存在")
         return
 
@@ -29,23 +237,7 @@ def show_changelog_dialog(gui):
         messagebox.showerror("错误", f"读取更新日志失败：{e}")
         return
 
-    # 解析版本段落
-    versions = []  # list of (version_tag, subtitle, full_section_text)
-    current_version = None
-    current_lines = []
-    for line in content.splitlines():
-        if line.startswith("## v"):
-            if current_version:
-                versions.append((current_version, current_lines[0], "\n".join(current_lines)))
-            rest = line[3:].strip()
-            tag = rest.split("—")[0].split("–")[0].split()[0].strip()
-            current_version = tag
-            current_lines = [line]
-        elif current_version:
-            current_lines.append(line)
-    if current_version:
-        versions.append((current_version, current_lines[0], "\n".join(current_lines)))
-
+    versions = parse_changelog_versions(content)
     if not versions:
         messagebox.showinfo("更新日志", "CHANGELOG.md 中没有版本记录")
         return
@@ -238,36 +430,6 @@ def show_changelog_dialog(gui):
 
     text_widget.configure(yscrollcommand=update_detail_scrollbar)
 
-    # 配置 tag 样式
-    title_font = (FONT_FAMILY, int(14 * changelog_fs), 'bold')
-    section_font = (FONT_FAMILY, int(13 * changelog_fs), 'bold')
-    item_font = (FONT_FAMILY, int(12 * changelog_fs))
-    item_left_margin = int(18 * fs)
-    item_wrap_margin = int(36 * fs)
-    text_widget.tag_configure("title", font=title_font, foreground=gui.colors['primary'])
-    text_widget.tag_configure("section_new", font=section_font, foreground=gui.colors['success'])
-    text_widget.tag_configure("section_opt", font=section_font, foreground=gui.colors['primary'])
-    text_widget.tag_configure("section_ui", font=section_font, foreground=gui.colors['purple'])
-    text_widget.tag_configure("section_fix", font=section_font, foreground=gui.colors['danger'])
-    text_widget.tag_configure("section_build", font=section_font, foreground=gui.colors['warning'])
-    text_widget.tag_configure("item", font=item_font, foreground=gui.colors['text_secondary'],
-                              lmargin1=item_left_margin, lmargin2=item_wrap_margin)
-    text_widget.tag_configure("item_bold", font=(item_font[0], item_font[1], 'bold'), foreground=gui.colors['text_primary'])
-
-    # 分类名 → tag 映射
-    section_map = {
-        '新增功能': 'section_new',
-        '体验优化': 'section_opt',
-        '行为优化': 'section_opt',
-        '性能优化': 'section_opt',
-        'UI 改进': 'section_ui',
-        'UI改进': 'section_ui',
-        '问题修复': 'section_fix',
-        'Bug 修复': 'section_fix',
-        'Bug修复': 'section_fix',
-        '构建改进': 'section_build',
-    }
-
     def show_version(index):
         tag, title_line, section = versions[index]
         # 更新顶部标题
@@ -283,33 +445,9 @@ def show_changelog_dialog(gui):
 
         text_widget.configure(state="normal")
         text_widget.delete("1.0", "end")
-        for line in section.splitlines():
-            if line.startswith("## "):
-                # 跳过标题行（header 栏已显示版本号和副标题）
-                continue
-            elif line.startswith("### "):
-                section_name = line[4:].strip()
-                stag = section_map.get(section_name, 'section_opt')
-                text_widget.insert("end", "\n" + section_name + "\n\n", stag)
-            elif line.startswith("- "):
-                item_text = line[2:]
-                # 整行统一 item tag，标题部分叠加 item_bold（同字号加粗）
-                if item_text.startswith("**"):
-                    end_pos = item_text.find("**", 2)
-                    if end_pos > 0:
-                        title_part = item_text[2:end_pos]
-                        rest = item_text[end_pos + 2:]
-                        full_text = "• " + title_part + rest + "\n"
-                        line_start = text_widget.index("end")
-                        text_widget.insert("end", full_text, "item")
-                        # 标题部分叠加 bold tag（2 = len("• ")）
-                        bold_start = f"{line_start} + 2 chars"
-                        bold_end = f"{line_start} + {2 + len(title_part)} chars"
-                        text_widget.tag_add("item_bold", bold_start, bold_end)
-                    else:
-                        text_widget.insert("end", "• " + item_text + "\n", "item")
-                else:
-                    text_widget.insert("end", "• " + item_text + "\n", "item")
+        render_changelog_text(
+            text_widget, section, gui.colors, FONT_FAMILY, FONT_FAMILY,
+            changelog_fs, fs, section_font_size=13, item_font_size=12)
         text_widget.configure(state="disabled")
         text_widget.yview_moveto(0)
         schedule_detail_scrollbar_refresh()

@@ -839,6 +839,8 @@ def check_and_update_gui(root, silent=False, on_complete=None, gui=None):
 def _fetch_changelog_section(target_version):
     """从远端 CHANGELOG.md 提取目标版本段落，与主界面版本历史/README/Release 同源。
     Gitee 优先（国内快），GitHub fallback。"""
+    from changelog_parser import extract_changelog_section
+
     urls = [
         "https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/CHANGELOG.md",
         "https://raw.githubusercontent.com/yaoyouzhong/boss-resume-filter/master/CHANGELOG.md",
@@ -855,24 +857,13 @@ def _fetch_changelog_section(target_version):
     if not content:
         return None
 
-    in_section = False
-    lines = []
-    for line in content.splitlines():
-        if line.startswith("## v"):
-            tag = line[3:].strip().split("—")[0].split("–")[0].split()[0].strip()
-            if tag == target_version:
-                in_section = True
-                continue
-            elif in_section:
-                break
-        elif in_section:
-            lines.append(line)
-    return "\n".join(lines) if lines else None
+    return extract_changelog_section(content, target_version)
 
 
 def show_update_dialog(root, result, gui=None):
     """显示更新对话框（使用 GUI 实例的字体缩放和配色方案）"""
     from tkinter import ttk
+    from gui_dialogs import render_changelog_text
 
     # 缩放参数（有 gui 实例时用它，否则退化为 1.0）
     font_scale = getattr(gui, 'font_scale', 1.0)
@@ -932,61 +923,10 @@ def show_update_dialog(root, result, gui=None):
                            borderwidth=0, highlightthickness=0,
                            relief='flat')
 
-    # Markdown 渲染（与主界面版本历史完全一致的参数）
-    section_font = (font_family_bold, fs(11))
-    item_font = (font_family, fs(10))
-    item_bold_font = (font_family_bold, fs(10))
-    item_left_margin = pad(18)
-    item_wrap_margin = pad(36)
-
-    content_text.tag_configure("section_new", font=section_font, foreground=colors.get('success', '#48BB78'))
-    content_text.tag_configure("section_opt", font=section_font, foreground=colors['primary'])
-    content_text.tag_configure("section_ui", font=section_font, foreground=colors.get('purple', '#805AD5'))
-    content_text.tag_configure("section_fix", font=section_font, foreground=colors.get('danger', '#E53E3E'))
-    content_text.tag_configure("item", font=item_font, foreground=colors['text_secondary'],
-                               lmargin1=item_left_margin, lmargin2=item_wrap_margin)
-    content_text.tag_configure("item_bold", font=item_bold_font, foreground=colors['text_primary'])
-
-    section_map = {
-        '新增功能': 'section_new',
-        '体验优化': 'section_opt',
-        '行为优化': 'section_opt',
-        '性能优化': 'section_opt',
-        'UI 改进': 'section_ui',
-        'UI改进': 'section_ui',
-        '问题修复': 'section_fix',
-        'Bug 修复': 'section_fix',
-        'Bug修复': 'section_fix',
-    }
-
-    for line in body.splitlines():
-        # 兼容 ## 和 ### 作为分类标题（CHANGELOG 用 ###，latest.json release_notes 可能用 ##）
-        stripped = line.lstrip('#').strip()
-        header_level = len(line) - len(line.lstrip('#'))
-        is_section = (header_level in (2, 3)) and stripped and not stripped.startswith('v')
-
-        if line.startswith("## v"):
-            continue  # 跳过版本标题
-        elif is_section:
-            stag = section_map.get(stripped, 'section_opt')
-            content_text.insert("end", "\n" + stripped + "\n\n", stag)
-        elif line.startswith("- "):
-            text = line[2:]
-            if text.startswith("**"):
-                end_pos = text.find("**", 2)
-                if end_pos > 0:
-                    title_part = text[2:end_pos]
-                    rest = text[end_pos + 2:]
-                    full = "• " + title_part + rest + "\n"
-                    line_start = content_text.index("end")
-                    content_text.insert("end", full, "item")
-                    bold_start = f"{line_start} + 2 chars"
-                    bold_end = f"{line_start} + {2 + len(title_part)} chars"
-                    content_text.tag_add("item_bold", bold_start, bold_end)
-                else:
-                    content_text.insert("end", "• " + text + "\n", "item")
-            else:
-                content_text.insert("end", "• " + text + "\n", "item")
+    # Markdown 渲染（与主界面版本历史共用同一 helper）
+    render_changelog_text(
+        content_text, body, colors, font_family, font_family_bold,
+        font_scale, layout_scale, section_font_size=11, item_font_size=10)
 
     content_text.config(state="disabled")
     content_text.pack(fill="both", expand=True)
