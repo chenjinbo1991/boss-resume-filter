@@ -23,6 +23,14 @@ candidates_all.xlsx    # Excel 导出（覆盖）
 | 批次 | 本次运行的时间戳 |
 | 详细信息 | 候选人摘要 |
 
+**风险提示字段**（疑似非统招本科等场景时生成）：
+
+| 字段 | 说明 |
+|------|------|
+| risk_flags | 风险标记列表（如"学历形式待确认：疑似非统招本科"） |
+| manual_review_required | 是否需人工确认（True/False） |
+| auto_greet_blocked_reason | 自动打招呼阻断原因 |
+
 **AI 评估附加字段**（仅开启 LLM 评估时存在）：
 
 | 字段 | 说明 |
