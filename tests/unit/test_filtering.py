@@ -43,6 +43,18 @@ def test_parse_experience_years_no_match_returns_none():
     assert parse_experience_years("") is None
 
 
+def test_parse_experience_years_no_cross_line_matching():
+    """回归：API 提取模式下 '性别：0\\n经验：8年' 不应跨行匹配 '0\\n年' 返回 0。"""
+    api_summary = "期望薪资：13-15K\n姓名：张亚星\n性别：0\n年龄：30岁\n学历：本科\n经验：8年\n期望城市：南京"
+    assert parse_experience_years(api_summary) == 8
+
+    api_summary_gender1 = "性别：1\n年龄：28岁\n经验：5年"
+    assert parse_experience_years(api_summary_gender1) == 5
+
+    # DOM 格式不受影响（无换行分隔）
+    assert parse_experience_years("31岁8年本科") == 8
+
+
 def test_parse_experience_years_arabic_takes_precedence():
     assert parse_experience_years("3年经验，工作过五年") == 3
 

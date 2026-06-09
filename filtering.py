@@ -144,11 +144,12 @@ def parse_experience_years(text: str) -> Optional[int]:
 
     text = text.replace(' ', '')
 
-    arabic_match = re.search(r'(\d+)\s*年', text)
+    # [^\S\n]* 匹配空白但不含换行，防止跨行匹配（如 "性别：0\n年龄" 中的 0+\n+年）
+    arabic_match = re.search(r'(\d+)[^\S\n]*年', text)
     if arabic_match:
         return int(arabic_match.group(1))
 
-    chinese_match = re.search(r'([零一二三四五六七八九十两]+(?:十[一二三四五六七八九两]?)?)\s*年', text)
+    chinese_match = re.search(r'([零一二三四五六七八九十两]+(?:十[一二三四五六七八九两]?)?)[^\S\n]*年', text)
     if chinese_match:
         chinese_num = chinese_match.group(1)
 
