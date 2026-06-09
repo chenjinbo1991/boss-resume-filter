@@ -748,6 +748,17 @@ def _extract_candidates_from_api_payload(payload: Any) -> list[dict[str, str]]:
         city_text = _pick_api_text(geek_card, "expectLocationName", "expectLocation")
         if city_text:
             structured['city'] = city_text
+        salary_text = _pick_api_text(geek_card, "salary", "expectSalaryName", "expectSalaryDesc", "expectSalary")
+        if salary_text and '面议' not in salary_text:
+            m = re.search(r'(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]', salary_text)
+            if m:
+                structured['salary_min'] = int(m.group(1))
+                structured['salary_max'] = int(m.group(2))
+            else:
+                m = re.search(r'(\d+)\s*[kK]', salary_text)
+                if m:
+                    structured['salary_min'] = int(m.group(1))
+                    structured['salary_max'] = int(m.group(1))
         candidates.append({
             "geek_id": geek_id,
             "name": _pick_api_text(geek_card, "geekName", "name", "encryptGeekName") or "未知",

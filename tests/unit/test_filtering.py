@@ -107,6 +107,14 @@ def test_parse_salary_range_negotiable():
     assert _parse_candidate_salary_range("面议\n本科") == (None, None)
 
 
+def test_parse_salary_range_api_format():
+    """回归：API 格式 '期望薪资：15K以上' 不再返回 (None, None)。"""
+    assert _parse_candidate_salary_range("期望薪资：15K以上") == (15, 15)
+    assert _parse_candidate_salary_range("期望薪资：15K") == (15, 15)
+    assert _parse_candidate_salary_range("期望薪资：13-15K") == (13, 15)
+    assert _parse_candidate_salary_range("期望薪资：面议") == (None, None)
+
+
 def test_parse_salary_range_no_salary():
     assert _parse_candidate_salary_range("5 年 Java 经验") == (None, None)
     assert _parse_candidate_salary_range("") == (None, None)
@@ -434,6 +442,39 @@ def test_filter_candidate_multi_city_work_location():
     assert passed is True
     passed, _, details = filter_candidate("意向：北京，Java 开发", rule)
     assert passed is False
+
+
+def test_filter_candidate_multi_city_structured_fields():
+    """回归：结构化多城市字段 '南京/上海' 匹配岗位要求 '上海' 应通过。"""
+    rule = {"min_exp": 0, "edu": "不限", "work_location": "上海", "keywords": ["Java"]}
+    candidate_text = "期望薪资：15K\n姓名：张三\n经验：5年\n年龄：28岁\n学历：本科\n期望城市：北京"
+    # 无结构化字段：_extract_city 从文本取，应取到"北京"，不匹配"上海"
+    passed, _, details = filter_candidate(candidate_text, rule)
+    assert passed is False
+    assert "地点不符" in details["reason"]
+    # 结构化多城市：南京/上海 应匹配"上海"
+    structured = {"city": "南京/上海"}
+    passed, _, _ = filter_candidate(candidate_text, rule, structured)
+    assert passed is True
+    # 结构化多城市全部不匹配
+    structured2 = {"city": "北京/广州"}
+    passed, _, details2 = filter_candidate(candidate_text, rule, structured2)
+    assert passed is False
+    assert "地点不符" in details2["reason"]
+
+
+def test_filter_candidate_salary_structured_fields():
+    """回归：结构化薪资字段优先于文本正则解析。"""
+    rule = {"min_exp": 0, "edu": "不限", "salary_min": 12, "salary_max": 15, "keywords": ["Java"]}
+    candidate_text = "期望薪资：面议\nJava 开发 5年"
+    # 文本说"面议"→ 跳过薪资检查 → 通过
+    passed, _, _ = filter_candidate(candidate_text, rule)
+    assert passed is True
+    # 结构化说最低 20K → 超过岗位上限 15K → 拒绝
+    structured = {"salary_min": 20, "salary_max": 25}
+    passed, _, details = filter_candidate(candidate_text, rule, structured)
+    assert passed is False
+    assert "薪资不匹配" in details["reason"]
 
 
 def test_filter_candidate_negotiable_salary_skips_check():

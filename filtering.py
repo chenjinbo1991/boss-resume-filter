@@ -193,6 +193,11 @@ def _parse_candidate_salary_range(text: str) -> tuple[Optional[int], Optional[in
     if m:
         val = int(m.group(1))
         return val, val
+    # API 格式："期望薪资：15K以上" 或 "期望薪资：15K"
+    m = re.search(r'(\d+)\s*[kK]', first_line)
+    if m:
+        val = int(m.group(1))
+        return val, val
     return None, None
 
 
@@ -336,27 +341,39 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
 
         work_location = rule.get("work_location")
         if work_location and work_location.strip():
-            # 优先使用 API 提供的结构化城市字段
-            candidate_city = None
-            if structured_fields and 'city' in structured_fields:
-                city_raw = structured_fields['city']
-                # 可能含多城市，用 / 分隔
-                parts = re.split(r'[/、,，]', city_raw)
-                candidate_city = parts[0].strip() if parts else city_raw.strip()
-            else:
-                candidate_city = _extract_city(candidate_text)
             required_locations = re.split(r'[/、/]', work_location)
             required_locations = [loc.strip() for loc in required_locations if loc.strip()]
-            if candidate_city and required_locations:
-                if not any(loc in candidate_city for loc in required_locations):
-                    return False, 0, {"reason": f"地点不符：要求{work_location}，期望{candidate_city}"}
-                hard_checks.append(f"地点：通过，要求{work_location}，期望{candidate_city}")
+
+            # 优先使用 API 提供的结构化城市字段（支持多城市）
+            candidate_cities: list[str] = []
+            if structured_fields and 'city' in structured_fields:
+                city_raw = structured_fields['city']
+                candidate_cities = [c.strip() for c in re.split(r'[/、,，]', city_raw) if c.strip()]
+            else:
+                c = _extract_city(candidate_text)
+                if c:
+                    candidate_cities = [c]
+
+            candidate_city_display = "/".join(candidate_cities) if candidate_cities else ""
+            if candidate_cities and required_locations:
+                if not any(
+                    loc in city
+                    for city in candidate_cities
+                    for loc in required_locations
+                ):
+                    return False, 0, {"reason": f"地点不符：要求{work_location}，期望{candidate_city_display}"}
+                hard_checks.append(f"地点：通过，要求{work_location}，期望{candidate_city_display}")
             else:
                 hard_checks.append(f"地点：未识别明确城市，要求{work_location}")
 
         salary_max = rule.get("salary_max")
         if rule.get("salary_min") is not None and salary_max is not None:
-            cand_min_k, _ = _parse_candidate_salary_range(candidate_text)
+            # 优先使用 API 提供的结构化薪资字段，fallback 到正则解析
+            cand_min_k = None
+            if structured_fields and 'salary_min' in structured_fields:
+                cand_min_k = structured_fields['salary_min']
+            else:
+                cand_min_k, _ = _parse_candidate_salary_range(candidate_text)
             if cand_min_k is not None and cand_min_k >= salary_max + 1:
                 return False, 0, {"reason": f"薪资不匹配：岗位最高{salary_max}K，候选人期望最低{cand_min_k}K"}
             if cand_min_k is not None:
