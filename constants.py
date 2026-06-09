@@ -46,7 +46,7 @@ USER_AGENT = "BossResumeFilter/1.0"
 # ========== LLM API 参数 ==========
 LLM_MAX_TOKENS = 256               # 最大返回 token 数
 LLM_TEMPERATURE = 0.3              # 采样温度（低 = 更确定）
-LLM_TIMEOUT = (8, 30)              # HTTP 超时（连接秒, 读取秒）
+LLM_TIMEOUT = (10, 60)             # HTTP 超时（连接秒, 读取秒）
 LLM_MAX_RETRIES = 3                # API 调用最大重试次数
 
 # ========== 自动更新超时（秒） ==========

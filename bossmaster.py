@@ -258,6 +258,12 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                 lines.append(str(name))
         return "\n".join(lines)
 
+    def _format_risk_flags(c: dict[str, Any]) -> str:
+        risk_flags = c.get('risk_flags') or []
+        if isinstance(risk_flags, list):
+            return "\n".join(str(flag) for flag in risk_flags if flag)
+        return str(risk_flags)
+
     try:
         # 按匹配分从高到低排序
         sorted_candidates = sorted(candidates, key=lambda x: x.get('match_score', 0), reverse=True)
@@ -283,6 +289,9 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                 '匹配分': score,
                 '推荐指数': recommend_level,
                 '是否打招呼': '是' if c.get('greet_sent', False) else '否',
+                '是否需人工确认': '是' if c.get('manual_review_required') else '否',
+                '风险提示': _format_risk_flags(c),
+                '自动打招呼阻断原因': c.get('auto_greet_blocked_reason', ''),
                 '跟进状态': c.get('followup_status') or ('已打招呼' if c.get('greet_sent', False) else '未沟通'),
                 '跟进备注': c.get('followup_note', ''),
                 '跟进时间': c.get('followup_updated_at', ''),
@@ -303,14 +312,15 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                 '技能': summary_info['skills'],
                 'geek_id': c.get('geek_id', ''),
                 '批次': c.get('batch_timestamp', ''),  # 新增批次字段
-                '详细信息': c.get('summary', '')[:200]
+                '详细信息': c.get('summary', '')
             }
             data.append(row)
 
         df = pd.DataFrame(data)
 
         # 列顺序调整：岗位提前
-        columns = ['序号', '岗位', '姓名', '匹配分', '推荐指数', '是否打招呼', '跟进状态',
+        columns = ['序号', '岗位', '姓名', '匹配分', '推荐指数', '是否打招呼',
+                   '是否需人工确认', '风险提示', '自动打招呼阻断原因', '跟进状态',
                    '跟进备注', '跟进时间', '人工反馈', '反馈备注', '反馈时间', '技能匹配',
                    '评分拆解', '评分解释', '命中证据', '薪资', '年龄', '工作年限', '学历',
                    '求职状态', '公司', '城市', '技能', 'geek_id', '批次', '详细信息']
@@ -572,6 +582,204 @@ def _extract_cards_batch(target):
         return []
 
 
+def _stringify_api_value(value: Any) -> str:
+    """把 API 字段安全转换为可参与文本匹配的字符串。"""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [_stringify_api_value(v) for v in value]
+        return "、".join(p for p in parts if p)
+    if isinstance(value, dict):
+        for key in ("name", "label", "text", "content", "value", "desc", "title"):
+            text = _stringify_api_value(value.get(key))
+            if text:
+                return text
+        parts = [_stringify_api_value(v) for v in value.values()]
+        return "、".join(p for p in parts if p)
+    return str(value).strip()
+
+
+def _pick_api_text(data: dict[str, Any], *keys: str) -> str:
+    """按候选字段名取第一个非空文本。"""
+    for key in keys:
+        text = _stringify_api_value(data.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _extract_geek_id_from_card(geek_card: dict[str, Any]) -> str:
+    """从 BOSS 推荐接口候选人对象中提取候选人 ID。"""
+    for key in ("encryptGeekId", "encGeekId", "encryptedGeekId", "geek_id", "geekId", "uid", "id"):
+        value = geek_card.get(key)
+        if value is not None:
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def _build_candidate_summary_from_geek_card(geek_card: dict[str, Any]) -> str:
+    """把 API 返回的 geekCard 拼成现有筛选器可理解的候选人摘要文本。"""
+    lines: list[str] = []
+
+    def add(label: str, value: Any) -> None:
+        text = _stringify_api_value(value)
+        if text:
+            lines.append(f"{label}：{text}")
+
+    add("期望薪资", _pick_api_text(geek_card, "salary", "expectSalaryName", "expectSalaryDesc", "expectSalary"))
+    add("姓名", _pick_api_text(geek_card, "geekName", "name", "encryptGeekName"))
+    add("性别", _pick_api_text(geek_card, "geekGender", "gender", "genderDesc"))
+    add("年龄", _pick_api_text(geek_card, "ageDesc", "age"))
+    add("学历", _pick_api_text(geek_card, "geekDegree", "degreeName", "degree"))
+    add("经验", _pick_api_text(geek_card, "geekWorkYear", "workYear", "workYearDesc"))
+    add("期望职位", _pick_api_text(geek_card, "expectPositionName", "expectPosition"))
+    add("期望城市", _pick_api_text(geek_card, "expectLocationName", "expectLocation"))
+    add("求职状态", _pick_api_text(geek_card, "applyStatusDesc", "jobStatus", "jobStatusDesc"))
+
+    geek_desc = geek_card.get("geekDesc")
+    if isinstance(geek_desc, dict):
+        add("个人优势", _pick_api_text(geek_desc, "content", "desc", "text"))
+    else:
+        add("个人优势", geek_desc)
+
+    edus = geek_card.get("geekEdus") or geek_card.get("geekEduList") or []
+    if isinstance(edus, list):
+        for edu in edus:
+            if not isinstance(edu, dict):
+                add("教育经历", edu)
+                continue
+            school = _pick_api_text(edu, "school", "schoolName")
+            major = _pick_api_text(edu, "major", "majorName")
+            degree = _pick_api_text(edu, "degreeName", "degree")
+            start = _pick_api_text(edu, "startDate", "startTime")
+            end = _pick_api_text(edu, "endDate", "endTime")
+            add("教育经历", " ".join(p for p in (school, major, degree, start, end) if p))
+
+    works = geek_card.get("geekWorks") or geek_card.get("geekWorkList") or []
+    if isinstance(works, list):
+        for work in works:
+            if not isinstance(work, dict):
+                add("工作经历", work)
+                continue
+            company = _pick_api_text(work, "company", "companyName")
+            position = _pick_api_text(work, "positionName", "position", "title")
+            category = _pick_api_text(work, "positionCategory", "positionCategoryName")
+            start = _pick_api_text(work, "startDate", "startTime")
+            end = _pick_api_text(work, "endDate", "endTime")
+            responsibility = _pick_api_text(work, "responsibility", "workContent", "content", "description")
+            emphasis = _stringify_api_value(work.get("workEmphasisList") or work.get("workEmphasis"))
+            add("工作经历", " ".join(p for p in (company, position, category, start, end) if p))
+            add("工作职责", responsibility)
+            add("技能标签", emphasis)
+
+    return "\n".join(lines)
+
+
+def _find_geek_cards_in_payload(payload: Any) -> list[dict[str, Any]]:
+    """从接口响应中递归寻找 geekCard 对象。"""
+    cards: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        geek_card = payload.get("geekCard")
+        if isinstance(geek_card, dict):
+            merged = {**geek_card}
+            for key in ("encryptGeekId", "encGeekId", "encryptedGeekId"):
+                if payload.get(key) and not merged.get(key):
+                    merged[key] = payload[key]
+            cards.append(merged)
+        elif _extract_geek_id_from_card(payload):
+            cards.append(payload)
+
+        for list_key in ("list", "geekList"):
+            data_list = payload.get(list_key)
+            if isinstance(data_list, list):
+                for item in data_list:
+                    cards.extend(_find_geek_cards_in_payload(item))
+
+        for data_key in ("data", "zpData"):
+            data = payload.get(data_key)
+            if isinstance(data, (dict, list)):
+                cards.extend(_find_geek_cards_in_payload(data))
+
+        result = payload.get("result")
+        if isinstance(result, (dict, list)):
+            cards.extend(_find_geek_cards_in_payload(result))
+
+        friend_list = payload.get("friendList")
+        if isinstance(friend_list, list):
+            for item in friend_list:
+                cards.extend(_find_geek_cards_in_payload(item))
+    elif isinstance(payload, list):
+        for item in payload:
+            cards.extend(_find_geek_cards_in_payload(item))
+    return cards
+
+
+def _extract_candidates_from_api_payload(payload: Any) -> list[dict[str, str]]:
+    """从 BOSS 推荐接口 JSON 中提取候选人，输出兼容 DOM 提取的结构。"""
+    candidates = []
+    for geek_card in _find_geek_cards_in_payload(payload):
+        geek_id = _extract_geek_id_from_card(geek_card)
+        if not geek_id:
+            continue
+        summary = _build_candidate_summary_from_geek_card(geek_card)
+        if not summary:
+            continue
+        candidates.append({
+            "geek_id": geek_id,
+            "name": _pick_api_text(geek_card, "geekName", "name", "encryptGeekName") or "未知",
+            "summary": summary,
+        })
+    return candidates
+
+
+def _start_recommend_api_listener(page: ChromiumPage) -> Any | None:
+    """启动推荐列表接口监听，失败时返回 None 并允许 DOM 兜底。"""
+    try:
+        listener = page.listen
+        listener.start("zpjob/rec/geek/list", method=("GET", "POST"), res_type=("XHR", "Fetch"))
+        return listener
+    except Exception as e:
+        print(f"启动 API 监听失败，将使用页面提取：{e}")
+        return None
+
+
+def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.05) -> list[dict[str, str]]:
+    """消费已监听到的推荐接口响应，提取候选人数据。"""
+    if not listener:
+        return []
+
+    candidates: list[dict[str, str]] = []
+    while True:
+        try:
+            packet = listener.wait(timeout=timeout, fit_count=False)
+        except Exception as e:
+            print(f"读取 API 监听数据失败：{e}")
+            break
+        if not packet:
+            break
+
+        packets = packet if isinstance(packet, list) else [packet]
+        for p in packets:
+            try:
+                if getattr(p, "is_failed", False):
+                    continue
+                payload = p.response.body
+                candidates.extend(_extract_candidates_from_api_payload(payload))
+            except Exception as e:
+                print(f"解析 API 监听数据失败：{e}")
+                continue
+
+        timeout = 0.01
+
+    return candidates
+
+
 def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEFAULT, progress_callback=None, stop_event=None, captcha_callback=None):
     """通过全面分析提取候选人
 
@@ -588,112 +796,153 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
 
     all_candidates = []
     seen_geek_ids = set()
+    candidate_index_by_id: dict[str, int] = {}
     target = iframe if iframe else page
     consecutive_empty = 0
-
-    for scroll_round in range(max_rounds):
-        # 检查停止信号
-        if stop_event and stop_event.is_set():
-            raise StopRequested()
-
-        # 验证码检测：每 3 轮一次（降低调用频率，弹窗一旦出现 1.5s 内必然可见）
-        if scroll_round % 3 == 0:
-            is_captcha, captcha_msg = _detect_captcha(page)
-            if is_captcha:
-                print(f"\n⚠️  检测到安全验证弹窗 ({captcha_msg})")
-                if not _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg):
-                    break
-
-        # 进度上报
-        if progress_callback:
-            pct = int((scroll_round + 1) / max_rounds * 100)
-            progress_callback(pct, f"正在扫描候选人... 第{scroll_round + 1}/{max_rounds}轮")
-
-        # 先滚动（第一轮跳过）
-        if scroll_round > 0:
-            if iframe:
-                # 同时滚动 window 和可能的滚动容器（BOSS 直聘虚拟列表的实际滚动目标）
-                _scroll_sel = _sel('scroll', 'container_js_selectors',
-                    '.candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]')
-                iframe.run_js(f'''
-                    window.scrollBy(0, {SCROLL_PX});
-                    var list = document.querySelector("{_scroll_sel}");
-                    if(list) list.scrollTop += {SCROLL_PX};
-                ''')
-                time.sleep(_human_delay(0.8, 0.5))
-            else:
-                page.run_js(f'window.scrollBy(0, {SCROLL_PX})')
-                time.sleep(_human_delay(0.8, 0.5))
-
-            # 到底检测：滚动位置优先（单次 JS 调用，无 DOM 查找）
-            scroll_info = get_frame_scroll_info(iframe) if iframe else None
-            if scroll_info and scroll_info.get('atBottom'):
-                # 兜底：再用文本确认一次
-                bottom_hint = None
-                try:
-                    _bottom_texts = _sel('scroll', 'bottom_texts', ["到底", "没有更多"])
-                    bottom_hint = target.ele(f'@text():{_bottom_texts[0]}', timeout=0.3)
-                    if not bottom_hint and len(_bottom_texts) > 1:
-                        bottom_hint = target.ele(f'@text():{_bottom_texts[1]}', timeout=0.3)
-                except Exception:
-                    pass
-                if bottom_hint:
-                    print(f"检测到'到底'提示，第 {scroll_round + 1} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
-                    break
-
-        # 收集候选人（单次 JS 批量提取，替代逐卡片的 N+1 调用）
-        candidates_in_round = []
-        current_round_ids = set()
-
+    api_listener = _start_recommend_api_listener(page)
+    if api_listener:
         try:
-            batch = _extract_cards_batch(target)
-            for item in batch:
-                geek_id = item['geek_id']
-                if not geek_id or geek_id in seen_geek_ids or geek_id in current_round_ids:
-                    continue
-
-                current_round_ids.add(geek_id)
-
-                text = item['text']
-                # 内容过滤（Python 端，零网络开销）
-                has_candidate_info = (
-                    '经验' in text or '本科' in text or '硕士' in text or
-                    'Java' in text or '开发' in text or '工程师' in text or
-                    re.search(r'\d+年', text) or re.search(r'\d+岁', text)
-                )
-                if not has_candidate_info:
-                    continue
-
-                candidates_in_round.append({
-                    'geek_id': geek_id,
-                    'name': item['name'],
-                    'summary': text,
-                })
-
+            page.refresh()
+            time.sleep(_human_delay(1.8, 0.6))
+            iframe = get_iframe(page)
+            target = iframe if iframe else page
         except Exception as e:
-            print(f"提取候选人元素失败(轮次{scroll_round + 1}): {e}")
+            print(f"API 监听预热刷新失败，将继续使用当前页面：{e}")
 
-        # 更新累计
-        for c in candidates_in_round:
-            all_candidates.append(c)
-            seen_geek_ids.add(c['geek_id'])
+    try:
+        for scroll_round in range(max_rounds):
+            # 检查停止信号
+            if stop_event and stop_event.is_set():
+                raise StopRequested()
 
-        new_count = len(candidates_in_round)
-        total_count = len(all_candidates)
+            # 验证码检测：每 3 轮一次（降低调用频率，弹窗一旦出现 1.5s 内必然可见）
+            if scroll_round % 3 == 0:
+                is_captcha, captcha_msg = _detect_captcha(page)
+                if is_captcha:
+                    print(f"\n⚠️  检测到安全验证弹窗 ({captcha_msg})")
+                    if not _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg):
+                        break
 
-        # 连续空轮次检测（兜底策略，不依赖特定文案）
-        if new_count == 0:
-            consecutive_empty += 1
-            if consecutive_empty >= EMPTY_ROUNDS_LIMIT:
-                print(f"连续 {consecutive_empty} 轮无新候选人，第 {scroll_round + 1} 轮提前终止（累计 {total_count} 个候选人）")
-                break
-        else:
-            consecutive_empty = 0
+            # 进度上报
+            if progress_callback:
+                pct = int((scroll_round + 1) / max_rounds * 100)
+                progress_callback(pct, f"正在扫描候选人... 第{scroll_round + 1}/{max_rounds}轮")
 
-        # 每 10 轮或最后一轮打印进度
-        if (scroll_round + 1) % 10 == 0 or (scroll_round + 1) == max_rounds:
-            status = f"+{new_count}" if new_count > 0 else "无新增"
-            print(f"轮次 {scroll_round + 1}/{max_rounds}: {status}, 累计 {total_count} 个")
+            # 先滚动（第一轮跳过）
+            if scroll_round > 0:
+                if iframe:
+                    # 同时滚动 window 和可能的滚动容器（BOSS 直聘虚拟列表的实际滚动目标）
+                    _scroll_sel = _sel('scroll', 'container_js_selectors',
+                        '.candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]')
+                    iframe.run_js(f'''
+                        window.scrollBy(0, {SCROLL_PX});
+                        var list = document.querySelector("{_scroll_sel}");
+                        if(list) list.scrollTop += {SCROLL_PX};
+                    ''')
+                    time.sleep(_human_delay(0.8, 0.5))
+                else:
+                    page.run_js(f'window.scrollBy(0, {SCROLL_PX})')
+                    time.sleep(_human_delay(0.8, 0.5))
+
+                # 到底检测：滚动位置优先（单次 JS 调用，无 DOM 查找）
+                scroll_info = get_frame_scroll_info(iframe) if iframe else None
+                if scroll_info and scroll_info.get('atBottom'):
+                    # 兜底：再用文本确认一次
+                    bottom_hint = None
+                    try:
+                        _bottom_texts = _sel('scroll', 'bottom_texts', ["到底", "没有更多"])
+                        bottom_hint = target.ele(f'@text():{_bottom_texts[0]}', timeout=0.3)
+                        if not bottom_hint and len(_bottom_texts) > 1:
+                            bottom_hint = target.ele(f'@text():{_bottom_texts[1]}', timeout=0.3)
+                    except Exception:
+                        pass
+                    if bottom_hint:
+                        print(f"检测到'到底'提示，第 {scroll_round + 1} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
+                        break
+
+            # 收集候选人：优先使用 API 监听结果，失败或无数据时降级为页面提取。
+            candidates_in_round = []
+            current_round_ids = set()
+
+            try:
+                batch = _consume_recommend_api_candidates(api_listener)
+                if not batch:
+                    batch = []
+                    dom_batch = _extract_cards_batch(target)
+                    for item in dom_batch:
+                        batch.append({
+                            'geek_id': item.get('geek_id', ''),
+                            'name': item.get('name', '未知'),
+                            'summary': item.get('text', ''),
+                            '_source': 'dom',
+                        })
+                else:
+                    for item in batch:
+                        item['_source'] = 'api'
+
+                for item in batch:
+                    geek_id = item['geek_id']
+                    if not geek_id:
+                        continue
+                    if geek_id in seen_geek_ids or geek_id in current_round_ids:
+                        existing_idx = candidate_index_by_id.get(geek_id)
+                        if item.get('_source') == 'api' and existing_idx is not None:
+                            existing = all_candidates[existing_idx]
+                            new_summary = item.get('summary', '')
+                            if new_summary and len(new_summary) > len(existing.get('summary', '')):
+                                existing['summary'] = new_summary
+                                existing['name'] = item.get('name') or existing.get('name', '未知')
+                        continue
+
+                    current_round_ids.add(geek_id)
+
+                    text = item['summary']
+                    # 内容过滤（Python 端，零网络开销）
+                    has_candidate_info = (
+                        '经验' in text or '本科' in text or '硕士' in text or
+                        'Java' in text or '开发' in text or '工程师' in text or
+                        re.search(r'\d+年', text) or re.search(r'\d+岁', text)
+                    )
+                    if not has_candidate_info:
+                        continue
+
+                    candidates_in_round.append({
+                        'geek_id': geek_id,
+                        'name': item['name'],
+                        'summary': text,
+                    })
+
+            except Exception as e:
+                print(f"提取候选人元素失败(轮次{scroll_round + 1}): {e}")
+
+            # 更新累计
+            for c in candidates_in_round:
+                candidate_index_by_id[c['geek_id']] = len(all_candidates)
+                all_candidates.append(c)
+                seen_geek_ids.add(c['geek_id'])
+
+            new_count = len(candidates_in_round)
+            total_count = len(all_candidates)
+
+            # 连续空轮次检测（兜底策略，不依赖特定文案）
+            if new_count == 0:
+                consecutive_empty += 1
+                if consecutive_empty >= EMPTY_ROUNDS_LIMIT:
+                    print(f"连续 {consecutive_empty} 轮无新候选人，第 {scroll_round + 1} 轮提前终止（累计 {total_count} 个候选人）")
+                    break
+            else:
+                consecutive_empty = 0
+
+            # 每 10 轮或最后一轮打印进度
+            if (scroll_round + 1) % 10 == 0 or (scroll_round + 1) == max_rounds:
+                status = f"+{new_count}" if new_count > 0 else "无新增"
+                print(f"轮次 {scroll_round + 1}/{max_rounds}: {status}, 累计 {total_count} 个")
+    finally:
+        if api_listener:
+            try:
+                api_listener.stop()
+            except Exception:
+                pass
 
     print(f"\n=== 提取完成 ===")
     print(f"总共找到 {len(all_candidates)} 个候选人")
@@ -1299,6 +1548,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 "score_breakdown": details.get('score_breakdown', {}),
                 "score_explanation": details.get('score_explanation', []),
                 "keyword_evidence": details.get('keyword_evidence', []),
+                "risk_flags": details.get('risk_flags', []),
+                "manual_review_required": bool(details.get('manual_review_required')),
+                "auto_greet_blocked_reason": details.get('auto_greet_blocked_reason', ''),
                 "recommend_level": recommend_level,
                 "batch_timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
                 "followup_status": "未沟通",
@@ -1416,8 +1668,17 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             # 自动模式：根据推荐等级筛选
             to_greet_list = [c for c in passed_candidates
                             if c.get('recommend_level') in greet_levels_allowed
-                            and c.get('geek_id') not in existing_ids_for_job_and_greeted]
+                            and c.get('geek_id') not in existing_ids_for_job_and_greeted
+                            and not c.get('manual_review_required')]
+            blocked_count = sum(
+                1 for c in passed_candidates
+                if c.get('recommend_level') in greet_levels_allowed
+                and c.get('geek_id') not in existing_ids_for_job_and_greeted
+                and c.get('manual_review_required')
+            )
             print(f"需要打招呼：{len(to_greet_list)} 人 ({greet_level_text})")
+            if blocked_count:
+                print(f"  已跳过 {blocked_count} 人：需要人工确认后再打招呼")
 
         # 按分数排序
         to_greet_list.sort(key=lambda x: x.get('match_score', 0), reverse=True)
@@ -1660,7 +1921,16 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                 # 自动模式：根据推荐等级筛选
                 to_greet = [c for c in candidates_all
                            if c.get('recommend_level') in greet_levels_allowed
-                           and not c.get('greet_sent', False)]
+                           and not c.get('greet_sent', False)
+                           and not c.get('manual_review_required')]
+                blocked_count = sum(
+                    1 for c in candidates_all
+                    if c.get('recommend_level') in greet_levels_allowed
+                    and not c.get('greet_sent', False)
+                    and c.get('manual_review_required')
+                )
+                if blocked_count:
+                    print(f"已跳过 {blocked_count} 人：需要人工确认后再打招呼")
                 filter_text = f" ({greet_level_text})"
 
             if not to_greet:

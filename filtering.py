@@ -225,6 +225,20 @@ def _calc_edu_bonus(text: str) -> int:
     return bonus
 
 
+def _has_non_regular_edu_risk(text: str) -> bool:
+    """Return True when text contains words that may indicate non-regular education."""
+    return any(ne in text for ne in NON_REGULAR_EDU)
+
+
+def _add_risk_flag(details: dict[str, Any], flag: str) -> None:
+    """Attach a manual-review risk flag to filter details."""
+    risk_flags = details.setdefault('risk_flags', [])
+    if flag not in risk_flags:
+        risk_flags.append(flag)
+    details['manual_review_required'] = True
+    details['auto_greet_blocked_reason'] = "学历形式待确认"
+
+
 def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, int, dict[str, Any]]:
     """候选人筛选逻辑，返回 (passed, score, details)。"""
     try:
@@ -242,33 +256,45 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             'edu_bonus': 0,
             'score_breakdown': {},
             'score_explanation': [],
-            'keyword_evidence': []
+            'keyword_evidence': [],
+            'risk_flags': [],
+            'manual_review_required': False,
+            'auto_greet_blocked_reason': ''
         }
         hard_checks: list[str] = []
 
         edu_bonus = 0
         if rule.get("edu", "不限") != "不限":
             edu_keywords = {"博士": 6, "硕士": 5, "本科": 4, "大专": 3, "高中": 2, "中专": 1}
-            candidate_edu_level = max([edu_keywords.get(word, 0) for word in edu_keywords if word in candidate_text])
+            candidate_edu_level = max(
+                [edu_keywords.get(word, 0) for word in edu_keywords if word in candidate_text],
+                default=0,
+            )
             required_edu = edu_keywords.get(rule.get("edu", "不限"), 0)
+            has_non_regular_risk = _has_non_regular_edu_risk(candidate_text)
 
             if rule.get("edu") == "本科":
                 if candidate_edu_level >= 5:
                     pass
                 elif candidate_edu_level == 4:
-                    is_non_regular = any(ne in candidate_text for ne in NON_REGULAR_EDU)
-                    if is_non_regular:
+                    if has_non_regular_risk:
                         if re.search(r'(统招|全日制)\s*本科', candidate_text):
                             pass
                         else:
-                            return False, 0, {"reason": "学历不符：要求统招本科"}
+                            _add_risk_flag(details, "学历形式待确认：疑似非统招本科")
+                            hard_checks.append("学历：本科等级通过，学历形式待人工确认")
+                    else:
+                        hard_checks.append(f"学历：通过，要求{rule.get('edu')}")
+                elif has_non_regular_risk:
+                    _add_risk_flag(details, "学历形式待确认：疑似非统招本科")
+                    hard_checks.append("学历：疑似本科路径，学历形式待人工确认")
                 else:
                     return False, 0, {"reason": "学历不足：要求本科"}
             elif required_edu > 0 and candidate_edu_level < required_edu:
                 return False, 0, {"reason": f"学历不足：要求{rule.get('edu')}，实际未达要求"}
 
             edu_bonus = _calc_edu_bonus(candidate_text)
-            hard_checks.append(f"学历：通过，要求{rule.get('edu')}，学历加分{edu_bonus}")
+            hard_checks.append(f"学历加分：{edu_bonus}")
         else:
             hard_checks.append("学历：未设置硬性要求")
         details['edu_bonus'] = edu_bonus
@@ -322,6 +348,8 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
             cond_result = check_required_condition(candidate_text, condition)
             if not cond_result['passed']:
                 return False, 0, {"reason": cond_result['reason']}
+            for flag in cond_result.get('risk_flags', []):
+                _add_risk_flag(details, flag)
             hard_checks.append(f"必要条件：通过，{condition}")
         details['required_conditions_matched'] = True
 
@@ -428,11 +456,16 @@ def check_required_condition(candidate_text: str, condition: str | dict[str, Any
 
             has_regular_mark = "985" in candidate_text or "211" in candidate_text
             has_bachelor = "本科" in candidate_text
-            is_non_regular = any(ne in candidate_text for ne in NON_REGULAR_EDU)
+            is_non_regular = _has_non_regular_edu_risk(candidate_text)
             if has_regular_mark and has_bachelor and not is_non_regular:
                 return {"passed": True, "reason": ""}
             if is_non_regular:
-                return {"passed": False, "reason": f"必要条件不满足：{condition}（非统招）"}
+                return {
+                    "passed": True,
+                    "reason": "",
+                    "risk_flags": ["学历形式待确认：疑似非统招本科"],
+                    "manual_review_required": True,
+                }
             if has_bachelor:
                 return {"passed": True, "reason": ""}
             return {"passed": False, "reason": f"必要条件不满足：{condition}"}

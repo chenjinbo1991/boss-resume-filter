@@ -7,7 +7,7 @@ import random
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 from constants import (
     SCORE_THRESHOLD_PASS,
     SCORE_THRESHOLD_RECOMMEND,
@@ -48,6 +48,116 @@ _USER_TEMPLATE = (
     "## 候选人信息\n{candidate_summary}\n\n"
     "请评估匹配度，返回 JSON。"
 )
+
+
+def _clean_summary_line(value: Any) -> str:
+    """Normalize one summary value for compact prompt usage."""
+    text = str(value or '').replace('\r', '\n')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    """Return text capped to limit chars, preserving a visible truncation marker."""
+    text = _clean_summary_line(text)
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def build_llm_candidate_summary(candidate: dict, max_chars: int = 2200) -> str:
+    """Build a deterministic compact candidate summary for LLM evaluation.
+
+    The full candidate summary stays in JSON/Excel/detail views; this function only
+    controls the prompt payload to reduce latency and timeout risk.
+    """
+    summary = str(candidate.get('summary') or '')
+    sections: dict[str, list[str]] = {
+        '教育经历': [],
+        '工作经历': [],
+        '工作职责': [],
+        '技能标签': [],
+    }
+    other_lines: list[str] = []
+
+    for raw_line in summary.splitlines():
+        line = _clean_summary_line(raw_line)
+        if not line:
+            continue
+        matched = False
+        for label in sections:
+            prefix = f"{label}："
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip()
+                if value:
+                    sections[label].append(value)
+                matched = True
+                break
+        if not matched:
+            other_lines.append(line)
+
+    lines: list[str] = []
+    name = candidate.get('name')
+    if name:
+        lines.append(f"姓名：{name}")
+    lines.append(f"规则评分：{candidate.get('match_score', 0)}")
+    if candidate.get('recommend_level'):
+        lines.append(f"规则推荐：{candidate.get('recommend_level')}")
+    if candidate.get('skill_match_ratio'):
+        lines.append(f"技能匹配：{candidate.get('skill_match_ratio')}")
+    skill_matches = candidate.get('skill_matches') or []
+    if skill_matches:
+        skill_names = []
+        for item in skill_matches:
+            if isinstance(item, dict):
+                skill_names.append(str(item.get('name', '')).strip())
+            else:
+                skill_names.append(str(item).strip())
+        skill_names = [item for item in skill_names if item]
+        if skill_names:
+            lines.append("命中技能：" + "、".join(skill_names[:20]))
+
+    risk_flags = candidate.get('risk_flags') or []
+    if risk_flags:
+        lines.append("风险提示：" + "；".join(str(flag) for flag in risk_flags if flag))
+
+    if other_lines:
+        lines.append("基础摘要：" + _truncate_text("；".join(other_lines[:6]), 450))
+
+    if sections['教育经历']:
+        edu_text = "；".join(_truncate_text(item, 180) for item in sections['教育经历'][:3])
+        lines.append("教育经历：" + edu_text)
+
+    if sections['工作经历']:
+        work_text = "；".join(_truncate_text(item, 220) for item in sections['工作经历'][:3])
+        lines.append("工作经历：" + work_text)
+
+    if sections['工作职责']:
+        responsibility_text = "；".join(_truncate_text(item, 320) for item in sections['工作职责'][:3])
+        lines.append("工作职责：" + responsibility_text)
+
+    if sections['技能标签']:
+        tags: list[str] = []
+        seen: set[str] = set()
+        for item in sections['技能标签']:
+            for tag in re.split(r'[、,，;/；\s]+', item):
+                tag = tag.strip()
+                if tag and tag not in seen:
+                    seen.add(tag)
+                    tags.append(tag)
+        if tags:
+            lines.append("技能标签：" + "、".join(tags[:40]))
+
+    explanation = candidate.get('score_explanation') or []
+    if explanation:
+        explanation_text = "；".join(_clean_summary_line(item) for item in explanation[:8] if item)
+        if explanation_text:
+            lines.append("规则解释：" + _truncate_text(explanation_text, 500))
+
+    compact = "\n".join(line for line in lines if line)
+    if len(compact) <= max_chars:
+        return compact
+    return compact[:max_chars].rstrip() + "..."
 
 
 def _build_prompt(job_requirement: str, candidate_summary: str) -> list:
@@ -217,7 +327,7 @@ def _recalc_recommend_level(score: int) -> str:
 def _evaluate_single(index: int, candidate: dict, job_requirement: str,
                      api_config: dict, api_key: str) -> tuple:
     """Evaluate a single candidate with LLM. Returns (index, result, candidate_ref)."""
-    messages = _build_prompt(job_requirement, candidate.get('summary', ''))
+    messages = _build_prompt(job_requirement, build_llm_candidate_summary(candidate))
     result = _call_llm_api(messages, api_config, api_key)
 
     # Rate limiting delay between calls

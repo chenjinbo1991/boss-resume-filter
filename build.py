@@ -784,6 +784,22 @@ def _check_todo_not_stale():
     print("  [OK] TODO.md 无已完成待办残留")
 
 
+def _check_claude_md_size():
+    """检查 CLAUDE.md 行数不超过 300 行（防止知识文档膨胀）。"""
+    claude_path = BASE_DIR / "CLAUDE.md"
+    if not claude_path.exists():
+        return
+
+    line_count = sum(1 for _ in claude_path.open(encoding="utf-8"))
+    limit = 300
+    if line_count > limit:
+        print(f"[错误] CLAUDE.md 当前 {line_count} 行，超过 {limit} 行限制")
+        print("  请先执行 /neat-freak 精简后再发布。")
+        sys.exit(1)
+
+    print(f"  [OK] CLAUDE.md {line_count}/{limit} 行")
+
+
 def _preflight_checks(require_clean=True):
     """发布/打包前检查"""
     print("\n>>> 发布前检查")
@@ -795,6 +811,7 @@ def _preflight_checks(require_clean=True):
     _check_source_compiles()
     _check_changelog_updated()
     _check_todo_not_stale()
+    _check_claude_md_size()
     _run_unit_checks()
 
     if require_clean:

@@ -146,9 +146,12 @@ def test_check_required_condition_regular_bachelor():
     assert check_required_condition("全日制本科，5 年 Java", "统招本科")["passed"] is True
 
 
-def test_check_required_condition_non_regular_rejected():
-    assert check_required_condition("成教本科，5 年 Java", "统招本科")["passed"] is False
-    assert check_required_condition("自考本科，5 年 Java", "统招本科")["passed"] is False
+def test_check_required_condition_non_regular_requires_manual_review():
+    for text in ["成教本科，5 年 Java", "自考本科，5 年 Java"]:
+        result = check_required_condition(text, "统招本科")
+        assert result["passed"] is True
+        assert result["manual_review_required"] is True
+        assert "学历形式待确认：疑似非统招本科" in result["risk_flags"]
 
 
 def test_check_required_condition_master_satisfies_bachelor():
@@ -304,10 +307,13 @@ def test_filter_candidate_experience_insufficient():
     assert "经验不足" in details["reason"]
 
 
-def test_filter_candidate_non_regular_bachelor_rejected():
+def test_filter_candidate_non_regular_bachelor_requires_manual_review():
     rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
-    passed, _, _ = filter_candidate("专升本，5 年 Java", rule)
-    assert passed is False
+    passed, _, details = filter_candidate("专升本，5 年 Java", rule)
+    assert passed is True
+    assert details["manual_review_required"] is True
+    assert "学历形式待确认：疑似非统招本科" in details["risk_flags"]
+    assert details["auto_greet_blocked_reason"] == "学历形式待确认"
 
 
 def test_filter_candidate_fulltime_bachelor_passes():

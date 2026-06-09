@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 
 from llm_eval import (
     LLMEvalResult,
+    build_llm_candidate_summary,
     _build_prompt,
     _parse_response,
     _call_llm_api,
@@ -100,6 +101,37 @@ def test_build_prompt_returns_system_and_user():
     assert msgs[1]['role'] == 'user'
     assert "岗位要求：Java 5年" in msgs[1]['content']
     assert "张三，5年Java经验" in msgs[1]['content']
+
+
+def test_build_llm_candidate_summary_compacts_api_resume_sections():
+    long_responsibility = "负责 Python 数据分析、ETL 调度、Oracle 数据库开发。" * 40
+    candidate = {
+        "name": "张三",
+        "match_score": 68,
+        "recommend_level": "推荐",
+        "skill_match_ratio": "3/5",
+        "skill_matches": ["Python", "ETL", "Oracle"],
+        "risk_flags": ["学历形式待确认：疑似非统招本科"],
+        "summary": "\n".join([
+            "张三，8年经验，期望北京",
+            "教育经历：南京大学 计算机科学 本科 2008 2012",
+            "工作经历：某证券公司 数据分析师 2020 至今",
+            f"工作职责：{long_responsibility}",
+            "技能标签：Python、ETL、Oracle、Python",
+            "完整无关原文：" + "A" * 3000,
+        ]),
+        "score_explanation": ["技能分：30/50", "学历：本科等级通过，学历形式待人工确认"],
+    }
+
+    compact = build_llm_candidate_summary(candidate, max_chars=1200)
+
+    assert len(compact) <= 1203
+    assert "规则评分：68" in compact
+    assert "风险提示：学历形式待确认：疑似非统招本科" in compact
+    assert "教育经历：南京大学 计算机科学 本科 2008 2012" in compact
+    assert "工作职责：负责 Python 数据分析" in compact
+    assert "技能标签：Python、ETL、Oracle" in compact
+    assert "A" * 1000 not in compact
 
 
 # === _recalc_recommend_level ===
@@ -201,6 +233,25 @@ def test_batch_success_updates_candidate(mock_call):
     assert c['recommend_level'] == '推荐'
     assert c['rule_score'] == 65
     assert c['llm_model'] == 'test-model'
+
+
+@patch('llm_eval.time.sleep')
+@patch('llm_eval._call_llm_api')
+def test_batch_sends_compact_summary_to_llm(mock_call, mock_sleep):
+    mock_call.return_value = LLMEvalResult(success=True, adjustment=0, reason="ok", model="m")
+    candidates = [{
+        'name': '张三',
+        'match_score': 65,
+        'recommend_level': '推荐',
+        'summary': '工作职责：' + ('Python 项目经验。' * 500),
+    }]
+
+    quiet_evaluate_batch(candidates, "岗位要求", {'base_url': 'x', 'model': 'y'}, "key")
+
+    messages = mock_call.call_args.args[0]
+    prompt_text = messages[1]['content']
+    assert "工作职责：Python 项目经验" in prompt_text
+    assert len(prompt_text) < len(candidates[0]['summary'])
 
 
 @patch('llm_eval._call_llm_api')

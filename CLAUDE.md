@@ -9,7 +9,7 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.10）
+├── gui_main.py           # 图形界面主程序（v2.10.1）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
@@ -24,24 +24,10 @@ boss-resume-filter/
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── selectors.json        # 页面选择器配置（CSS/XPath/关键词，DOM 变化时修改）
-├── candidates_all.json   # 累积的候选人数据
-├── candidates_all.xlsx   # Excel 导出文件
-├── gui.bat               # GUI 启动脚本
-├── install.bat           # 安装脚本
-├── requirements.txt      # Python 依赖
-├── CLAUDE.md             # 本文件（Claude 专用项目规范）
-├── AGENTS.md             # Codex 专用项目规范（内容与本文件一致）
-├── README.md             # 项目主文档
-├── CHANGELOG.md          # 更新日志
-├── GUI 使用说明.md        # 图形界面详细说明
-├── README_文件管理.md      # 数据文件管理说明
-├── DEPLOYMENT.md         # 部署说明（新电脑配置）
-├── PACKAGING.md          # 打包指南
 ├── tests/                # 测试脚本目录
 ├── scripts/              # 辅助脚本目录
 │   └── watch_progress.py # 发布进度监控脚本（轮询 .build_progress.json）
-├── pyinstaller-hooks/    # PyInstaller 自定义 hook（控制模块收集范围，减小产物体积）
-└── .build_progress.json  # 发布进度文件（build.py 实时更新，供外部监控）
+└── pyinstaller-hooks/    # PyInstaller 自定义 hook（控制模块收集范围，减小产物体积）
 ```
 
 ## 运行命令
@@ -91,7 +77,7 @@ boss-resume-filter/
 - `__version__` 在 `gui_main.py` 中定义，唯一版本号来源；`build.py` 通过 AST 解析提取
 - 智能跳过打包：`.build_state.json` 构建指纹未变时复用产物，`--force-build` 强制重建
 - 打包命令：Windows `--onefile --noconsole --runtime-tmpdir %LOCALAPPDATA%`；macOS `--onedir --windowed`；DMG 用 `dmgbuild`
-- 打包前 `_preflight_checks()` 验证依赖、敏感文件、源码编译、CHANGELOG 同步、回归测试
+- 打包前 `_preflight_checks()` 验证依赖、敏感文件、源码编译、CHANGELOG 同步、CLAUDE.md 行数（≤300）、回归测试
 - 新增/修改 `requirements.txt` 依赖时同步更新 `build.py:REQUIRED_IMPORTS`；`build.py` 显式收集 Tk 运行库防 `No module named 'tkinter'`
 - Release 模式只自动提交 `--version` 引起的版本号变化，其他变更须先手工提交
 - 推送前 `input()` 确认 [y/N]；tag 冲突时自动 `--force`（master 除外）
@@ -229,35 +215,21 @@ boss-resume-filter/
 
 ## 踩坑警示
 
-### macOS .app 路径解析
+### macOS .app 路径解析与首次配置
 
-`sys.executable` 在 .app 中指向 `.app/Contents/MacOS/BOSS_ResumeFilter`，配置文件在 .app 旁边，需向上追溯 3 层。Windows EXE 直接用 `sys.executable.parent`。路径逻辑统一在 `paths.py:get_base_dir()` 中维护。
+`sys.executable` 在 .app 中指向 `.app/Contents/MacOS/BOSS_ResumeFilter`，配置文件在 .app 旁边，需向上追溯 3 层。DMG 只含 .app 和 Applications 快捷方式，配置文件不在 DMG 中，首次启动时从 `sys._MEIPASS` 复制。Windows EXE 直接用 `sys.executable.parent`。路径逻辑统一在 `paths.py:get_base_dir()` 中维护。
 
 ### PyInstaller 版本号读取
 
 不能从 `sys._MEIPASS` 读取 `gui_main.py` 源文件，因为源码被编译进 PYZ 归档，文件不存在。应该直接 `import gui_main` 读取模块属性，兼容所有打包模式（源码 / Windows EXE / macOS .app）。
 
-### DMG 图标布局控制
-
-`hdiutil create` 无法控制图标位置，Finder AppleScript 在 macOS 13+ 不稳定。最终方案：使用 `dmgbuild` Python 库。
-
-### CHANGELOG 分类校验
-
-`build.py` 的 `_check_changelog()` 要求至少有一个分类（新增功能/体验优化/问题修复），且存在的分类按规范顺序排列。
-
-**分类原则**：
-
-- **新增功能**：用户可感知的新能力
-- **体验优化**：现有功能的改进，包括新功能开发过程中产生的问题修复（不算 bug）
-- **问题修复**：**仅指旧版本中已存在且影响用户的 bug**，不包括当前版本新功能引入的问题
-
-### DMG 安装后配置文件缺失
-
-DMG 只含 .app + Applications 快捷方式，配置文件不在 DMG 中。`_get_base_dir()` 首次启动时检测配置文件不存在则从 `sys._MEIPASS` 复制。
-
 ### Tk 对话框 `wait_window()` 嵌套事件循环崩溃
 
 `wait_window()` 在 `root.after()` 回调中创建嵌套事件循环，macOS 上与 Cocoa scroll hook 和浏览器轮询冲突导致崩溃。正确做法是用 `grab_set()` 实现模态（不阻塞主事件循环），`protocol("WM_DELETE_WINDOW")` + `_close_dialog()` 清理引用。`self.root.update()` 也有重入风险，应移除。
+
+### CHANGELOG 分类原则
+
+三类：新增功能 / 体验优化 / 问题修复。问题修复仅指旧版本已存在且影响用户的 bug，不含当前版本新功能引入的问题。
 
 ### Windows DPI 缩放（System DPI Aware 方案）
 

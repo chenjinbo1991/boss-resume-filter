@@ -19,6 +19,9 @@ _FEEDBACK_FIELDS = (
     'followup_status',
     'followup_note',
     'followup_updated_at',
+    'risk_flags',
+    'manual_review_required',
+    'auto_greet_blocked_reason',
 )
 
 

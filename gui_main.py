@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.10"
+__version__ = "2.10.1"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -7282,6 +7282,8 @@ class BossFilterGUI:
         if not followup_status:
             followup_status = "已打招呼" if candidate.get('greet_sent', False) else "未沟通"
         status_parts = [followup_status]
+        if candidate.get('manual_review_required'):
+            status_parts.append("需人工确认")
         if candidate.get('feedback_status'):
             status_parts.append(candidate.get('feedback_status'))
         return "｜".join(status_parts)
@@ -7620,6 +7622,18 @@ class BossFilterGUI:
             lines.append(f"  状态：已打招呼")
         else:
             lines.append(f"  状态：未打招呼")
+        if c.get('manual_review_required'):
+            lines.append(f"  沟通限制：需人工确认后再打招呼")
+
+        risk_flags = c.get('risk_flags') or []
+        if risk_flags:
+            lines.append("")
+            lines.append("【风险提示】")
+            for flag in risk_flags:
+                lines.append(f"  - {flag}")
+            blocked_reason = c.get('auto_greet_blocked_reason')
+            if blocked_reason:
+                lines.append(f"  自动打招呼阻断原因：{blocked_reason}")
 
         followup_status = c.get('followup_status') or ("已打招呼" if c.get('greet_sent') else "未沟通")
         if followup_status or c.get('followup_note'):
@@ -7702,6 +7716,41 @@ class BossFilterGUI:
                 else:
                     lines.append(f"  ✓ {sm}")
 
+        structured_summary: dict[str, list[str]] = {
+            "教育经历": [],
+            "工作经历": [],
+            "工作职责": [],
+            "技能标签": [],
+        }
+        for sline in summary.split('\n'):
+            text = sline.strip()
+            for label in structured_summary:
+                prefix = f"{label}："
+                if text.startswith(prefix):
+                    value = text[len(prefix):].strip()
+                    if value:
+                        structured_summary[label].append(value)
+                    break
+
+        if any(structured_summary.values()):
+            section_titles = {
+                "教育经历": "【教育经历】",
+                "工作经历": "【工作经历】",
+                "工作职责": "【工作职责】",
+                "技能标签": "【技能标签】",
+            }
+            for label in ("教育经历", "工作经历", "工作职责", "技能标签"):
+                items = structured_summary[label]
+                if not items:
+                    continue
+                lines.append("")
+                lines.append(section_titles[label])
+                for idx, item in enumerate(items, 1):
+                    if label in ("工作职责", "技能标签"):
+                        lines.append(f"  {idx}. {item}")
+                    else:
+                        lines.append(f"  - {item}")
+
         # 候选人摘要
         if summary:
             lines.append("")
@@ -7772,9 +7821,15 @@ class BossFilterGUI:
 
         # 确认操作
         job_name = candidate.get('job_name', '未知岗位')
+        risk_text = ""
+        if candidate.get('manual_review_required'):
+            risk_flags = candidate.get('risk_flags') or []
+            risk_text = "\n\n风险提示：\n" + "\n".join(f"- {flag}" for flag in risk_flags)
+            risk_text += "\n\n该候选人已被自动流程跳过。继续操作视为人工确认后手动打招呼。"
         if not messagebox.askyesno("确认打招呼",
                                    f"确定要向 {name}（{candidate.get('recommend_level', '')}，{score}分）打招呼吗？\n\n"
-                                   f"岗位：{job_name}\n"
+                                   f"岗位：{job_name}"
+                                   f"{risk_text}\n\n"
                                    f"请确保浏览器已在该岗位的推荐牛人页面。",
                                    parent=self.root):
             return

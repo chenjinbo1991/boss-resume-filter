@@ -71,7 +71,9 @@ def test_education_bonus_tiers_are_stable():
 
 def test_required_conditions_support_string_or_and():
     assert check_required_condition("统招本科，5 年 Java", "统招本科")["passed"] is True
-    assert check_required_condition("成教本科，5 年 Java", "统招本科")["passed"] is False
+    risky_result = check_required_condition("成教本科，5 年 Java", "统招本科")
+    assert risky_result["passed"] is True
+    assert "学历形式待确认：疑似非统招本科" in risky_result["risk_flags"]
 
     workflow = {"type": "or", "items": ["activiti", "camunda", "flowable"]}
     assert check_required_condition("有 Camunda 项目经验", workflow)["passed"] is True
@@ -121,6 +123,179 @@ def test_filter_candidate_scores_and_hard_rejections_are_stable():
     assert "地点不符" in details["reason"]
 
 
+def test_geek_card_api_payload_builds_complete_candidate_summary():
+    payload = {
+        "zpData": {
+            "geekList": [
+                {
+                    "encryptGeekId": "encrypted-g-api-1",
+                    "geekCard": {
+                        "geekId": 123456,
+                        "encGeekId": "encrypted-g-api-1",
+                        "geekName": "张三",
+                        "ageDesc": "32岁",
+                        "geekDegree": "本科",
+                        "geekWorkYear": "8年",
+                        "expectLocationName": "南京",
+                        "salary": "15-20K",
+                        "expectPositionName": "Python 后端工程师",
+                        "geekDesc": {"content": "熟悉金融数据平台"},
+                        "geekEdus": [
+                            {
+                                "school": "南京大学",
+                                "major": "计算机科学",
+                                "degreeName": "本科",
+                                "startDate": "2008",
+                                "endDate": "2012",
+                            }
+                        ],
+                        "geekWorks": [
+                            {
+                                "company": "某证券公司",
+                                "positionName": "高级开发工程师",
+                                "responsibility": "负责 ETL 调度、Python 数据分析和 Oracle 数据库开发",
+                                "workEmphasisList": ["Python", "ETL", "Oracle"],
+                                "startDate": "2018",
+                                "endDate": "至今",
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+    }
+
+    candidates = bossmaster._extract_candidates_from_api_payload(payload)
+
+    assert candidates == [
+        {
+            "geek_id": "encrypted-g-api-1",
+            "name": "张三",
+            "summary": candidates[0]["summary"],
+        }
+    ]
+    summary = candidates[0]["summary"]
+    assert "工作职责：负责 ETL 调度、Python 数据分析和 Oracle 数据库开发" in summary
+    assert "技能标签：Python、ETL、Oracle" in summary
+    assert "教育经历：南京大学 计算机科学 本科 2008 2012" in summary
+
+
+def test_api_candidate_summary_participates_in_existing_filtering():
+    geek_card = {
+        "geekId": "g-api-2",
+        "geekName": "李四",
+        "ageDesc": "30岁",
+        "geekDegree": "本科",
+        "geekWorkYear": "6年",
+        "expectLocationName": "南京",
+        "salary": "14-16K",
+        "geekWorks": [
+            {
+                "positionName": "数据开发工程师",
+                "responsibility": "负责 Python 爬虫、SQL 数据处理和 Agent 工作流开发",
+                "workEmphasisList": [{"name": "Python"}, {"name": "SQL"}, {"name": "Agent"}],
+            }
+        ],
+    }
+    rule = {
+        "min_exp": 5,
+        "edu": "本科",
+        "work_location": "南京",
+        "salary_min": 12,
+        "salary_max": 16,
+        "keywords": ["Python", "SQL", "Agent"],
+    }
+
+    summary = bossmaster._build_candidate_summary_from_geek_card(geek_card)
+    passed, score, details = filter_candidate(summary, rule)
+
+    assert passed is True
+    assert score >= SCORE_THRESHOLD_STRONG
+    assert details["skill_matched_count"] == 3
+
+
+def test_export_to_excel_keeps_full_candidate_summary_in_detail_column():
+    long_summary = (
+        "15-18K\n南京，统招本科，6 年 Python 经验\n"
+        + "工作职责：负责数据仓库建设、ETL 调度、SQL 优化和业务指标分析。"
+        + "技能标签：Python、SQL、ETL、Oracle。"
+        + "项目说明：" + "A" * 260
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output = os.path.join(tmpdir, "candidates.xlsx")
+        bossmaster.export_to_excel(
+            [
+                {
+                    "geek_id": "g-excel-1",
+                    "name": "王五",
+                    "summary": long_summary,
+                    "job_name": "数据分析师",
+                    "match_score": 80,
+                    "recommend_level": "强烈推荐",
+                    "greet_sent": False,
+                    "manual_review_required": True,
+                    "risk_flags": ["学历形式待确认：疑似非统招本科"],
+                    "auto_greet_blocked_reason": "学历形式待确认",
+                }
+            ],
+            output,
+        )
+
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(output)
+        sheet = workbook["全部候选人"]
+        headers = [cell.value for cell in sheet[1]]
+        detail_col = headers.index("详细信息") + 1
+        manual_review_col = headers.index("是否需人工确认") + 1
+        risk_col = headers.index("风险提示") + 1
+
+        assert sheet.cell(row=2, column=detail_col).value == long_summary
+        assert sheet.cell(row=2, column=manual_review_col).value == "是"
+        assert sheet.cell(row=2, column=risk_col).value == "学历形式待确认：疑似非统招本科"
+
+
+def test_auto_greet_skips_manual_review_candidates():
+    class FakePage:
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+    job_info = {
+        "job_id": "job-risk",
+        "job_name": "Java 工程师",
+        "rule_key": "java",
+        "rule": {
+            "min_exp": 0,
+            "edu": "本科",
+            "required_conditions": ["统招本科"],
+            "keywords": ["Java"],
+        },
+    }
+    raw_candidates = [{
+        "geek_id": "g-risk-1",
+        "name": "赵六",
+        "summary": "20K\n北京，专升本，5 年 Java 开发",
+    }]
+
+    with patch.object(bossmaster, "load_candidates_all", return_value=[]), \
+         patch.object(bossmaster, "extract_candidates_by_comprehensive_analysis", return_value=raw_candidates), \
+         patch.object(bossmaster, "get_iframe", return_value=None), \
+         patch.object(bossmaster, "send_greeting_on_list_page") as mock_greet, \
+         patch.object(bossmaster, "save_candidates_all"):
+        result = bossmaster.smart_scan_candidates(
+            FakePage(),
+            job_info,
+            auto_greet=True,
+            max_rounds=1,
+            greet_level="normal",
+        )
+
+    assert len(result) == 1
+    assert result[0]["manual_review_required"] is True
+    assert result[0]["greet_sent"] is False
+    mock_greet.assert_not_called()
+
+
 def test_filter_candidate_age_boundaries_are_stable():
     rule = {
         "min_exp": 0,
@@ -137,7 +312,7 @@ def test_filter_candidate_age_boundaries_are_stable():
     assert "年龄不符" in details["reason"]
 
 
-def test_filter_candidate_rejects_non_regular_bachelor_even_with_school_mark():
+def test_filter_candidate_flags_non_regular_bachelor_even_with_school_mark():
     rule = {
         "min_exp": 0,
         "edu": "本科",
@@ -146,8 +321,9 @@ def test_filter_candidate_rejects_non_regular_bachelor_even_with_school_mark():
     }
 
     passed, _, details = filter_candidate("985 本科，专升本，5 年 Java", rule)
-    assert passed is False
-    assert "学历不符" in details["reason"] or "非统招" in details["reason"]
+    assert passed is True
+    assert details["manual_review_required"] is True
+    assert "学历形式待确认：疑似非统招本科" in details["risk_flags"]
 
     passed, _, _ = filter_candidate("全日制本科，5 年 Java", rule)
     assert passed is True
