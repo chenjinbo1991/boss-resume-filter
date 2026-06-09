@@ -172,9 +172,15 @@ def test_geek_card_api_payload_builds_complete_candidate_summary():
             "geek_id": "encrypted-g-api-1",
             "name": "张三",
             "summary": candidates[0]["summary"],
+            "structured": candidates[0]["structured"],
         }
     ]
     summary = candidates[0]["summary"]
+    structured = candidates[0]["structured"]
+    assert structured.get('exp_years') == 8
+    assert structured.get('age') == 32
+    assert structured.get('degree') == "本科"
+    assert structured.get('city') == "南京"
     assert "工作职责：负责 ETL 调度、Python 数据分析和 Oracle 数据库开发" in summary
     assert "技能标签：Python、ETL、Oracle" in summary
     assert "教育经历：南京大学 计算机科学 本科 2008 2012" in summary

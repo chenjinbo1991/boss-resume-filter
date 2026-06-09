@@ -730,10 +730,29 @@ def _extract_candidates_from_api_payload(payload: Any) -> list[dict[str, str]]:
         summary = _build_candidate_summary_from_geek_card(geek_card)
         if not summary:
             continue
+        # 提取结构化字段，避免下游用正则从文本中重新解析
+        structured: dict[str, Any] = {}
+        work_year_text = _pick_api_text(geek_card, "geekWorkYear", "workYear", "workYearDesc")
+        if work_year_text:
+            parsed = parse_experience_years(work_year_text)
+            if parsed is not None:
+                structured['exp_years'] = parsed
+        age_text = _pick_api_text(geek_card, "ageDesc", "age")
+        if age_text:
+            m = re.search(r'(\d+)', age_text)
+            if m:
+                structured['age'] = int(m.group(1))
+        degree_text = _pick_api_text(geek_card, "geekDegree", "degreeName", "degree")
+        if degree_text:
+            structured['degree'] = degree_text
+        city_text = _pick_api_text(geek_card, "expectLocationName", "expectLocation")
+        if city_text:
+            structured['city'] = city_text
         candidates.append({
             "geek_id": geek_id,
             "name": _pick_api_text(geek_card, "geekName", "name", "encryptGeekName") or "未知",
             "summary": summary,
+            "structured": structured,
         })
     return candidates
 
@@ -892,6 +911,9 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                             if new_summary and len(new_summary) > len(existing.get('summary', '')):
                                 existing['summary'] = new_summary
                                 existing['name'] = item.get('name') or existing.get('name', '未知')
+                            # API 来源的结构化字段始终合并（不受 summary 长度判断影响）
+                            if item.get('structured') and not existing.get('structured'):
+                                existing['structured'] = item['structured']
                         continue
 
                     current_round_ids.add(geek_id)
@@ -910,6 +932,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         'geek_id': geek_id,
                         'name': item['name'],
                         'summary': text,
+                        'structured': item.get('structured'),
                     })
 
             except Exception as e:
@@ -1524,7 +1547,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
     for i, candidate in enumerate(raw_candidates):
         if stop_event and stop_event.is_set():
             raise StopRequested()
-        passed, score, details = filter_candidate(candidate['summary'], job_info['rule'])
+        passed, score, details = filter_candidate(candidate['summary'], job_info['rule'], candidate.get('structured'))
         if passed and score >= SCORE_THRESHOLD_PASS:
             # 计算推荐等级
             if score >= SCORE_THRESHOLD_STRONG:

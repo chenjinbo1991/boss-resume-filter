@@ -240,7 +240,7 @@ def _add_risk_flag(details: dict[str, Any], flag: str) -> None:
     details['auto_greet_blocked_reason'] = "学历形式待确认"
 
 
-def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, int, dict[str, Any]]:
+def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_fields: dict[str, Any] | None = None) -> tuple[bool, int, dict[str, Any]]:
     """候选人筛选逻辑，返回 (passed, score, details)。"""
     try:
         details: dict[str, Any] = {
@@ -302,7 +302,12 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
 
         min_exp = rule.get("min_exp", 0)
         if min_exp > 0:
-            exp_years = parse_experience_years(candidate_text)
+            # 优先使用 API 提供的结构化经验字段，fallback 到正则解析
+            exp_years = None
+            if structured_fields and 'exp_years' in structured_fields:
+                exp_years = structured_fields['exp_years']
+            else:
+                exp_years = parse_experience_years(candidate_text)
             if exp_years is not None:
                 if min_exp > exp_years:
                     return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
@@ -315,17 +320,31 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any]) -> tuple[bool, i
 
         max_age = rule.get("max_age")
         if max_age is not None:
-            age_match = re.search(r'(?:年龄[：:\s]*)?(\d+)\s*岁', candidate_text)
-            if age_match and int(age_match.group(1)) > max_age:
-                return False, 0, {"reason": f"年龄不符：要求≤{max_age}岁，实际{age_match.group(1)}岁"}
-            if age_match:
-                hard_checks.append(f"年龄：通过，要求≤{max_age}岁，实际{age_match.group(1)}岁")
+            # 优先使用 API 提供的结构化年龄字段
+            age_val = None
+            if structured_fields and 'age' in structured_fields:
+                age_val = structured_fields['age']
+            else:
+                age_match = re.search(r'(?:年龄[：:\s]*)?(\d+)\s*岁', candidate_text)
+                age_val = int(age_match.group(1)) if age_match else None
+            if age_val is not None and age_val > max_age:
+                return False, 0, {"reason": f"年龄不符：要求≤{max_age}岁，实际{age_val}岁"}
+            if age_val is not None:
+                hard_checks.append(f"年龄：通过，要求≤{max_age}岁，实际{age_val}岁")
             else:
                 hard_checks.append(f"年龄：未识别明确年龄，要求≤{max_age}岁")
 
         work_location = rule.get("work_location")
         if work_location and work_location.strip():
-            candidate_city = _extract_city(candidate_text)
+            # 优先使用 API 提供的结构化城市字段
+            candidate_city = None
+            if structured_fields and 'city' in structured_fields:
+                city_raw = structured_fields['city']
+                # 可能含多城市，用 / 分隔
+                parts = re.split(r'[/、,，]', city_raw)
+                candidate_city = parts[0].strip() if parts else city_raw.strip()
+            else:
+                candidate_city = _extract_city(candidate_text)
             required_locations = re.split(r'[/、/]', work_location)
             required_locations = [loc.strip() for loc in required_locations if loc.strip()]
             if candidate_city and required_locations:
