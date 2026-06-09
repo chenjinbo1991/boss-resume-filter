@@ -10,8 +10,8 @@
   },
   "assets": {
     "windows": {
-      "size": 45623088,
-      "sha256": "9ec01988fef46960b4a6a0f73d2659c884ffff251b6de6bd28049e82e68d73bc"
+      "size": 45631582,
+      "sha256": "975f34dffa1503a917718cd4109b8a6ea015d56127c08fa8686f9961cfc0c288"
     },
     "macos_dmg": {
       "size": 33200379,
