@@ -90,28 +90,49 @@
 
 ## 🚀 快速开始
 
-### 方式一：图形界面（推荐）
+### 方式一：下载安装包（普通用户推荐）
+
+#### Windows
+
+1. 从 [GitHub Release](https://github.com/yaoyouzhong/boss-resume-filter/releases/latest) 或 [Gitee Release](https://gitee.com/yaoyouzhong/boss-resume-filter/releases) 下载 `BOSS_ResumeFilter.exe`
+2. 双击 `BOSS_ResumeFilter.exe` 启动程序
+3. 首次使用时，按界面引导完成浏览器连接、岗位配置和 API 配置
+
+#### macOS
+
+1. 从 [GitHub Release](https://github.com/yaoyouzhong/boss-resume-filter/releases/latest) 或 [Gitee Release](https://gitee.com/yaoyouzhong/boss-resume-filter/releases) 下载 `BOSS_ResumeFilter.dmg`
+2. 双击打开 DMG，将 `BOSS_ResumeFilter.app` 拖到 Applications 文件夹
+3. 首次打开时，右键点击 `BOSS_ResumeFilter.app`，选择「打开」，在安全提示中再次点击「打开」
+4. 后续可直接双击启动
+
+> 程序启动后会自动检查更新。新电脑首次使用需要在「岗位配置」→「API 配置」中重新输入 API Key。
+
+### 方式二：源码运行图形界面（开发/调试）
+
+适合需要改代码、排查问题或临时运行源码版本的场景：
 
 ```bash
-# 双击启动
-gui.bat
+cd boss-resume-filter
+pip install -r requirements.txt
 
-# 或命令行启动
+# Windows 可双击 gui.bat，或直接运行：
 python gui_main.py
 ```
 
-### 方式二：命令行
+### 方式三：命令行运行（高级用法）
 
-### 1. 安装依赖
+命令行模式适合自动化、批量任务或调试筛选逻辑。普通用户优先使用 EXE/App 图形界面。
+
+#### 1. 安装依赖
 
 ```bash
 cd boss-resume-filter
 pip install -r requirements.txt
 ```
 
-### 2. 配置岗位规则
+#### 2. 配置岗位规则
 
-编辑 `job_config.json` 文件，配置各岗位的筛选规则。支持通过 GUI 界面可视化配置，也可直接编辑 JSON 文件：
+推荐先在图形界面中配置岗位规则。需要批量维护时，也可以直接编辑 `job_config.json`：
 
 ```jsonc
 {
@@ -144,7 +165,7 @@ pip install -r requirements.txt
 }
 ```
 
-### 3. 运行筛选
+#### 3. 运行筛选
 
 ```bash
 # 自动打招呼模式（推荐）
@@ -172,13 +193,13 @@ python bossmaster.py --greet --verbose
 python bossmaster.py --greet --ai-eval
 ```
 
-### 4. 查看结果
+#### 4. 查看结果
 
 程序运行后会生成：
 - `candidates_all.json` - 全量候选人数据（累积、去重）
 - `candidates_all.xlsx` - Excel 导出文件（多工作表 + 统计摘要）
 
-### 5. 中断恢复
+#### 5. 中断恢复
 
 运行中按 `Ctrl+C` 中断时：
 - 自动保存当前进度
