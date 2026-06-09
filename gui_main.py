@@ -675,7 +675,6 @@ class BossFilterGUI:
 
         # 初始化图标缓存（DPI 感知的高清图标）
         self.icons = icons.init(effective_scale)
-        self._create_status_icons()
 
         # 设置窗口图标（替换 tkinter 默认羽毛图标）
         self._set_window_icon()
@@ -742,6 +741,9 @@ class BossFilterGUI:
 
         # 设置样式
         self.setup_styles()
+
+        # 创建进度状态图标（依赖 self.colors，必须在 setup_styles 之后）
+        self._create_status_icons()
 
         # 创建界面
         self.create_sidebar()
