@@ -305,9 +305,14 @@ def test_sync_gitee_from_github_skips_download_when_remote_assets_are_reusable()
             },
         }
 
+        original_fetch_assets = build._gitee_fetch_assets
         original_get_assets = build._get_github_release_assets
         original_download = build._download_from_github_release
         try:
+            build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: {
+                "BOSS_ResumeFilter_mac.zip": {"id": 1, "size": 222},
+                "BOSS_ResumeFilter.dmg": {"id": 2, "size": 333},
+            }
             build._get_github_release_assets = lambda tag: {
                 "BOSS_ResumeFilter_mac.zip": {
                     "name": "BOSS_ResumeFilter_mac.zip",
@@ -329,6 +334,7 @@ def test_sync_gitee_from_github_skips_download_when_remote_assets_are_reusable()
                     "9.9.9", "title", "notes", need_wait=False, release_cache=release_cache
                 )
         finally:
+            build._gitee_fetch_assets = original_fetch_assets
             build._get_github_release_assets = original_get_assets
             build._download_from_github_release = original_download
 
@@ -512,12 +518,14 @@ def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
         download_order = []
         upload_order = []
 
+        original_fetch_assets = build._gitee_fetch_assets
         original_get_assets = build._get_github_release_assets
         original_download = build._download_from_github_release
         original_upload = build._gitee_upload_single
         original_large_threshold = build.LARGE_TRANSFER_THRESHOLD
         try:
             build.LARGE_TRANSFER_THRESHOLD = 3
+            build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: {}
             build._get_github_release_assets = lambda tag: {
                 "BOSS_ResumeFilter_mac.zip": {
                     "name": "BOSS_ResumeFilter_mac.zip",
@@ -549,6 +557,7 @@ def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
                     "9.9.9", "title", "notes", need_wait=False, release_cache=release_cache
                 )
         finally:
+            build._gitee_fetch_assets = original_fetch_assets
             build._get_github_release_assets = original_get_assets
             build._download_from_github_release = original_download
             build._gitee_upload_single = original_upload
@@ -577,12 +586,14 @@ def test_sync_gitee_from_github_supports_macos_release_waiting_for_windows_exe()
         download_order = []
         upload_order = []
 
+        original_fetch_assets = build._gitee_fetch_assets
         original_get_assets = build._get_github_release_assets
         original_download = build._download_from_github_release
         original_upload = build._gitee_upload_single
         original_large_threshold = build.LARGE_TRANSFER_THRESHOLD
         try:
             build.LARGE_TRANSFER_THRESHOLD = 3
+            build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: {}
             build._get_github_release_assets = lambda tag: {
                 "BOSS_ResumeFilter.exe": {
                     "name": "BOSS_ResumeFilter.exe",
@@ -609,6 +620,7 @@ def test_sync_gitee_from_github_supports_macos_release_waiting_for_windows_exe()
                     "9.9.9", "title", "notes", need_wait=False, release_cache=release_cache
                 )
         finally:
+            build._gitee_fetch_assets = original_fetch_assets
             build._get_github_release_assets = original_get_assets
             build._download_from_github_release = original_download
             build._gitee_upload_single = original_upload

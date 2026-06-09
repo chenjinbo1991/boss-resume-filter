@@ -217,8 +217,9 @@ def test_call_llm_api_missing_config():
 
 # === evaluate_batch (mocked LLM) ===
 
+@patch('llm_eval.time.sleep')
 @patch('llm_eval._call_llm_api')
-def test_batch_success_updates_candidate(mock_call):
+def test_batch_success_updates_candidate(mock_call, mock_sleep):
     mock_call.return_value = LLMEvalResult(
         success=True, adjustment=7, reason="高度匹配", model="test-model"
     )
@@ -254,8 +255,9 @@ def test_batch_sends_compact_summary_to_llm(mock_call, mock_sleep):
     assert len(prompt_text) < len(candidates[0]['summary'])
 
 
+@patch('llm_eval.time.sleep')
 @patch('llm_eval._call_llm_api')
-def test_batch_failure_preserves_score(mock_call):
+def test_batch_failure_preserves_score(mock_call, mock_sleep):
     mock_call.return_value = LLMEvalResult(success=False, reason="timeout")
     candidates = [
         {'name': '李四', 'match_score': 60, 'recommend_level': '待定', 'summary': '3年Python'},
@@ -267,24 +269,27 @@ def test_batch_failure_preserves_score(mock_call):
     assert c['recommend_level'] == '待定'
 
 
+@patch('llm_eval.time.sleep')
 @patch('llm_eval._call_llm_api')
-def test_batch_score_clamped_high(mock_call):
+def test_batch_score_clamped_high(mock_call, mock_sleep):
     mock_call.return_value = LLMEvalResult(success=True, adjustment=10, reason="极好", model="m")
     candidates = [{'name': '王五', 'match_score': 95, 'recommend_level': '强烈推荐', 'summary': '10年'}]
     result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     assert result[0]['match_score'] == 100
 
 
+@patch('llm_eval.time.sleep')
 @patch('llm_eval._call_llm_api')
-def test_batch_score_clamped_low(mock_call):
+def test_batch_score_clamped_low(mock_call, mock_sleep):
     mock_call.return_value = LLMEvalResult(success=True, adjustment=-10, reason="不匹配", model="m")
     candidates = [{'name': '赵六', 'match_score': 55, 'recommend_level': '待定', 'summary': '1年'}]
     result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     assert result[0]['match_score'] == 45
 
 
+@patch('llm_eval.time.sleep')
 @patch('llm_eval._call_llm_api')
-def test_batch_level_upgrade(mock_call):
+def test_batch_level_upgrade(mock_call, mock_sleep):
     mock_call.return_value = LLMEvalResult(success=True, adjustment=10, reason="极好", model="m")
     candidates = [{'name': 'A', 'match_score': 66, 'recommend_level': '推荐', 'summary': 'x'}]
     result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
