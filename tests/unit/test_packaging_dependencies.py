@@ -21,3 +21,11 @@ def test_runtime_import_dependencies_are_not_excluded_from_pyinstaller():
 
     for option in forbidden_excludes:
         assert option not in build_source
+
+
+def test_release_workflow_rebuilds_macos_when_dmg_is_missing():
+    """macOS release completeness requires both the auto-update ZIP and installer DMG."""
+    workflow = (BASE_DIR / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert "BOSS_ResumeFilter_mac\\.zip" in workflow
+    assert "BOSS_ResumeFilter\\.dmg" in workflow

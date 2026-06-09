@@ -724,6 +724,59 @@ def test_update_latest_json_preserves_existing_release_date_for_same_version():
     assert data["release_date"] == "2026-01-02"
 
 
+def test_release_version_rules_reject_zero_patch_tags():
+    assert build._is_valid_release_tag("v2.9") is True
+    assert build._is_valid_release_tag("v2.9.1") is True
+    assert build._is_valid_release_tag("v2.9.0") is False
+    assert build._is_valid_release_tag("2.9.1") is False
+
+
+def test_version_history_integrity_ignores_invalid_zero_patch_local_tag():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (tmp_path / "CHANGELOG.md").write_text(
+            "\n".join([
+                "## v2.10.1",
+                "- current",
+                "## v2.9.1",
+                "- patch",
+                "## v2.9",
+                "- major",
+            ]),
+            encoding="utf-8",
+        )
+        (tmp_path / "README.md").write_text(
+            "\n".join([
+                "### v2.10.1",
+                "- current",
+                "### v2.9.1",
+                "- patch",
+                "### v2.9",
+                "- major",
+            ]),
+            encoding="utf-8",
+        )
+
+        original_run = build.subprocess.run
+
+        def fake_run(args, **kwargs):
+            if args[:4] == ["git", "tag", "-l", "v*"]:
+                class Result:
+                    returncode = 0
+                    stdout = "v2.10.1\nv2.9.0\nv2.9.1\nv2.9\n"
+                return Result()
+            return original_run(args, **kwargs)
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            build.subprocess.run = fake_run
+            try:
+                build._check_version_history_integrity()
+            finally:
+                build.subprocess.run = original_run
+
+
 def test_needs_local_rebuild_uses_build_fingerprint():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -747,6 +800,13 @@ def test_needs_local_rebuild_uses_build_fingerprint():
     assert "未变化" in reason
     assert needs_after_change is True
     assert "指纹变化" in reason_after_change
+
+
+def test_cross_platform_rebuild_policy_distinguishes_build_and_docs_changes():
+    assert build._needs_cross_platform_rebuild(["build.py"]) is True
+    assert build._needs_cross_platform_rebuild(["pyinstaller-hooks/hook-babel.py"]) is True
+    assert build._needs_cross_platform_rebuild(["README.md", "CHANGELOG.md"]) is False
+    assert build._needs_cross_platform_rebuild(["tests/unit/test_update_integrity.py"]) is False
 
 
 def test_github_asset_matches_local_by_digest_without_download():

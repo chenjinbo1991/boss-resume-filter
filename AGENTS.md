@@ -70,14 +70,14 @@ boss-resume-filter/
 
 #### 发布命令
 
-- `python build.py --check`：仅发布前检查，不打包不提交不推送
+- `python build.py --check`：仅发布前检查，不打包不提交不推送；覆盖 README/CHANGELOG 当前版本、历史版本和发布分类校验
 - `python build.py`：自动打包（Windows EXE / macOS .app+ZIP+DMG），`IS_MAC`/`IS_WIN` 自动检测
 - `python build.py --release [--auto] [--version X.Y]`：打包→提交→tag→推送确认→GitHub Release 上传→Gitee 同步
 - **发布前必须先执行 `/neat-freak` skill**，完成文档与代码的洁癖级审查同步，再进入 `build.py --release`
 - `__version__` 在 `gui_main.py` 中定义，唯一版本号来源；`build.py` 通过 AST 解析提取
 - 智能跳过打包：`.build_state.json` 构建指纹未变时复用产物，`--force-build` 强制重建
 - 打包命令：Windows `--onefile --noconsole --runtime-tmpdir %LOCALAPPDATA%`；macOS `--onedir --windowed`；DMG 用 `dmgbuild`
-- 打包前 `_preflight_checks()` 验证依赖、敏感文件、源码编译、CHANGELOG 同步、CLAUDE.md 行数（≤300）、回归测试
+- 打包前 `_preflight_checks()` 验证依赖、敏感文件、源码编译、CHANGELOG/README 同步、CLAUDE.md 行数（≤300）、回归测试
 - 新增/修改 `requirements.txt` 依赖时同步更新 `build.py:REQUIRED_IMPORTS`；`build.py` 显式收集 Tk 运行库防 `No module named 'tkinter'`
 - Release 模式只自动提交 `--version` 引起的版本号变化，其他变更须先手工提交
 - 推送前 `input()` 确认 [y/N]；tag 冲突时自动 `--force`（master 除外）
@@ -89,7 +89,7 @@ boss-resume-filter/
 - **排除模块**：保留 `scipy`、`lxml.objectify` 等无运行期入口模块；**不要排除** `numpy`/`numpy.libs`（pandas 硬依赖）、`sqlite3`（DataRecorder/DrissionPage 顶层依赖）、`lxml.html`（DrissionPage 顶层依赖）
 - **体积判断**：Windows 使用 `--onefile` 单文件 EXE，通常比 macOS `--onedir` 后的 ZIP/DMG 大；不要用 macOS 32MB 反推 Windows 也必须接近 32MB。v2.9.2 修正后 Windows EXE 约 43.6MB、macOS ZIP/DMG 约 32-34MB 属正常范围。
 - 修改 build.py 时注意保持上述优化，避免体积回退
-- **CI 跨平台重建**：`build.py` 和 `pyinstaller-hooks/` 的变更会触发对端平台 CI 重建（`_needs_cross_platform_rebuild` 中 `SHARED_BUILD_FILES` 和 `REBUILD_PREFIXES`）。如果 CI 因旧产物存在而跳过构建，需先 `gh release delete-asset` 删除对端产物再触发
+- **CI 跨平台重建**：`build.py`、`pyinstaller-hooks/` 和核心源码/配置变更会触发对端平台 CI 重建；macOS 对端产物必须同时有 ZIP 和 DMG，否则 CI 需重建
 
 ## 代码规范
 

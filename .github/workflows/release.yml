@@ -30,7 +30,8 @@ jobs:
             needs=$(echo "$needs" | jq -c '. + [{"os":"windows-latest","platform":"windows"}]')
           fi
 
-          if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$'; then
+          if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$' || \
+             ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.dmg$'; then
             needs=$(echo "$needs" | jq -c '. + [{"os":"macos-latest","platform":"macos"}]')
           fi
 

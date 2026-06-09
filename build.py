@@ -813,6 +813,10 @@ def _preflight_checks(require_clean=True):
     _check_todo_not_stale()
     _check_claude_md_size()
     _run_unit_checks()
+    current_version = _read_version()
+    _extract_changelog_release(current_version)
+    _check_readme_release(current_version)
+    _check_version_history_integrity()
 
     if require_clean:
         has_changes, status_text = _git_status()
@@ -895,6 +899,23 @@ def _validate_version_format(version: str):
         print(f"[错误] 版本号格式错误：{version}")
         print(f"  补丁版本的第三段不能为 0，请改为：{'.'.join(parts[:2])}")
         sys.exit(1)
+
+
+def _is_valid_release_version(version: str) -> bool:
+    """Return whether version follows the public release version rules."""
+    parts = version.split(".")
+    if len(parts) not in (2, 3) or not all(part.isdigit() for part in parts):
+        return False
+    if len(parts) == 3 and int(parts[2]) == 0:
+        return False
+    return True
+
+
+def _is_valid_release_tag(tag: str) -> bool:
+    """Return whether tag is a valid public release tag such as v2.9 or v2.9.1."""
+    if not tag.startswith("v"):
+        return False
+    return _is_valid_release_version(tag[1:])
 
 
 def _check_version_consistency():
@@ -1397,9 +1418,8 @@ def _check_version_history_integrity():
         print("  [跳过] 版本历史检查：没有找到任何 tag")
         return
 
-    # 过滤出有效的语义化版本标签（v1.0, v2.8.12 等）
-    version_pattern = re.compile(r"^v\d+\.\d+(\.\d+)?$")
-    versions = [tag[1:] for tag in all_tags if version_pattern.match(tag)]  # 去掉 'v' 前缀
+    # 过滤出有效的公开版本标签（v1.0, v2.8.12 等；v2.9.0 属非法历史 tag）
+    versions = [tag[1:] for tag in all_tags if _is_valid_release_tag(tag)]  # 去掉 'v' 前缀
 
     if not versions:
         print("  [跳过] 版本历史检查：没有找到有效的语义化版本")
@@ -1838,10 +1858,10 @@ def _get_changed_files_since_tag(old_tag_commit=None):
         if r.returncode != 0 or not r.stdout.strip():
             return None
 
-        tags = r.stdout.strip().split('\n')
+        tags = [tag for tag in r.stdout.strip().split('\n') if _is_valid_release_tag(tag)]
         if len(tags) >= 2:
             def _version_key(tag):
-                m = _re.match(r'v?(\d+)\.(\d+)(?:\.(\d+))?', tag)
+                m = _re.match(r'v?(\d+)\.(\d+)(?:\.(\d+))?$', tag)
                 return tuple(int(x or 0) for x in m.groups()) if m else (0,)
             tags.sort(key=_version_key)
             base_ref = tags[-2]
@@ -1862,8 +1882,8 @@ def _get_changed_files_since_tag(old_tag_commit=None):
 def _needs_cross_platform_rebuild(changed_files):
     """判断变更是否需要重建对端产物。
 
-    需要重建：核心模块、配置文件等影响构建产物的文件。
-    不需要重建：tests/、docs/、.md、脚本、CI 配置、build.py 等。
+    需要重建：核心模块、配置文件、打包脚本等影响构建产物的文件。
+    不需要重建：tests/、docs/、.md、脚本、CI 配置等。
     """
     if changed_files is None:
         return True  # 无法判断，保守起见重建
@@ -3298,8 +3318,6 @@ def main():
     release_title = release_notes = None
     if args.release:
         release_title, release_notes = _extract_changelog_release(version)
-        _check_readme_release(version)
-        _check_version_history_integrity()
 
     if needs_rebuild:
         progress.end_step()
