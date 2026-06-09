@@ -151,8 +151,12 @@ JOB_RULES = load_job_config()
 
 
 def extract_summary_info(text: str) -> dict[str, Any]:
-    """从候选人摘要中提取结构化信息"""
-    info = {
+    """从候选人摘要中提取结构化信息
+
+    同时支持 DOM 格式（"15-20K\\n30 岁，6 年经验"）
+    和 API 标签格式（"期望薪资：15-25K\\n年龄：30\\n经验：5年"）
+    """
+    info: dict[str, Any] = {
         'salary': '',
         'age': '',
         'exp_years': '',
@@ -167,41 +171,117 @@ def extract_summary_info(text: str) -> dict[str, Any]:
         return info
 
     lines = text.split('\n')
+    first_line = lines[0].strip() if lines else ''
 
-    # 薪资（第一行通常包含薪资）
-    salary_match = re.search(r'(\d+(?:-\d+)?)[Kk千]', lines[0] if lines else '')
-    if salary_match:
-        info['salary'] = salary_match.group(1) + 'K'
-    elif '面议' in (lines[0] if lines else ''):
-        info['salary'] = '面议'
+    # ---- 薪资 ----
+    # API 标签格式
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("期望薪资："):
+            val = stripped[len("期望薪资："):].strip()
+            if '面议' in val:
+                info['salary'] = '面议'
+            else:
+                # 15K-25K / 15-20K
+                m = re.search(r'(\d+)\s*[Kk]\s*[-~～\-]\s*(\d+)\s*[Kk]', val)
+                if m:
+                    info['salary'] = f"{m.group(1)}-{m.group(2)}K"
+                else:
+                    # 15-25薪
+                    m = re.search(r'(\d+)\s*薪\s*[-~～\-]\s*(\d+)\s*薪', val)
+                    if m:
+                        info['salary'] = f"{m.group(1)}-{m.group(2)}K"
+                    else:
+                        # X万-Y万
+                        m = re.search(r'([\d.]+)\s*[万萬]\s*[-~～\-]\s*([\d.]+)\s*[万萬]', val)
+                        if m:
+                            lo = int(float(m.group(1)) * 10)
+                            hi = int(float(m.group(2)) * 10)
+                            info['salary'] = f"{lo}-{hi}K"
+                        else:
+                            # 15K / 15K以上 / 15薪
+                            m = re.search(r'(\d+)\s*[Kk薪千]', val)
+                            if m:
+                                info['salary'] = m.group(1) + 'K'
+                            elif '面议' in val:
+                                info['salary'] = '面议'
+            break
 
-    # 年龄
-    age_match = re.search(r'(\d+) 岁', text)
-    if age_match:
-        info['age'] = age_match.group(1)
+    # DOM 格式兜底
+    if not info['salary']:
+        if '面议' in first_line:
+            info['salary'] = '面议'
+        else:
+            salary_match = re.search(r'(\d+(?:-\d+)?)[Kk千]', first_line)
+            if salary_match:
+                info['salary'] = salary_match.group(1) + 'K'
 
-    # 工作经验年限
-    exp_match = re.search(r'(\d+)\s*年', text)
-    if exp_match:
-        info['exp_years'] = exp_match.group(1)
+    # ---- 年龄 ----
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("年龄："):
+            m = re.search(r'(\d+)', stripped[len("年龄："):])
+            if m:
+                info['age'] = m.group(1)
+            break
+    if not info['age']:
+        age_match = re.search(r'(\d+)\s*岁', text)
+        if age_match:
+            info['age'] = age_match.group(1)
 
-    # 学历
+    # ---- 工作经验年限 ----
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("经验："):
+            val = stripped[len("经验："):].strip()
+            m = re.search(r'(\d+)', val)
+            if m:
+                info['exp_years'] = m.group(1)
+            break
+    if not info['exp_years']:
+        # DOM 格式兜底：只在含"经验"的行搜索，避免误匹配年份
+        exp_match = re.search(r'(\d+)\s*年\s*(?:经验|工作)', text)
+        if exp_match:
+            info['exp_years'] = exp_match.group(1)
+        else:
+            for line in lines:
+                stripped = line.strip()
+                if '年' in stripped and '年龄' not in stripped and '教育' not in stripped and not re.match(r'^20\d{2}', stripped):
+                    m = re.search(r'(\d+)\s*年', stripped)
+                    if m:
+                        info['exp_years'] = m.group(1)
+                        break
+
+    # ---- 学历 ----
     edu_keywords = ['博士', '硕士', '本科', '大专', '高中', '中专']
     for edu in edu_keywords:
         if edu in text:
             info['education'] = edu
             break
 
-    # 求职状态和公司
-    status_match = re.search(r'(离职|在职|在校|应届)[-·—]([^\n]+)', text)
-    if status_match:
-        info['job_status'] = status_match.group(1)
-        info['company'] = status_match.group(2).strip()
+    # ---- 求职状态和公司 ----
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("求职状态："):
+            val = stripped[len("求职状态："):].strip()
+            m = re.search(r'(离职|在职|在校|应届)[-\s·—]*(.*)', val)
+            if m:
+                info['job_status'] = m.group(1)
+                if m.group(2).strip():
+                    info['company'] = m.group(2).strip()
+            else:
+                info['job_status'] = val
+            break
+    if not info['job_status']:
+        status_match = re.search(r'(离职|在职|在校|应届)[-·—]([^\n]+)', text)
+        if status_match:
+            info['job_status'] = status_match.group(1)
+            info['company'] = status_match.group(2).strip()
 
-    # 城市
+    # ---- 城市 ----
     info['city'] = _extract_city(text)
 
-    # 技能关键词
+    # ---- 技能关键词 ----
     skill_keywords = ['Java', 'Python', 'MySQL', 'Oracle', 'Redis', 'Kafka',
                       'Spring', 'MyBatis', 'Dubbo', 'Vue', 'React', 'Linux',
                       'Docker', 'K8s', 'Kubernetes', 'AWS', 'Azure', 'Git']
@@ -831,13 +911,21 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
     consecutive_empty = 0
     api_listener = _start_recommend_api_listener(page)
     if api_listener:
+        # 不再 page.refresh()——刷新会重置用户手动选择的招聘职位
+        # 改为微滚动触发 API 请求，让监听器预热拿到结构化数据
         try:
-            page.refresh()
-            time.sleep(_human_delay(1.8, 0.6))
+            iframe = get_iframe(page)
+            target = iframe if iframe else page
+            # 微滚动 50px：触发 BOSS 加载新数据的 API 请求，但不改变页面职位状态
+            if iframe:
+                iframe.run_js('window.scrollBy(0, 50)')
+            else:
+                page.run_js('window.scrollBy(0, 50)')
+            time.sleep(_human_delay(1.5, 0.5))
             iframe = get_iframe(page)
             target = iframe if iframe else page
         except Exception as e:
-            print(f"API 监听预热刷新失败，将继续使用当前页面：{e}")
+            print(f"API 监听预热微滚动失败，将继续使用当前页面：{e}")
 
     try:
         for scroll_round in range(max_rounds):
@@ -1470,7 +1558,7 @@ def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
 
     return results
 
-def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None):
+def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None, stats=None):
     """
     智能扫描候选人 - 两阶段模式
 
@@ -1545,7 +1633,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
 
     # 构建淘汰原因的动态描述（基于实际招聘要求）
     rule = job_info['rule']
-    exp_requirement = f"经验不足（{rule.get('min_exp', 0)}年以上工作经验）"
+    exp_requirement = f"经验不足（要求{rule.get('min_exp', 0)}年以上）"
     # 学历要求：优先取 required_conditions 中的统招本科，否则取 edu 字段
     edu_requirement = rule.get('edu', '不限')
     req_conds = rule.get('required_conditions', [])
@@ -1553,7 +1641,17 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         if isinstance(cond, str) and '统招' in cond:
             edu_requirement = cond
             break
-    edu_requirement = f"学历不符/不足（{edu_requirement}）"
+    edu_requirement = f"学历不符/不足（要求{edu_requirement}）"
+
+    # 年龄、地点、薪资、技术条件要求
+    max_age = rule.get('max_age')
+    age_requirement = f"年龄不符（要求≤{max_age}岁）" if max_age else "年龄不符"
+    work_location = rule.get('work_location', '')
+    city_requirement = f"地点不符（要求{work_location}）" if work_location else "地点不符"
+    salary_max = rule.get('salary_max')
+    salary_requirement = f"薪资不匹配（岗位最高{salary_max}K）" if salary_max else "薪资不匹配"
+    tech_keywords = [k.get('name', k) if isinstance(k, dict) else k for k in rule.get('keywords', [])]
+    tech_requirement = f"技术条件不符"
 
     for i, candidate in enumerate(raw_candidates):
         if stop_event and stop_event.is_set():
@@ -1612,6 +1710,16 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                     reason = exp_requirement
                 elif '学历不足' in reason or '学历不符' in reason:
                     reason = edu_requirement
+                elif '年龄不符' in reason or '年龄超限' in reason:
+                    reason = age_requirement
+                elif '地点不符' in reason or '城市不符' in reason:
+                    reason = city_requirement
+                elif '薪资不匹配' in reason or '薪资期望过高' in reason:
+                    reason = salary_requirement
+                elif '技术不匹配' in reason or '必要条件不满足' in reason:
+                    reason = tech_requirement
+                elif '筛选异常' in reason:
+                    reason = '筛选异常'
             failed_reasons[reason] = failed_reasons.get(reason, 0) + 1
 
         if (i + 1) % 20 == 0:
@@ -1633,9 +1741,19 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 return (0, -item[1])
             if '学历' in reason:
                 return (1, -item[1])
-            if '评分不足' in reason:
+            if '年龄' in reason:
                 return (2, -item[1])
-            return (3, -item[1])
+            if '地点' in reason:
+                return (3, -item[1])
+            if '薪资' in reason:
+                return (4, -item[1])
+            if '技术条件' in reason:
+                return (5, -item[1])
+            if '评分不足' in reason:
+                return (6, -item[1])
+            if '筛选异常' in reason:
+                return (7, -item[1])
+            return (8, -item[1])
 
         for reason, count in sorted(failed_reasons.items(), key=_reason_order):
             print(f"  - {reason}: {count} 人")
@@ -1806,6 +1924,11 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 candidates_all.append(c)
                 existing_index[c.get('geek_id')] = c
     save_candidates_all(candidates_all)
+
+    if stats is not None:
+        stats['raw_count'] = len(raw_candidates)
+        stats['passed_count'] = len(passed_candidates)
+        stats['greeted_count'] = sum(1 for c in passed_candidates if c.get('greet_sent'))
 
     return passed_candidates
 
@@ -2089,6 +2212,12 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
             print(f"(另有 default 默认规则，不作为岗位运行)")
         print("="*50)
 
+        # 统计累计
+        job_stats = {}
+        total_raw = 0
+        total_passed = 0
+        total_greeted = 0
+
         # 逐个岗位处理
         for idx, job_name in enumerate(jobs_to_run, 1):
             # 多岗位间页面导航提示（第一个岗位之前不需要）
@@ -2119,8 +2248,12 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                                ai_eval=getattr(args, 'ai_eval', False),
                                                api_config=ai_api_config,
                                                api_key=ai_api_key,
-                                               captcha_callback=captcha_callback)
+                                               captcha_callback=captcha_callback,
+                                               stats=job_stats)
             all_candidates.extend(candidates)
+            total_raw += job_stats.get('raw_count', 0)
+            total_passed += job_stats.get('passed_count', 0)
+            total_greeted += job_stats.get('greeted_count', 0)
 
         # 最后生成 Excel 文件
         existing_all = load_candidates_all()
@@ -2130,6 +2263,10 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         else:
             print("[WARN] Excel 导出失败")
 
+        # 全部岗位处理完毕，更新进度为最终状态
+        if progress_callback:
+            progress_callback(100, f"[完成] 筛选完成：通过 {total_passed}/{total_raw} 个，{total_greeted} 人已打招呼")
+
     except StopRequested:
         print(f"\n\n⏹ 用户停止，保存当前进度...")
         existing_all = load_candidates_all()
@@ -2137,6 +2274,8 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         if export_to_excel(existing_all, excel_file):
             print(f"[SAVE] Excel 文件：{excel_file.name}")
         print(f"已保存 {len(existing_all)} 个候选人的状态")
+        if progress_callback:
+            progress_callback(100, f"[已停止] 通过 {total_passed}/{total_raw} 个，{total_greeted} 人已打招呼")
 
     except KeyboardInterrupt:
         print(f"\n\n检测到中断，保存当前进度...")
@@ -2146,12 +2285,16 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         if export_to_excel(existing_all, excel_file):
             print(f"[SAVE] Excel 文件：{excel_file.name}")
         print(f"已保存 {len(existing_all)} 个候选人的状态")
+        if progress_callback:
+            progress_callback(100, f"[已停止] 通过 {total_passed}/{total_raw} 个，{total_greeted} 人已打招呼")
         raise
 
     except Exception as e:
         print(f"程序执行出错：{e}")
         import traceback
         print(traceback.format_exc())
+        if progress_callback:
+            progress_callback(100, f"[出错] {str(e)[:30]}")
 
     finally:
         if page:

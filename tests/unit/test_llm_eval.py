@@ -338,5 +338,7 @@ def test_batch_progress_callback(mock_call, mock_sleep):
     ]
     quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
                          progress_callback=on_progress)
-    assert len(progress_calls) == 2
+    assert len(progress_calls) == 3
     assert "AI 评估中" in progress_calls[0][1]
+    assert "0/2" in progress_calls[0][1]  # 初始进度
+    assert "AI 评估中" in progress_calls[1][1]  # 第一个完成

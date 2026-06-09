@@ -675,6 +675,7 @@ class BossFilterGUI:
 
         # 初始化图标缓存（DPI 感知的高清图标）
         self.icons = icons.init(effective_scale)
+        self._create_status_icons()
 
         # 设置窗口图标（替换 tkinter 默认羽毛图标）
         self._set_window_icon()
@@ -3276,6 +3277,38 @@ class BossFilterGUI:
         """将子窗口相对于主窗口居中"""
         _place_window_centered(window, width, height, parent=self.root)
 
+    def _create_status_icons(self):
+        """创建进度状态图标（Canvas 自绘彩色圆形+符号）"""
+        from PIL import Image, ImageDraw, ImageTk
+
+        size = int(18 * self.dpi_scale * self.zoom_factor)
+        pad = max(1, size // 12)
+
+        def make_icon(bg_color, symbol_type):
+            img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.ellipse([0, 0, size - 1, size - 1], fill=bg_color)
+            # 白色符号线条宽度
+            lw = max(2, size // 8)
+            if symbol_type == 'check':
+                # 勾号：三个点构成折线
+                pts = [
+                    (size * 0.25, size * 0.50),
+                    (size * 0.42, size * 0.68),
+                    (size * 0.75, size * 0.32),
+                ]
+                draw.line([pts[0], pts[1]], fill='white', width=lw)
+                draw.line([pts[1], pts[2]], fill='white', width=lw)
+            else:
+                # 叉号：两条对角线
+                p = size * 0.3
+                draw.line([(p, p), (size - p, size - p)], fill='white', width=lw)
+                draw.line([(size - p, p), (p, size - p)], fill='white', width=lw)
+            return ImageTk.PhotoImage(img)
+
+        self._icon_status_ok = make_icon(self.colors['success'], 'check')
+        self._icon_status_fail = make_icon(self.colors['danger'], 'cross')
+
     def _set_window_icon(self):
         """设置窗口图标，替换 tkinter 默认羽毛图标"""
         try:
@@ -3506,7 +3539,7 @@ class BossFilterGUI:
                 score = c.get('match_score', 0)
                 level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
                 status = self._format_candidate_status(c)
-                salary, exp = self._parse_salary_exp(c.get('summary', ''))
+                salary, exp = self._parse_salary_exp(c.get('summary', ''), c.get('structured'))
                 ai_adj = c.get('llm_adjustment')
                 if ai_adj is not None and c.get('llm_evaluated'):
                     ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
@@ -3656,7 +3689,7 @@ class BossFilterGUI:
                 score = c.get('match_score', 0)
                 level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
                 status = self._format_candidate_status(c)
-                salary, exp = self._parse_salary_exp(c.get('summary', ''))
+                salary, exp = self._parse_salary_exp(c.get('summary', ''), c.get('structured'))
                 ai_adj = c.get('llm_adjustment')
                 if ai_adj is not None and c.get('llm_evaluated'):
                     ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
@@ -6272,13 +6305,15 @@ class BossFilterGUI:
             warn_count = sum(1 for r in results if r['status'] == 'warn')
             fail_count = sum(1 for r in results if r['status'] == 'fail')
 
-            self.append_log(f"选择器自动检查：{ok_count} 正常 / {warn_count} 警告 / {fail_count} 失败")
-
-            for r in results:
-                icon = {'ok': '✅', 'warn': '⚠️', 'fail': '❌'}.get(r['status'], '?')
-                self.append_log(f"  {icon} [{r['group']}] {r['name']}: {r['detail']}")
-
+            # 只在有异常时输出日志
             if warn_count + fail_count > 0:
+                self.append_log(f"选择器自动检查：{ok_count} 正常 / {warn_count} 警告 / {fail_count} 失败")
+
+                for r in results:
+                    if r['status'] != 'ok':
+                        icon = {'warn': '⚠️', 'fail': '❌'}.get(r['status'], '?')
+                        self.append_log(f"  {icon} [{r['group']}] {r['name']}: {r['detail']}")
+
                 self.append_log("⚠️ 选择器异常可能导致扫描功能不正常，可编辑 selectors.json 修复")
                 # 主线程弹窗提醒（线程安全）
                 self.run_on_ui(lambda: messagebox.showwarning(
@@ -6287,8 +6322,6 @@ class BossFilterGUI:
                     f"可能导致扫描功能不正常。\n\n"
                     f"可编辑 selectors.json 修复，详见日志。"
                 ))
-            else:
-                self.append_log("✅ 所有选择器工作正常")
         except Exception as e:
             self.append_log(f"选择器自动检查失败：{e}")
 
@@ -6748,7 +6781,26 @@ class BossFilterGUI:
                 percentage = min(100, int((current / total) * 100)) if total > 0 else 0
                 self.progress_var.set(percentage)
                 desc = progress_data.get('desc', '')
-                self.progress_label.config(text=f"{percentage}%  {desc}")
+
+                # 检测终态前缀，应用自绘图标
+                icon = None
+                if desc.startswith('[完成]'):
+                    icon = self._icon_status_ok
+                    desc = desc[len('[完成]'):].lstrip()
+                elif desc.startswith('[已停止]') or desc.startswith('[出错]'):
+                    icon = self._icon_status_fail
+                    desc = desc[desc.index(']') + 1:].lstrip()
+
+                if icon:
+                    self.progress_label.config(
+                        image=icon, compound='left',
+                        text=f"{percentage}%  {desc}"
+                    )
+                else:
+                    self.progress_label.config(
+                        image='', compound='text',
+                        text=f"{percentage}%  {desc}"
+                    )
         except queue.Empty:
             pass
 
@@ -6785,26 +6837,88 @@ class BossFilterGUI:
         canvas_frame.bind("<Configure>", on_resize)
 
     @staticmethod
-    def _parse_salary_exp(summary):
+    def _parse_salary_exp(summary, structured=None):
         """从候选人摘要中解析薪资和工作年限
+
+        Args:
+            summary: 候选人摘要文本
+            structured: 结构化字段字典（优先使用）
 
         Returns:
             (salary: str, exp: str) — 如 ("15K", "5年")
         """
         salary = ''
         exp = ''
+
+        # 优先使用结构化字段
+        if structured:
+            if structured.get('salary_min') is not None:
+                s_min = structured['salary_min']
+                s_max = structured.get('salary_max')
+                if s_max and s_max != s_min:
+                    salary = f"{s_min}-{s_max}K"
+                else:
+                    salary = f"{s_min}K"
+            if structured.get('exp_years') is not None:
+                exp = f"{structured['exp_years']}年"
+            if salary or exp:
+                return salary, exp
+
         if not summary:
             return salary, exp
-        first_line = summary.split('\n')[0].strip() if '\n' in summary else summary.strip()
-        if '面议' in first_line:
+
+        # 标签感知解析
+        for line in summary.split('\n'):
+            line = line.strip()
+            # 薪资
+            if not salary:
+                if line.startswith("期望薪资："):
+                    val = line[len("期望薪资："):].strip()
+                    if '面议' in val:
+                        salary = '面议'
+                    else:
+                        # 15K-25K / 15-20K
+                        m = re.search(r'(\d+(?:[.-]\d+)?)[Kk]\s*[-~～\-]\s*(\d+)\s*[Kk]', val)
+                        if m:
+                            salary = f"{m.group(1)}-{m.group(2)}K"
+                        else:
+                            # 15薪-25薪 (BOSS 格式，薪=千)
+                            m = re.search(r'(\d+(?:[.-]\d+)?)\s*薪\s*[-~～\-]\s*(\d+)\s*薪', val)
+                            if m:
+                                salary = f"{m.group(1)}-{m.group(2)}K"
+                            else:
+                                # 1.5万-2.5万
+                                m = re.search(r'(\d+(?:[.-]\d+)?)[万萬]\s*[-~～\-]\s*(\d+(?:[.-]\d+)?)[万萬]', val)
+                                if m:
+                                    salary = f"{int(float(m.group(1))*10)}-{int(float(m.group(2))*10)}K"
+                                else:
+                                    # 15K / 15K以上 / 15薪
+                                    m = re.search(r'(\d+(?:[.-]\d+)?)[Kk薪千]', val)
+                                    if m:
+                                        salary = m.group(1) + 'K'
+                                    elif '面议' in val:
+                                        salary = '面议'
+
+            # 工作年限
+            if not exp:
+                if line.startswith("经验："):
+                    val = line[len("经验："):].strip()
+                    m = re.search(r'(\d+)', val)
+                    if m:
+                        exp = m.group(1) + '年'
+                else:
+                    # DOM 格式 fallback
+                    m = re.search(r'(\d+)\s*年', line)
+                    if m and '年龄' not in line and '岁' not in line:
+                        exp = m.group(1) + '年'
+
+            if salary and exp:
+                break
+
+        # 兜底：面议
+        if not salary and '面议' in summary:
             salary = '面议'
-        else:
-            salary_match = re.search(r'^(\d+(?:-\d+)?)[Kk 千]', first_line)
-            if salary_match:
-                salary = salary_match.group(1) + 'K'
-        exp_match = re.search(r'(\d+)\s*年', summary)
-        if exp_match:
-            exp = exp_match.group(1) + '年'
+
         return salary, exp
 
     @staticmethod
@@ -7021,7 +7135,7 @@ class BossFilterGUI:
                 self.start_btn.config(state="normal")
                 self.stop_btn.config(state="disabled")
                 self.progress_var.set(0)
-                self.progress_label.config(text="就绪")
+                self.progress_label.config(text="就绪", image='', compound='text')
                 self.root.after(100, self.refresh_results)
 
             self.run_on_ui(finish_ui)
@@ -7141,7 +7255,7 @@ class BossFilterGUI:
                         tag = 'pending'
 
                     # 从 summary 中解析工作年限和薪资
-                    salary, exp = self._parse_salary_exp(c.get('summary', ''))
+                    salary, exp = self._parse_salary_exp(c.get('summary', ''), c.get('structured'))
 
                     # AI 评估调整值
                     ai_adj = c.get('llm_adjustment')
@@ -7572,31 +7686,52 @@ class BossFilterGUI:
         if core_parts:
             lines.append(f"  {'｜'.join(core_parts)}")
 
-        # 学历/学校/专业 — 顺序：学校·专业·学历
-        edu_parts = []
+        # 学历/学校/专业 — 支持多学历，每条一行
+        edu_entries: list[str] = []
         edu = info.get('education')
-        # 从 summary 提取学校和专业（BOSS 格式为"河海大学计算机科学与技术本科"，无分隔符）
-        # 学校名以"大学"或"学院"结尾，后面是专业名，最后是学历等级
-        edu_entry_pat = re.compile(r'(.+(?:大学|学院))(.+?)(本科|硕士|博士|大专|MBA|EMBA)\s*$')
-        edu_nopat = re.compile(r'(.+(?:大学|学院))(本科|硕士|博士|大专|MBA|EMBA)\s*$')
+
+        # 优先从 "教育经历：" 标签行解析（API 格式，可能有多条）
+        # 格式："教育经历：清华大学 计算机 本科 2015.09 2018.06"
+        api_edu_found = False
         for sline in summary.split('\n'):
             sline = sline.strip()
-            m = edu_entry_pat.match(sline)
-            if m:
-                school, major, _ = m.group(1), m.group(2), m.group(3)
-                edu_parts.append(school)
-                if major:
-                    edu_parts.append(major)
-                break
-            m2 = edu_nopat.match(sline)
-            if m2:
-                edu_parts.append(m2.group(1))
-                break
-        # 学历等级放最后
-        if edu:
-            edu_parts.append(edu)
-        if edu_parts:
-            lines.append(f"  {'·'.join(edu_parts)}")
+            if sline.startswith("教育经历："):
+                api_edu_found = True
+                val = sline[len("教育经历："):].strip()
+                parts = val.split()
+                if len(parts) >= 3:
+                    # 学校 专业 学历 [起始] [结束]
+                    entry_parts = [parts[0], parts[1], parts[2]]
+                    if len(parts) >= 4:
+                        entry_parts.append("-".join(parts[3:5]))
+                    edu_entries.append("·".join(entry_parts))
+                elif len(parts) == 2:
+                    edu_entries.append("·".join(parts))
+
+        # DOM 格式兜底（无标签，学校名+专业+学历连写，可能有多条）
+        if not api_edu_found:
+            edu_entry_pat = re.compile(r'(.+(?:大学|学院))(.+?)(本科|硕士|博士|大专|MBA|EMBA)')
+            edu_nopat = re.compile(r'(.+(?:大学|学院))(本科|硕士|博士|大专|MBA|EMBA)')
+            for sline in summary.split('\n'):
+                sline = sline.strip()
+                m = edu_entry_pat.match(sline)
+                if m:
+                    entry_parts = [m.group(1)]
+                    if m.group(2):
+                        entry_parts.append(m.group(2))
+                    edu_entries.append("·".join(entry_parts))
+                    continue
+                m2 = edu_nopat.match(sline)
+                if m2:
+                    edu_entries.append(m2.group(1))
+
+        # 展示多学历
+        if edu_entries:
+            lines.append(f"  最高学历：{edu}" if edu else "  学历信息")
+            for entry in edu_entries:
+                lines.append(f"    📚 {entry}")
+        elif edu:
+            lines.append(f"  {edu}")
 
         lines.append(f"  geek_id：{c.get('geek_id', '')}")
         lines.append("═" * 50)
@@ -7693,7 +7828,7 @@ class BossFilterGUI:
             lines.append(f"  评估模型：{c.get('llm_model', '未知')}")
             lines.append("")
             lines.append(f"  AI评估：")
-            reason = c.get('llm_reason', '无')
+            reason = c.get('llm_reason', '无').replace('\n', ' ').replace('\r', '').strip()
             # 自动换行
             while len(reason) > 40:
                 lines.append(f"    {reason[:40]}")

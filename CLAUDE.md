@@ -243,17 +243,7 @@ API 优先、DOM 兜底：`_start_recommend_api_listener()` 监听 `zpjob/rec/ge
 
 ### macOS Tk 8.6 字体物理像素减半
 
-Apple Silicon 报告 DPI 72，Intel Mac venv 报告 96（系统 Tk 8.5 报告 144 不受影响）。阈值 `< 80` 区分需补偿环境：
-
-```python
-if sys.platform == 'darwin':
-    self.font_boost = 1.65 if self.root.winfo_fpixels('1i') < 80 else 1.0
-else:
-    self.font_boost = 1.0
-self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost
-```
-
-`font_scale` 仅用于字体，布局/间距/图标/窗口/rowheight 仍用 `dpi_scale × zoom_factor`。
+Apple Silicon 报告 DPI 72，Intel Mac venv 报告 96（系统 Tk 8.5 报告 144 不受影响）。阈值 `< 80` 区分需补偿环境：`self.font_boost = 1.65 if (sys.platform == 'darwin' and self.root.winfo_fpixels('1i') < 80) else 1.0`，然后 `self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost`。`font_scale` 仅用于字体，布局/间距/图标/窗口/rowheight 仍用 `dpi_scale × zoom_factor`。
 
 ### 字体常量与 Combobox 规范
 
@@ -288,12 +278,16 @@ PATCH release 必须带 `tag_name` 和 `body`（只传 `name` 返回 400）。re
 
 ### CI 模式下 babel locale-data 路径查找
 
-CI 使用 `.venv-ci` 目录，但本地打包用 `pack_venv`。`build.py` 中 babel locale-data 的搜索路径必须同时覆盖两种虚拟环境目录（`pack_venv` 和 `.venv-ci`），否则 CI 构建的 Mac 产物会缺少 locale .dat 文件，导致 `tkcalendar.DateEntry` 运行时 `FileNotFoundError` 崩溃。搜索路径缺失时 `build.py` 会打印显式告警，不再静默跳过。
+CI 用 `.venv-ci`，本地打包用 `pack_venv`。`build.py` 中 babel locale-data 搜索路径必须同时覆盖两种虚拟环境目录，否则 CI 构建的 Mac 产物缺少 locale .dat，`tkcalendar.DateEntry` 运行时 `FileNotFoundError`。
 
 ### provider 显示名称与内部键不一致
 
-GUI 中 `api_provider_var.get()` 返回显示名称（如「通义千问」），但 `get_api_key()` / keyring 存的是内部键（如 `qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换，否则 keyring 查不到 Key。`get_api_key(provider, base_url)` 按 provider + base_url 组合查找，新 key 找不到时自动回退旧格式（仅 provider）实现向后兼容。
+GUI `api_provider_var.get()` 返回显示名称（「通义千问」），keyring 存内部键（`qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换。`get_api_key(provider, base_url)` 按 provider + base_url 组合查找，新 key 找不到时自动回退旧格式（仅 provider）。
 
 ### 更新弹窗必须使用 GUI 缩放参数
 
-`updater.py` 的 `show_update_dialog()` 接收 `gui` 参数，使用 `gui.font_scale`/`gui.dpi_scale`/`gui.zoom_factor` 计算字体和布局。不能硬编码字号，否则高 DPI 下字体模糊或过小。更新内容从远端 `CHANGELOG.md` 提取（Gitee → GitHub fallback），不用 `latest.json` 的 `release_notes`（后者可能是简化版）。Text 控件参数（`wrap="char"`、`lmargin1`、`lmargin2`、`spacing1/2/3`）必须与主界面版本历史一致，否则排版错乱。
+`updater.py` 的 `show_update_dialog()` 接收 `gui` 参数，使用 `gui.font_scale`/`gui.dpi_scale`/`gui.zoom_factor` 计算字体和布局。不能硬编码字号，否则高 DPI 下字体模糊或过小。更新内容从远端 `CHANGELOG.md` 提取（Gitee → GitHub fallback），不用 `latest.json` 的 `release_notes`。
+
+### API 监听预热禁止整页刷新
+
+`extract_candidates_by_comprehensive_analysis()` 启动 API 监听后需要预热，让监听器捕获第一批结构化数据。**禁止使用 `page.refresh()`**——BOSS 直聘页面刷新会重置用户手动选择的招聘职位，导致切换到默认职位。正确做法是微滚动 `window.scrollBy(0, 50)`，触发懒加载 API 请求但不改变页面职位状态。微滚动幅度控制在 50px 以内，不会触发"到底"检测。

@@ -387,6 +387,10 @@ def evaluate_batch(
             )
             future_to_index[future] = i
 
+        # 任务全部提交后，立即更新进度描述，不等待第一个结果返回
+        if progress_callback:
+            progress_callback(0, f"AI 评估中... 0/{total}")
+
         # Collect results as they complete
         for future in as_completed(future_to_index):
             if stop_event and stop_event.is_set():
@@ -410,14 +414,18 @@ def evaluate_batch(
                     candidate['match_score'] = new_score
                     candidate['recommend_level'] = _recalc_recommend_level(new_score)
 
+                    # Clean reason: collapse newlines into single line for storage and display
+                    clean_reason = result.reason.replace('\n', ' ').replace('\r', '').strip()
+
                     # Store LLM metadata
                     candidate['llm_evaluated'] = True
                     candidate['llm_adjustment'] = result.adjustment
-                    candidate['llm_reason'] = result.reason
+                    candidate['llm_reason'] = clean_reason
                     candidate['llm_model'] = result.model
 
                     sign = "+" if result.adjustment > 0 else ""
-                    print(f"  [{idx+1}/{total}] {name}: {rule_score} → {new_score} ({sign}{result.adjustment}) {result.reason}")
+                    print(f"  [{idx+1}/{total}] {name}: {rule_score} → {new_score} ({sign}{result.adjustment})")
+                    print(f"    {clean_reason}")
                 else:
                     candidate['llm_evaluated'] = False
                     print(f"  [{idx+1}/{total}] {name}: 评估失败 ({result.reason})，保留原始分数 {rule_score}")
