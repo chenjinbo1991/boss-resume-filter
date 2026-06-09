@@ -9,7 +9,7 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.10.1）
+├── gui_main.py           # 图形界面主程序（v2.10.2）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
@@ -137,6 +137,10 @@ boss-resume-filter/
 - 正常流程：岗位处理完毕时统一保存；异常中断：立即兜底保存
 - 淘汰过滤：保存前过滤低于 55 分的候选人
 - 原子性写入：`.tmp` + `os.replace()`；备份恢复：`.bak` 自动回退
+
+### 候选人提取
+
+API 优先、DOM 兜底：`_start_recommend_api_listener()` 监听 `zpjob/rec/geek/list` 接口，提取时解析结构化字段（exp_years/age/degree/city/salary_min/salary_max）。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。DOM 提取（`_extract_cards_batch()`）仅在 API 无数据时降级使用。
 
 ### 滚动提前终止
 
