@@ -37,6 +37,7 @@ build/
 debug_*.py
 debug_*.log
 build_log*.txt
+test_output.txt
 *.html
 .last_update_check
 .build_progress.json
