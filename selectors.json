@@ -29,7 +29,7 @@
   "scroll": {
     "_desc": "滚动控制和到底检测",
     "bottom_texts": ["到底", "没有更多"],
-    "container_js_selectors": ".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]",
+    "_container_js_selectors_deprecated": "不再使用静态选择器，改为从 [data-geekid] 卡片向上遍历 DOM 找 overflow:auto/scroll 的祖先元素",
     "scroll_amount": 800
   },
 

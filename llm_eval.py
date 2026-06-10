@@ -45,6 +45,7 @@ _SYSTEM_PROMPT = (
 
 _USER_TEMPLATE = (
     "## 岗位需求\n{job_requirement}\n\n"
+    "{hard_conditions}"
     "## 候选人信息\n{candidate_summary}\n\n"
     "请评估匹配度，返回 JSON。"
 )
@@ -65,12 +66,114 @@ def _truncate_text(text: str, limit: int) -> str:
     return text[:limit].rstrip() + "..."
 
 
+def _build_llm_summary_from_api_profile(candidate: dict, profile: dict, max_chars: int) -> str:
+    """Build LLM candidate summary directly from structured API profile.
+
+    Produces the same output format as the text-parsing path but avoids
+    re-parsing the flat text summary with regex.
+    """
+    lines: list[str] = []
+
+    # --- Header fields (same as text path) ---
+    name = candidate.get('name')
+    if name:
+        lines.append(f"姓名：{name}")
+    lines.append(f"规则评分：{candidate.get('match_score', 0)}")
+    if candidate.get('recommend_level'):
+        lines.append(f"规则推荐：{candidate.get('recommend_level')}")
+    if candidate.get('skill_match_ratio'):
+        lines.append(f"技能匹配：{candidate.get('skill_match_ratio')}")
+    skill_matches = candidate.get('skill_matches') or []
+    if skill_matches:
+        skill_names = []
+        for item in skill_matches:
+            if isinstance(item, dict):
+                skill_names.append(str(item.get('name', '')).strip())
+            else:
+                skill_names.append(str(item).strip())
+        skill_names = [s for s in skill_names if s]
+        if skill_names:
+            lines.append("命中技能：" + "、".join(skill_names[:20]))
+
+    risk_flags = candidate.get('risk_flags') or []
+    if risk_flags:
+        lines.append("风险提示：" + "；".join(str(flag) for flag in risk_flags if flag))
+
+    # Personal summary (from API geekDesc)
+    personal = profile.get('personal_summary', '')
+    if personal:
+        lines.append("基础摘要：" + _truncate_text(personal, 450))
+
+    # --- Education ---
+    edus = profile.get('educations') or []
+    if edus:
+        edu_parts = []
+        for edu in edus[:3]:
+            parts = [v for v in (edu.get('school'), edu.get('major'),
+                                 edu.get('degree'), edu.get('start'), edu.get('end')) if v]
+            edu_parts.append(" ".join(parts))
+        lines.append("教育经历：" + _truncate_text("；".join(edu_parts), 540))
+
+    # --- Work experience ---
+    works = profile.get('works') or []
+    if works:
+        work_parts = []
+        for w in works[:3]:
+            parts = [v for v in (w.get('company'), w.get('position'),
+                                 w.get('category'), w.get('start'), w.get('end')) if v]
+            work_parts.append(" ".join(parts))
+        lines.append("工作经历：" + _truncate_text("；".join(work_parts), 660))
+
+    # --- Work responsibilities ---
+    if works:
+        resp_parts = []
+        for w in works[:3]:
+            r = w.get('responsibility', '')
+            if r:
+                resp_parts.append(r)
+        if resp_parts:
+            lines.append("工作职责：" + _truncate_text("；".join(resp_parts), 960))
+
+    # --- Skills from work emphasis ---
+    if works:
+        tags: list[str] = []
+        seen: set[str] = set()
+        for w in works:
+            for tag in (w.get('skills') or []):
+                tag = tag.strip()
+                if tag and tag not in seen:
+                    seen.add(tag)
+                    tags.append(tag)
+        if tags:
+            lines.append("技能标签：" + "、".join(tags[:40]))
+
+    # --- Rule explanation (from candidate, same as text path) ---
+    explanation = candidate.get('score_explanation') or []
+    if explanation:
+        explanation_text = "；".join(_clean_summary_line(item) for item in explanation[:8] if item)
+        if explanation_text:
+            lines.append("规则解释：" + _truncate_text(explanation_text, 500))
+
+    compact = "\n".join(line for line in lines if line)
+    if len(compact) <= max_chars:
+        return compact
+    return compact[:max_chars].rstrip() + "..."
+
+
 def build_llm_candidate_summary(candidate: dict, max_chars: int = 2200) -> str:
     """Build a deterministic compact candidate summary for LLM evaluation.
 
     The full candidate summary stays in JSON/Excel/detail views; this function only
     controls the prompt payload to reduce latency and timeout risk.
+
+    When candidate contains ``_api_profile`` (from BOSS API extraction), education,
+    work history, and skills are read directly from structured fields instead of
+    re-parsing the text summary.
     """
+    api_profile = candidate.get('_api_profile')
+    if api_profile:
+        return _build_llm_summary_from_api_profile(candidate, api_profile, max_chars)
+
     summary = str(candidate.get('summary') or '')
     sections: dict[str, list[str]] = {
         '教育经历': [],
@@ -160,12 +263,13 @@ def build_llm_candidate_summary(candidate: dict, max_chars: int = 2200) -> str:
     return compact[:max_chars].rstrip() + "..."
 
 
-def _build_prompt(job_requirement: str, candidate_summary: str) -> list:
+def _build_prompt(job_requirement: str, candidate_summary: str, hard_conditions: str = "") -> list:
     """Build chat messages for LLM evaluation."""
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": _USER_TEMPLATE.format(
             job_requirement=job_requirement,
+            hard_conditions=hard_conditions,
             candidate_summary=candidate_summary,
         )},
     ]
@@ -325,15 +429,10 @@ def _recalc_recommend_level(score: int) -> str:
 
 
 def _evaluate_single(index: int, candidate: dict, job_requirement: str,
-                     api_config: dict, api_key: str) -> tuple:
+                     api_config: dict, api_key: str, hard_conditions: str = "") -> tuple:
     """Evaluate a single candidate with LLM. Returns (index, result, candidate_ref)."""
-    messages = _build_prompt(job_requirement, build_llm_candidate_summary(candidate))
+    messages = _build_prompt(job_requirement, build_llm_candidate_summary(candidate), hard_conditions)
     result = _call_llm_api(messages, api_config, api_key)
-
-    # Rate limiting delay between calls
-    delay = 1.0 + random.uniform(0, 0.5)
-    time.sleep(delay)
-
     return index, result, candidate
 
 
@@ -343,10 +442,11 @@ def evaluate_batch(
     api_config: dict,
     api_key: str,
     *,
-    max_candidates: int = 50,
+    hard_conditions: str = "",
+    max_candidates: int | None = None,
     progress_callback=None,
     stop_event: Optional[threading.Event] = None,
-    max_workers: int = 3,
+    max_workers: int = 5,
 ) -> list:
     """Evaluate candidates with LLM and adjust scores (concurrent).
 
@@ -355,10 +455,11 @@ def evaluate_batch(
         job_requirement: raw job requirement text
         api_config: dict with 'base_url' and 'model'
         api_key: API key string
-        max_candidates: max number of candidates to evaluate
+        hard_conditions: optional hard-condition summary for LLM context
+        max_candidates: max number of candidates to evaluate (None = no limit)
         progress_callback: callable(percentage, description)
         stop_event: threading.Event for cancellation
-        max_workers: number of concurrent API calls (default 3)
+        max_workers: number of concurrent API calls (default 5)
 
     Returns:
         Updated candidates list (same objects, modified in-place).
@@ -366,8 +467,8 @@ def evaluate_batch(
     if not candidates:
         return candidates
 
-    # Take top N by score (most impactful to evaluate)
-    to_evaluate = candidates[:max_candidates]
+    # Take top N by score (most impactful to evaluate), or all if unlimited
+    to_evaluate = candidates[:max_candidates] if max_candidates is not None else candidates
     total = len(to_evaluate)
 
     print(f"开始 AI 评估：{total} 人（共 {len(candidates)} 人通过筛选），并发数：{max_workers}")
@@ -383,7 +484,7 @@ def evaluate_batch(
                 print("  [停止] 用户请求停止，跳过剩余 AI 评估")
                 break
             future = executor.submit(
-                _evaluate_single, i, candidate, job_requirement, api_config, api_key
+                _evaluate_single, i, candidate, job_requirement, api_config, api_key, hard_conditions
             )
             future_to_index[future] = i
 
@@ -413,6 +514,12 @@ def evaluate_batch(
                     new_score = max(0, min(100, rule_score + result.adjustment))
                     candidate['match_score'] = new_score
                     candidate['recommend_level'] = _recalc_recommend_level(new_score)
+
+                    # 同步更新 score_breakdown，让拆解合计与总分一致
+                    breakdown = candidate.get('score_breakdown')
+                    if isinstance(breakdown, dict):
+                        breakdown['ai_adjustment'] = result.adjustment
+                        breakdown['total'] = new_score
 
                     # Clean reason: collapse newlines into single line for storage and display
                     clean_reason = result.reason.replace('\n', ' ').replace('\r', '').strip()

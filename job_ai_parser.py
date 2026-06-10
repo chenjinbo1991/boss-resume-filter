@@ -19,9 +19,9 @@ import requests
 from constants import CHINESE_NUMERALS, MAJOR_CITIES, USER_AGENT
 
 
-AI_PARSE_TIMEOUT = (6, 35)
-AI_PARSE_MAX_RETRIES = 2
-AI_PARSE_MAX_TOKENS = 1200
+AI_PARSE_TIMEOUT = (6, 80)
+AI_PARSE_MAX_RETRIES = 1
+AI_PARSE_MAX_TOKENS = 2000
 AI_PARSE_TEMPERATURE = 0.1
 AI_PARSE_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
@@ -120,6 +120,41 @@ def _build_messages(requirements_text: str, regex_config: dict[str, Any]) -> lis
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def _extract_json_from_reasoning(reasoning: str) -> str:
+    """从推理模型的 reasoning_content 中提取 JSON 内容。
+
+    推理模型（如小米 mimo、DeepSeek-R1）可能把最终输出放在 reasoning_content 中，
+    需要从中提取 JSON 块。支持以下格式：
+    1. ```json ... ``` 代码块
+    2. 纯 JSON 文本
+    3. JSON 嵌在其他文字中（提取最外层的 {...}）
+    """
+    if not reasoning or not reasoning.strip():
+        return ""
+
+    # 尝试 1: 提取 ```json ... ``` 代码块
+    code_block_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', reasoning, re.DOTALL)
+    if code_block_match:
+        return code_block_match.group(1).strip()
+
+    # 尝试 2: 找到最外层的 {...} JSON 对象
+    brace_start = reasoning.find('{')
+    if brace_start >= 0:
+        # 从后往前找最后一个 }
+        brace_end = reasoning.rfind('}')
+        if brace_end > brace_start:
+            candidate = reasoning[brace_start:brace_end + 1]
+            # 验证是否为合法 JSON
+            try:
+                json.loads(candidate)
+                return candidate
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    # 兜底：返回原文，让调用方处理
+    return reasoning.strip()
+
+
 def _call_chat_completion(base_url: str, model: str, api_key: str, messages: list[dict[str, str]]) -> str:
     try:
         import certifi
@@ -149,8 +184,20 @@ def _call_chat_completion(base_url: str, model: str, api_key: str, messages: lis
                 timeout=AI_PARSE_TIMEOUT,
                 verify=verify_path,
             )
+        except requests.exceptions.ConnectTimeout as exc:
+            last_error = f"AI 连接超时：{AI_PARSE_TIMEOUT[0]} 秒内无法建立连接（DNS/代理/网络不通）"
+            if attempt < AI_PARSE_MAX_RETRIES - 1:
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            raise ValueError(last_error) from exc
+        except requests.exceptions.ReadTimeout as exc:
+            last_error = f"AI 读取超时：模型服务 {AI_PARSE_TIMEOUT[1]} 秒内未返回响应"
+            if attempt < AI_PARSE_MAX_RETRIES - 1:
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            raise ValueError(last_error) from exc
         except requests.exceptions.Timeout as exc:
-            last_error = f"AI 请求超时：模型服务 {AI_PARSE_TIMEOUT[1]} 秒内未返回"
+            last_error = f"AI 请求超时（connect={AI_PARSE_TIMEOUT[0]}s, read={AI_PARSE_TIMEOUT[1]}s）"
             if attempt < AI_PARSE_MAX_RETRIES - 1:
                 time.sleep(0.8 * (attempt + 1))
                 continue
@@ -171,7 +218,14 @@ def _call_chat_completion(base_url: str, model: str, api_key: str, messages: lis
                 data = response.json()
             except ValueError as exc:
                 raise ValueError("AI 返回不是合法 JSON 响应") from exc
-            return str(data.get("choices", [{}])[0].get("message", {}).get("content", ""))
+            message = data.get("choices", [{}])[0].get("message", {})
+            content = str(message.get("content", "") or "")
+            # 推理模型（如小米 mimo、DeepSeek-R1）可能把输出放在 reasoning_content 中
+            if not content.strip():
+                reasoning = str(message.get("reasoning_content", "") or "")
+                # 从 reasoning 中提取 JSON 块
+                content = _extract_json_from_reasoning(reasoning)
+            return content
 
         last_error = _format_ai_http_error(response)
         if response.status_code in AI_PARSE_RETRYABLE_STATUS and attempt < AI_PARSE_MAX_RETRIES - 1:

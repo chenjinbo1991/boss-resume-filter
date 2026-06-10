@@ -186,17 +186,22 @@ def _parse_candidate_salary_range(text: str) -> tuple[Optional[int], Optional[in
     first_line = text.split('\n')[0].strip()
     if '面议' in first_line:
         return None, None
-    m = re.search(r'(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]', first_line)
+    m = re.search(r'(\d+(?:\.\d+)?)\s*[kK]?\s*[-~～\-]\s*(\d+(?:\.\d+)?)\s*[kK]?', first_line)
     if m:
-        return int(m.group(1)), int(m.group(2))
-    m = re.search(r'^(\d+)\s*[kK]', first_line)
+        return int(float(m.group(1))), int(float(m.group(2)))
+    m = re.search(r'^(\d+(?:\.\d+)?)\s*[kK薪千]', first_line)
     if m:
-        val = int(m.group(1))
+        val = int(float(m.group(1)))
         return val, val
-    # API 格式："期望薪资：15K以上" 或 "期望薪资：15K"
-    m = re.search(r'(\d+)\s*[kK]', first_line)
+    # API 格式："期望薪资：15K以上" 或 "期望薪资：15K" 或 "期望薪资：15"
+    m = re.search(r'(\d+(?:\.\d+)?)\s*[kK薪千]', first_line)
     if m:
-        val = int(m.group(1))
+        val = int(float(m.group(1)))
+        return val, val
+    # 裸数字（"期望薪资：15"）
+    m = re.search(r'^(\d+(?:\.\d+)?)$', first_line.strip())
+    if m:
+        val = int(float(m.group(1)))
         return val, val
     return None, None
 
@@ -300,7 +305,6 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
                 return False, 0, {"reason": f"学历不足：要求{rule.get('edu')}，实际未达要求"}
 
             edu_bonus = _calc_edu_bonus(candidate_text)
-            hard_checks.append(f"学历加分：{edu_bonus}")
         else:
             hard_checks.append("学历：未设置硬性要求")
         details['edu_bonus'] = edu_bonus
@@ -380,6 +384,26 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
                 hard_checks.append(f"薪资：通过，岗位最高{salary_max}K，候选人期望最低{cand_min_k}K")
             else:
                 hard_checks.append(f"薪资：未识别明确期望，岗位最高{salary_max}K")
+
+        # 求职状态检查：明确不考虑的直接淘汰
+        job_status = ""
+        if structured_fields and structured_fields.get('job_status'):
+            job_status = structured_fields['job_status']
+        else:
+            # 从文本兜底解析
+            for line in candidate_text.split('\n'):
+                stripped = line.strip()
+                if stripped.startswith("求职状态："):
+                    job_status = stripped[len("求职状态："):].strip()
+                    break
+        if job_status:
+            if '暂不考虑' in job_status or '不考虑' in job_status:
+                return False, 0, {"reason": f"求职状态不符：{job_status}"}
+            if '在职' in job_status and '离职' not in job_status:
+                _add_risk_flag(details, f"在职状态：{job_status}")
+                hard_checks.append(f"求职状态：{job_status}，在职中")
+            else:
+                hard_checks.append(f"求职状态：{job_status}，通过")
 
         for condition in rule.get("required_conditions", []):
             cond_result = check_required_condition(candidate_text, condition)
@@ -469,11 +493,14 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
             'total': score
         }
         details['score_explanation'] = [
+            "【评分构成】",
             f"基础分：{SCORE_BASE}",
             f"技能分：{skill_score_normalized}/{SCORE_SKILL_MAX}，命中 {len(matched_skills)} 个关键词，权重 {skill_score}/{total_possible_weight or 0}",
             f"经验加分：{details['exp_bonus']}/{SCORE_EXP_MAX}",
             f"学历加分：{details['edu_bonus']}",
             f"优先项加分：{preferred_bonus}/{_PREFERRED_BONUS_MAX}",
+            "",
+            "【硬条件检查】",
             *hard_checks
         ]
         return True, score, details

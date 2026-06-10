@@ -140,7 +140,7 @@ boss-resume-filter/
 
 ### 候选人提取
 
-API 优先、DOM 兜底：`_start_recommend_api_listener()` 监听 `zpjob/rec/geek/list` 接口，提取时解析结构化字段（exp_years/age/degree/city/salary_min/salary_max）。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。DOM 提取（`_extract_cards_batch()`）仅在 API 无数据时降级使用。
+`_start_recommend_api_listener()` 监听推荐接口，`page.refresh()` 触发 API 调用，listener 捕获完整候选人列表（含结构化字段：exp_years/age/degree/city/salary_min/salary_max）。BOSS 推荐页只在页面加载时发一次完整 API，滚动不触发新请求，因此必须 refresh 触发。refresh 会重置岗位到默认，是当前接受的代价。DOM 滚动提取（`_extract_cards_batch()`）作为兜底。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
 
 ### 滚动提前终止
 
@@ -160,8 +160,8 @@ API 优先、DOM 兜底：`_start_recommend_api_listener()` 监听 `zpjob/rec/ge
 
 ### AI 辅助评估
 
-- 对 ≥55 分候选人 LLM 二次评估（最多 50 人/次），调整分 ±10 叠加规则评分
-- 调整后重算推荐等级；并发 3 路 + 429 限流退避；实现位置：`llm_eval.py`
+- 对 ≥55 分候选人 LLM 二次评估，按规则评分降序处理，调整分 ±10 叠加规则评分
+- 调整后重算推荐等级；默认并发 5 路 + 429 限流退避；默认不再限制 50 人；实现位置：`llm_eval.py`
 
 ### 必要条件
 
@@ -288,6 +288,6 @@ GUI `api_provider_var.get()` 返回显示名称（「通义千问」），keyrin
 
 `updater.py` 的 `show_update_dialog()` 接收 `gui` 参数，使用 `gui.font_scale`/`gui.dpi_scale`/`gui.zoom_factor` 计算字体和布局。不能硬编码字号，否则高 DPI 下字体模糊或过小。更新内容从远端 `CHANGELOG.md` 提取（Gitee → GitHub fallback），不用 `latest.json` 的 `release_notes`。
 
-### API 监听预热禁止整页刷新
+### API 监听依赖 page.refresh 触发完整数据
 
-`extract_candidates_by_comprehensive_analysis()` 启动 API 监听后需要预热，让监听器捕获第一批结构化数据。**禁止使用 `page.refresh()`**——BOSS 直聘页面刷新会重置用户手动选择的招聘职位，导致切换到默认职位。正确做法是微滚动 `window.scrollBy(0, 50)`，触发懒加载 API 请求但不改变页面职位状态。微滚动幅度控制在 50px 以内，不会触发"到底"检测。
+`extract_candidates_by_comprehensive_analysis()` 启动 `_start_recommend_api_listener()` 后必须 `page.refresh()` 才能触发完整的推荐接口调用（返回全部候选人结构化数据）。微滚动只能触发部分数据（约 28%），后续滚动不触发新 API 请求。`page.refresh()` 会重置岗位筛选到默认岗位，这是当前接受的代价。

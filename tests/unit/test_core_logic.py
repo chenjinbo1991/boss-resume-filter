@@ -173,14 +173,23 @@ def test_geek_card_api_payload_builds_complete_candidate_summary():
             "name": "张三",
             "summary": candidates[0]["summary"],
             "structured": candidates[0]["structured"],
+            "_api_profile": candidates[0]["_api_profile"],
         }
     ]
     summary = candidates[0]["summary"]
     structured = candidates[0]["structured"]
+    api_profile = candidates[0]["_api_profile"]
     assert structured.get('exp_years') == 8
     assert structured.get('age') == 32
     assert structured.get('degree') == "本科"
     assert structured.get('city') == "南京"
+    # _api_profile 结构化画像
+    assert api_profile['personal_summary'] == "熟悉金融数据平台"
+    assert len(api_profile['educations']) == 1
+    assert api_profile['educations'][0]['school'] == "南京大学"
+    assert len(api_profile['works']) == 1
+    assert api_profile['works'][0]['company'] == "某证券公司"
+    assert api_profile['works'][0]['skills'] == ["Python", "ETL", "Oracle"]
     assert "工作职责：负责 ETL 调度、Python 数据分析和 Oracle 数据库开发" in summary
     assert "技能标签：Python、ETL、Oracle" in summary
     assert "教育经历：南京大学 计算机科学 本科 2008 2012" in summary
@@ -218,6 +227,74 @@ def test_api_candidate_summary_participates_in_existing_filtering():
     assert passed is True
     assert score >= SCORE_THRESHOLD_STRONG
     assert details["skill_matched_count"] == 3
+
+
+def test_dom_scan_uses_conservative_empty_limit_without_api_listener():
+    first_dom_batch = [
+        {
+            "geek_id": f"g-dom-{i}",
+            "name": f"候选人{i}",
+            "text": f"本科，{i + 4}年 Java 开发工程师",
+        }
+        for i in range(15)
+    ]
+    dom_batches = [first_dom_batch, [], [], [], [], []]
+
+    class FakePage:
+        def __init__(self):
+            self.refresh_count = 0
+
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+        def refresh(self):
+            self.refresh_count += 1
+
+    page = FakePage()
+
+    with patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener') as mock_start_listener, \
+            patch('bossmaster._consume_recommend_api_candidates', return_value=([], "")) as mock_consume_api, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch', side_effect=dom_batches) as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=6)
+
+    assert len(candidates) == 15
+    assert mock_dom_extract.call_count == 6
+    # API 监听始终启用；启动后预热刷新一次，以捕获首屏接口包。
+    mock_start_listener.assert_called_once()
+    assert page.refresh_count == 1
+    # API 消费调用：每轮 1 次，共 6 轮
+    assert mock_consume_api.call_count == 6
+
+
+def test_find_card_by_scroll_returns_to_top_after_current_position_miss():
+    class FakeTarget:
+        def __init__(self):
+            self.scroll = 5000
+            self.scripts = []
+
+        def run_js(self, script):
+            self.scripts.append(script)
+            if "window.scrollTo(0, 0)" in script:
+                self.scroll = 0
+                return None
+            if "scrollTop" in script and "return" in script:
+                return self.scroll
+            return None
+
+        def ele(self, *_args, **_kwargs):
+            return "card" if self.scroll == 0 else None
+
+    target = FakeTarget()
+
+    with patch('bossmaster.time.sleep'), patch('bossmaster._human_delay', return_value=0):
+        card = bossmaster._find_card_by_scroll(target, 'css:[data-geekid="g1"]')
+
+    assert card == "card"
+    assert any("window.scrollTo(0, 0)" in script for script in target.scripts)
 
 
 def test_export_to_excel_keeps_full_candidate_summary_in_detail_column():

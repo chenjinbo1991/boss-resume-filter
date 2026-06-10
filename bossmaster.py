@@ -1,5 +1,5 @@
 """
-BOSS 直聘候选人智能提取工具 v2.9.1
+BOSS 直聘候选人智能提取工具 v2.10.1
 支持 Excel 导出
 """
 from __future__ import annotations
@@ -182,8 +182,8 @@ def extract_summary_info(text: str) -> dict[str, Any]:
             if '面议' in val:
                 info['salary'] = '面议'
             else:
-                # 15K-25K / 15-20K
-                m = re.search(r'(\d+)\s*[Kk]\s*[-~～\-]\s*(\d+)\s*[Kk]', val)
+                # 15K-25K / 15-20K / 15-25（K 可选）
+                m = re.search(r'(\d+(?:\.\d+)?)\s*[Kk]?\s*[-~～\-]\s*(\d+(?:\.\d+)?)\s*[Kk]?', val)
                 if m:
                     info['salary'] = f"{m.group(1)}-{m.group(2)}K"
                 else:
@@ -205,6 +205,8 @@ def extract_summary_info(text: str) -> dict[str, Any]:
                                 info['salary'] = m.group(1) + 'K'
                             elif '面议' in val:
                                 info['salary'] = '面议'
+                            elif val.strip():
+                                print(f"[DEBUG] 期望薪资解析失败: raw='{val}'")
             break
 
     # DOM 格式兜底
@@ -212,9 +214,13 @@ def extract_summary_info(text: str) -> dict[str, Any]:
         if '面议' in first_line:
             info['salary'] = '面议'
         else:
-            salary_match = re.search(r'(\d+(?:-\d+)?)[Kk千]', first_line)
+            salary_match = re.search(r'(\d+(?:\.\d+)?)\s*[Kk]?\s*[-~～\-]\s*(\d+(?:\.\d+)?)\s*[Kk]?', first_line)
             if salary_match:
-                info['salary'] = salary_match.group(1) + 'K'
+                info['salary'] = f"{salary_match.group(1)}-{salary_match.group(2)}K"
+            else:
+                salary_match = re.search(r'(\d+(?:\.\d+)?)[Kk千]', first_line)
+                if salary_match:
+                    info['salary'] = salary_match.group(1) + 'K'
 
     # ---- 年龄 ----
     for line in lines:
@@ -239,18 +245,11 @@ def extract_summary_info(text: str) -> dict[str, Any]:
                 info['exp_years'] = m.group(1)
             break
     if not info['exp_years']:
-        # DOM 格式兜底：只在含"经验"的行搜索，避免误匹配年份
-        exp_match = re.search(r'(\d+)\s*年\s*(?:经验|工作)', text)
+        # DOM 格式：BOSS 直聘常见 "10年以上"、"9年"、"6年经验"、"3年工作"
+        # (?<!\d) 排除年份（2020年）、\d{1,2} 限制 1-2 位、(?!\s*[代份初底]) 排除年代/月份
+        exp_match = re.search(r'(?<!\d)(\d{1,2})\s*年(?!\s*[代份初底])', text)
         if exp_match:
             info['exp_years'] = exp_match.group(1)
-        else:
-            for line in lines:
-                stripped = line.strip()
-                if '年' in stripped and '年龄' not in stripped and '教育' not in stripped and not re.match(r'^20\d{2}', stripped):
-                    m = re.search(r'(\d+)\s*年', stripped)
-                    if m:
-                        info['exp_years'] = m.group(1)
-                        break
 
     # ---- 学历 ----
     edu_keywords = ['博士', '硕士', '本科', '大专', '高中', '中专']
@@ -314,8 +313,13 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             f"经验{breakdown.get('experience', 0)}",
             f"学历{breakdown.get('education', 0)}",
             f"优先{breakdown.get('preferred', 0)}",
-            f"总分{breakdown.get('total', c.get('match_score', 0))}",
         ]
+        # AI 调整分（LLM 评估后追加）
+        ai_adj = breakdown.get('ai_adjustment')
+        if ai_adj is not None and ai_adj != 0:
+            sign = "+" if ai_adj > 0 else ""
+            parts.append(f"AI{sign}{ai_adj}")
+        parts.append(f"总分{breakdown.get('total', c.get('match_score', 0))}")
         return " / ".join(parts)
 
     def _format_score_explanation(c: dict[str, Any]) -> str:
@@ -344,6 +348,67 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             return "\n".join(str(flag) for flag in risk_flags if flag)
         return str(risk_flags)
 
+    def _format_edu_detail(c: dict[str, Any]) -> str:
+        """学历明细：优先使用 _api_profile，fallback 到 summary 解析。"""
+        api_profile = c.get('_api_profile')
+        if api_profile and api_profile.get('educations'):
+            lines = []
+            for edu in api_profile['educations']:
+                parts = [edu.get(k, '') for k in ('school', 'major', 'degree')]
+                parts = [p for p in parts if p]
+                start = edu.get('start', '')
+                end = edu.get('end', '')
+                if start or end:
+                    parts.append(f"{start}-{end}")
+                if parts:
+                    lines.append(" ".join(parts))
+            return "\n".join(lines)
+        # Fallback: 从 summary 文本提取
+        summary = c.get('summary', '')
+        lines = []
+        for sline in summary.split('\n'):
+            sline = sline.strip()
+            if sline.startswith("教育经历："):
+                lines.append(sline[len("教育经历："):].strip())
+        return "\n".join(lines)
+
+    def _format_recent_company(c: dict[str, Any]) -> str:
+        """最近公司：从 _api_profile 取第一段工作经历的公司名。"""
+        api_profile = c.get('_api_profile')
+        if api_profile and api_profile.get('works'):
+            for work in api_profile['works']:
+                company = work.get('company', '')
+                if company:
+                    return company
+        # Fallback: 从 summary 文本提取
+        summary = c.get('summary', '')
+        for sline in summary.split('\n'):
+            sline = sline.strip()
+            if sline.startswith("工作经历："):
+                val = sline[len("工作经历："):].strip()
+                # 取第一段经历的公司名
+                parts = val.split()
+                if parts:
+                    return parts[0]
+        return ""
+
+    def _format_skills(c: dict[str, Any], summary_info_skills: str) -> str:
+        """技能：优先从 _api_profile 聚合工作经历技能标签，fallback 到 DOM 关键词匹配。"""
+        api_profile = c.get('_api_profile')
+        if api_profile and api_profile.get('works'):
+            tags = []
+            seen = set()
+            for work in api_profile['works']:
+                for tag in (work.get('skills') or []):
+                    tag = tag.strip()
+                    if tag and tag not in seen:
+                        seen.add(tag)
+                        tags.append(tag)
+            if tags:
+                return "、".join(tags)
+        return summary_info_skills
+        return ""
+
     try:
         # 按匹配分从高到低排序
         sorted_candidates = sorted(candidates, key=lambda x: x.get('match_score', 0), reverse=True)
@@ -362,48 +427,72 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                 continue  # 低于通过分直接过滤，不进入导出
 
             summary_info = extract_summary_info(c.get('summary', ''))
+            # API 结构化数据覆盖文本解析（与 smart_scan_candidates 一致）
+            structured = c.get('structured') or {}
+            if structured.get('salary_min') and structured.get('salary_max'):
+                summary_info['salary'] = f"{structured['salary_min']}-{structured['salary_max']}K"
+            elif structured.get('salary_min'):
+                summary_info['salary'] = f"{structured['salary_min']}K"
+            if structured.get('exp_years'):
+                summary_info['exp_years'] = str(structured['exp_years'])
+            if structured.get('age'):
+                summary_info['age'] = str(structured['age'])
+            if structured.get('city'):
+                summary_info['city'] = structured['city']
+            if structured.get('job_status'):
+                summary_info['job_status'] = structured['job_status']
             row = {
+                # ① 身份
                 '序号': i + 1,
-                '岗位': c.get('job_name', ''),  # 新增岗位字段
+                '岗位': c.get('job_name', ''),
                 '姓名': c.get('name', '未知'),
+                'geek_id': c.get('geek_id', ''),
+                # ② 画像
+                '年龄': summary_info['age'],
+                '工作年限': summary_info['exp_years'],
+                '学历': summary_info['education'],
+                '学历明细': _format_edu_detail(c),
+                '薪资': summary_info['salary'],
+                '求职状态': summary_info['job_status'],
+                '城市': summary_info['city'],
+                '最近公司': _format_recent_company(c),
+                '技能': _format_skills(c, summary_info['skills']),
+                # ③ 评估
                 '匹配分': score,
                 '推荐指数': recommend_level,
+                '技能匹配': c.get('skill_match_ratio', ''),
+                '评分拆解': _format_score_breakdown(c),
+                '评分解释': _format_score_explanation(c),
+                '命中证据': _format_keyword_evidence(c),
+                # ④ 跟进
                 '是否打招呼': '是' if c.get('greet_sent', False) else '否',
-                '是否需人工确认': '是' if c.get('manual_review_required') else '否',
-                '风险提示': _format_risk_flags(c),
-                '自动打招呼阻断原因': c.get('auto_greet_blocked_reason', ''),
                 '跟进状态': c.get('followup_status') or ('已打招呼' if c.get('greet_sent', False) else '未沟通'),
                 '跟进备注': c.get('followup_note', ''),
                 '跟进时间': c.get('followup_updated_at', ''),
                 '人工反馈': c.get('feedback_status', ''),
                 '反馈备注': c.get('feedback_note', ''),
                 '反馈时间': c.get('feedback_updated_at', ''),
-                '技能匹配': c.get('skill_match_ratio', ''),
-                '评分拆解': _format_score_breakdown(c),
-                '评分解释': _format_score_explanation(c),
-                '命中证据': _format_keyword_evidence(c),
-                '薪资': summary_info['salary'],
-                '年龄': summary_info['age'],
-                '工作年限': summary_info['exp_years'],
-                '学历': summary_info['education'],
-                '求职状态': summary_info['job_status'],
-                '公司': summary_info['company'],
-                '城市': summary_info['city'],
-                '技能': summary_info['skills'],
-                'geek_id': c.get('geek_id', ''),
-                '批次': c.get('batch_timestamp', ''),  # 新增批次字段
+                '是否需人工确认': '是' if c.get('manual_review_required') else '否',
+                '风险提示': _format_risk_flags(c),
+                '自动打招呼阻断原因': c.get('auto_greet_blocked_reason', ''),
+                # ⑤ 原始
+                '批次': c.get('batch_timestamp', ''),
                 '详细信息': c.get('summary', '')
             }
             data.append(row)
 
         df = pd.DataFrame(data)
 
-        # 列顺序调整：岗位提前
-        columns = ['序号', '岗位', '姓名', '匹配分', '推荐指数', '是否打招呼',
-                   '是否需人工确认', '风险提示', '自动打招呼阻断原因', '跟进状态',
-                   '跟进备注', '跟进时间', '人工反馈', '反馈备注', '反馈时间', '技能匹配',
-                   '评分拆解', '评分解释', '命中证据', '薪资', '年龄', '工作年限', '学历',
-                   '求职状态', '公司', '城市', '技能', 'geek_id', '批次', '详细信息']
+        # 列顺序：身份 → 画像 → 评估 → 跟进 → 原始
+        columns = [
+            '序号', '岗位', '姓名', 'geek_id',
+            '年龄', '工作年限', '学历', '学历明细', '薪资', '求职状态', '城市', '最近公司', '技能',
+            '匹配分', '推荐指数', '技能匹配', '评分拆解', '评分解释', '命中证据',
+            '是否打招呼', '跟进状态', '跟进备注', '跟进时间',
+            '人工反馈', '反馈备注', '反馈时间',
+            '是否需人工确认', '风险提示', '自动打招呼阻断原因',
+            '批次', '详细信息',
+        ]
         df = df[[col for col in columns if col in df.columns]]
 
         # 使用 ExcelWriter 创建多工作表
@@ -471,12 +560,39 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
 
-            # 设置列宽
+            # 设置列宽（按新列序：身份→画像→评估→跟进→原始）
             column_widths = {
-                'A': 6, 'B': 20, 'C': 10, 'D': 10, 'E': 10, 'F': 12, 'G': 12,
-                'H': 30, 'I': 16, 'J': 12, 'K': 30, 'L': 16, 'M': 12, 'N': 12,
-                'O': 28, 'P': 55, 'Q': 55, 'R': 10, 'S': 6, 'T': 10, 'U': 10,
-                'V': 12, 'W': 20, 'X': 10, 'Y': 30, 'Z': 15, 'AA': 10, 'AB': 80
+                'A': 6,   # 序号
+                'B': 20,  # 岗位
+                'C': 10,  # 姓名
+                'D': 16,  # geek_id
+                'E': 8,   # 年龄
+                'F': 10,  # 工作年限
+                'G': 8,   # 学历
+                'H': 30,  # 学历明细
+                'I': 12,  # 薪资
+                'J': 10,  # 求职状态
+                'K': 10,  # 城市
+                'L': 20,  # 最近公司
+                'M': 30,  # 技能
+                'N': 10,  # 匹配分
+                'O': 12,  # 推荐指数
+                'P': 12,  # 技能匹配
+                'Q': 28,  # 评分拆解
+                'R': 55,  # 评分解释
+                'S': 55,  # 命中证据
+                'T': 12,  # 是否打招呼
+                'U': 12,  # 跟进状态
+                'V': 30,  # 跟进备注
+                'W': 16,  # 跟进时间
+                'X': 10,  # 人工反馈
+                'Y': 30,  # 反馈备注
+                'Z': 16,  # 反馈时间
+                'AA': 16, # 是否需人工确认
+                'AB': 30, # 风险提示
+                'AC': 28, # 自动打招呼阻断原因
+                'AD': 16, # 批次
+                'AE': 80, # 详细信息
             }
             for col, width in column_widths.items():
                 if col in ws.column_dimensions:
@@ -488,20 +604,31 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             # 启用自动筛选
             ws.auto_filter.ref = ws.dimensions
 
-            # 为推荐指数列添加颜色标识（E 列）
-            if OPENPYXL_AVAILABLE:
-                for row_idx, cell in enumerate(ws['E'], start=2):
-                    if cell.value == "强烈推荐":
-                        cell.fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
-                    elif cell.value == "推荐":
-                        cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-                    elif cell.value == "待定":
-                        cell.fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
+            # 动态查找列索引（按表头名称，不依赖固定列序）
+            recommend_col = None
+            greet_col = None
+            for cell in ws[1]:
+                if cell.value == '推荐指数':
+                    recommend_col = cell.column
+                elif cell.value == '是否打招呼':
+                    greet_col = cell.column
 
-                # 为"是否打招呼"列添加颜色标识（F 列）
-                for row_idx, cell in enumerate(ws['F'], start=2):
-                    if cell.value == "是":
-                        cell.fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
+            if OPENPYXL_AVAILABLE:
+                if recommend_col:
+                    for row_idx in range(2, ws.max_row + 1):
+                        cell = ws.cell(row=row_idx, column=recommend_col)
+                        if cell.value == "强烈推荐":
+                            cell.fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
+                        elif cell.value == "推荐":
+                            cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                        elif cell.value == "待定":
+                            cell.fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
+
+                if greet_col:
+                    for row_idx in range(2, ws.max_row + 1):
+                        cell = ws.cell(row=row_idx, column=greet_col)
+                        if cell.value == "是":
+                            cell.fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
 
         wb.save(filename)
         return True
@@ -712,7 +839,10 @@ def _build_candidate_summary_from_geek_card(geek_card: dict[str, Any]) -> str:
         if text:
             lines.append(f"{label}：{text}")
 
-    add("期望薪资", _pick_api_text(geek_card, "salary", "expectSalaryName", "expectSalaryDesc", "expectSalary"))
+    salary_text = _pick_api_text(geek_card, "salary", "expectSalaryName", "expectSalaryDesc", "expectSalary")
+    if not salary_text:
+        salary_text = "面议"  # API 未返回薪资时默认面议（BOSS 直聘常见）
+    add("期望薪资", salary_text)
     add("姓名", _pick_api_text(geek_card, "geekName", "name", "encryptGeekName"))
     add("性别", _pick_api_text(geek_card, "geekGender", "gender", "genderDesc"))
     add("年龄", _pick_api_text(geek_card, "ageDesc", "age"))
@@ -759,6 +889,85 @@ def _build_candidate_summary_from_geek_card(geek_card: dict[str, Any]) -> str:
             add("技能标签", emphasis)
 
     return "\n".join(lines)
+
+
+def _build_api_profile(geek_card: dict[str, Any]) -> dict[str, Any]:
+    """从 geekCard 提取结构化画像，供 LLM 评估直接使用，避免从文本二次解析。
+
+    返回字段：
+        educations: [{school, major, degree, start, end}]
+        works: [{company, position, category, start, end, responsibility, skills}]
+        personal_summary: str
+    """
+    profile: dict[str, Any] = {}
+
+    # 教育经历
+    edus = geek_card.get("geekEdus") or geek_card.get("geekEduList") or []
+    edu_list: list[dict[str, str]] = []
+    if isinstance(edus, list):
+        for edu in edus:
+            if not isinstance(edu, dict):
+                continue
+            item = {
+                k: _stringify_api_value(edu.get(field))
+                for k, field in [
+                    ("school", "schoolName"), ("major", "majorName"),
+                    ("degree", "degreeName"), ("start", "startDate"), ("end", "endDate"),
+                ]
+            }
+            # fallback 短键名
+            for key in ("school", "major", "degree", "start", "end"):
+                if not item[key]:
+                    item[key] = _stringify_api_value(edu.get(key))
+            # 过滤全空条目
+            if any(item.values()):
+                edu_list.append(item)
+    profile["educations"] = edu_list
+
+    # 工作经历
+    works_raw = geek_card.get("geekWorks") or geek_card.get("geekWorkList") or []
+    work_list: list[dict[str, Any]] = []
+    if isinstance(works_raw, list):
+        for work in works_raw:
+            if not isinstance(work, dict):
+                continue
+            item: dict[str, Any] = {
+                k: _stringify_api_value(work.get(field))
+                for k, field in [
+                    ("company", "companyName"), ("position", "positionName"),
+                    ("category", "positionCategoryName"), ("start", "startDate"),
+                    ("end", "endDate"), ("responsibility", "responsibility"),
+                ]
+            }
+            # fallback 短键名
+            for key in ("company", "position", "category", "start", "end", "responsibility"):
+                if not item[key]:
+                    item[key] = _stringify_api_value(work.get(key))
+            # 技能标签
+            skills_src = work.get("workEmphasisList") or work.get("workEmphasis") or []
+            skills: list[str] = []
+            if isinstance(skills_src, list):
+                for s in skills_src:
+                    name = s.get("name", "") if isinstance(s, dict) else str(s)
+                    name = name.strip()
+                    if name:
+                        skills.append(name)
+            item["skills"] = skills
+            # 过滤全空条目
+            if any(item.values()) or skills:
+                work_list.append(item)
+    profile["works"] = work_list
+
+    # 个人优势
+    geek_desc = geek_card.get("geekDesc")
+    if isinstance(geek_desc, dict):
+        profile["personal_summary"] = _stringify_api_value(
+            _pick_api_text(geek_desc, "content", "desc", "text")
+        )
+    else:
+        profile["personal_summary"] = _stringify_api_value(geek_desc)
+
+    return profile
 
 
 def _find_geek_cards_in_payload(payload: Any) -> list[dict[str, Any]]:
@@ -828,43 +1037,246 @@ def _extract_candidates_from_api_payload(payload: Any) -> list[dict[str, str]]:
         city_text = _pick_api_text(geek_card, "expectLocationName", "expectLocation")
         if city_text:
             structured['city'] = city_text
+        job_status_text = _pick_api_text(geek_card, "applyStatusDesc", "jobStatus", "jobStatusDesc")
+        if job_status_text:
+            structured['job_status'] = job_status_text
         salary_text = _pick_api_text(geek_card, "salary", "expectSalaryName", "expectSalaryDesc", "expectSalary")
         if salary_text and '面议' not in salary_text:
-            m = re.search(r'(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]', salary_text)
+            # 范围：15-25K / 15K-25K / 15-25（K 可选）
+            m = re.search(r'(\d+)\s*[kK]?\s*[-~～\-]\s*(\d+)\s*[kK]?', salary_text)
             if m:
                 structured['salary_min'] = int(m.group(1))
                 structured['salary_max'] = int(m.group(2))
             else:
-                m = re.search(r'(\d+)\s*[kK]', salary_text)
+                # 单值：15K / 15薪 / 15千
+                m = re.search(r'(\d+)\s*[kK薪千]', salary_text)
                 if m:
                     structured['salary_min'] = int(m.group(1))
                     structured['salary_max'] = int(m.group(1))
+                else:
+                    print(f"[DEBUG] 薪资解析失败: raw='{salary_text}'")
         candidates.append({
             "geek_id": geek_id,
             "name": _pick_api_text(geek_card, "geekName", "name", "encryptGeekName") or "未知",
             "summary": summary,
             "structured": structured,
+            "_api_profile": _build_api_profile(geek_card),
         })
     return candidates
 
 
+def _merge_candidates_into_list(
+    batch: list[dict[str, Any]],
+    all_candidates: list[dict[str, Any]],
+    seen_geek_ids: set[str],
+    candidate_index_by_id: dict[str, int],
+) -> list[dict[str, Any]]:
+    """将一批候选人合并到累计列表，去重，返回本批新增的候选人。"""
+    candidates_in_round: list[dict[str, Any]] = []
+    current_round_ids: set[str] = set()
+    for item in batch:
+        geek_id = item.get('geek_id', '') or ''
+        if not geek_id:
+            continue
+        if geek_id in seen_geek_ids or geek_id in current_round_ids:
+            existing_idx = candidate_index_by_id.get(geek_id)
+            if item.get('_source') == 'api' and existing_idx is not None:
+                existing = all_candidates[existing_idx]
+                new_summary = item.get('summary', '')
+                if new_summary and len(new_summary) > len(existing.get('summary', '')):
+                    existing['summary'] = new_summary
+                    existing['name'] = item.get('name') or existing.get('name', '未知')
+                if item.get('structured') and not existing.get('structured'):
+                    existing['structured'] = item['structured']
+                if item.get('_api_profile') and not existing.get('_api_profile'):
+                    existing['_api_profile'] = item['_api_profile']
+            continue
+
+        current_round_ids.add(geek_id)
+        text = item.get('summary', '') or ''
+        # API 来源已有结构化数据，跳过文本内容检查
+        is_api_with_structured = (item.get('_source') == 'api' and item.get('structured'))
+        if not is_api_with_structured:
+            has_candidate_info = (
+                '经验' in text or '本科' in text or '硕士' in text or
+                'Java' in text or '开发' in text or '工程师' in text or
+                re.search(r'\d+年', text) or re.search(r'\d+岁', text)
+            )
+            if not has_candidate_info:
+                continue
+
+        candidate = {
+            'geek_id': geek_id,
+            'name': item.get('name', '未知'),
+            'summary': text,
+            'structured': item.get('structured'),
+        }
+        if item.get('_api_profile'):
+            candidate['_api_profile'] = item['_api_profile']
+        candidates_in_round.append(candidate)
+
+    for c in candidates_in_round:
+        candidate_index_by_id[c['geek_id']] = len(all_candidates)
+        all_candidates.append(c)
+        seen_geek_ids.add(c['geek_id'])
+
+    return candidates_in_round
+
+
+class _ApiCapture:
+    """基于 JS fetch 拦截的 API 响应捕获器。
+
+    通过注入 JS 拦截 fetch() 调用，捕获推荐接口的请求和响应。
+    比 CDP 回调更可靠，能拿到完整的 URL（含 query string）和 POST body。
+    """
+
+    # 注入到页面的 JS 代码：拦截 fetch + XMLHttpRequest，缓存匹配的响应
+    _INJECT_JS = '''
+    if (!window.__bossApiCapture) {
+        window.__bossApiCapture = {requests: [], origFetch: window.fetch, injected: true};
+
+        // 拦截 fetch
+        window.fetch = async function(...args) {
+            const resp = await window.__bossApiCapture.origFetch.apply(this, args);
+            try {
+                const url = (typeof args[0] === 'string') ? args[0] : (args[0]?.url || '');
+                if (url.includes('zpjob/rec/geek/list') || url.includes('geek/recommend')) {
+                    const clone = resp.clone();
+                    const body = await clone.text();
+                    window.__bossApiCapture.requests.push({url: url, body: body, method: args[1]?.method || 'GET'});
+                }
+            } catch(e) {}
+            return resp;
+        };
+
+        // 拦截 XMLHttpRequest
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            this.__bossUrl = url || '';
+            this.__bossMethod = method;
+            return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function(body) {
+            var xhr = this;
+            var url = xhr.__bossUrl || '';
+            if (url.includes('zpjob/rec/geek/list') || url.includes('geek/recommend')) {
+                xhr.addEventListener('load', function() {
+                    try {
+                        window.__bossApiCapture.requests.push({
+                            url: url, body: xhr.responseText, method: xhr.__bossMethod || 'GET'
+                        });
+                    } catch(e) {}
+                });
+            }
+            return origSend.apply(this, arguments);
+        };
+    }
+    '''
+
+    def __init__(self):
+        self._page = None
+        self._iframe = None
+        self._active = False
+
+    def start(self, page: ChromiumPage) -> bool:
+        """注入 JS fetch 拦截器（优先注入 iframe，因为 API 请求在 iframe 内发出）。"""
+        try:
+            iframe = get_iframe(page)
+            target = iframe if iframe else page
+            target.run_js(self._INJECT_JS)
+            # 验证注入是否生效
+            injected = target.run_js('return !!window.__bossApiCapture && window.__bossApiCapture.injected')
+            if not injected:
+                print("[API] JS 注入未生效（可能是跨域 iframe），回退到主页面")
+                page.run_js(self._INJECT_JS)
+                target = page
+                injected = page.run_js('return !!window.__bossApiCapture && window.__bossApiCapture.injected')
+            self._page = page
+            self._iframe = target if target is not page else None
+            self._active = bool(injected)
+            where = "iframe" if self._iframe else "主页面"
+            print(f"[API] JS fetch 拦截已启动（{where}），注入验证: {injected}")
+            return self._active
+        except Exception as e:
+            print(f"[API] JS 拦截启动失败: {e}")
+        return False
+
+    def consume(self) -> tuple[list[dict[str, str]], str]:
+        """读取并清空 JS 缓存的 API 响应，返回 (candidates, api_url)。"""
+        if not self._active:
+            return [], ""
+        target = self._iframe if self._iframe else self._page
+        if not target:
+            return [], ""
+        try:
+            raw = target.run_js('''
+                (function() {
+                    const c = window.__bossApiCapture;
+                    if (!c) return '[]';
+                    const reqs = c.requests.splice(0, c.requests.length);
+                    return JSON.stringify(reqs);
+                })()
+            ''')
+            if not raw:
+                return [], ""
+            import json as _json
+            items = _json.loads(raw)
+        except Exception:
+            return [], ""
+
+        candidates: list[dict[str, str]] = []
+        api_url = ""
+        for item in items:
+            if not api_url:
+                api_url = item.get("url", "")
+            body = item.get("body", "")
+            if body:
+                try:
+                    payload = _json.loads(body)
+                    candidates.extend(_extract_candidates_from_api_payload(payload))
+                except Exception:
+                    pass
+        return candidates, api_url
+
+    def stop(self):
+        """停止拦截（刷新页面后自动失效，无需显式还原）。"""
+        self._active = False
+
+
 def _start_recommend_api_listener(page: ChromiumPage) -> Any | None:
-    """启动推荐列表接口监听，失败时返回 None 并允许 DOM 兜底。"""
+    """启动推荐列表接口监听，优先使用 DrissionPage 原生网络监听。"""
     try:
         listener = page.listen
+        try:
+            listener.stop()
+        except Exception:
+            pass
         listener.start("zpjob/rec/geek/list", method=("GET", "POST"), res_type=("XHR", "Fetch"))
+        print(f"[API] 原生 listener 已启动，listening={listener.listening}")
         return listener
     except Exception as e:
-        print(f"启动 API 监听失败，将使用页面提取：{e}")
-        return None
+        print(f"[API] 原生 listener 启动失败，尝试 JS 拦截兜底：{e}")
+
+    capture = _ApiCapture()
+    if capture.start(page):
+        return capture
+    print("启动 API 监听失败，将使用页面提取")
+    return None
 
 
-def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.05) -> list[dict[str, str]]:
+def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.05) -> tuple[list[dict[str, str]], str]:
     """消费已监听到的推荐接口响应，提取候选人数据。"""
     if not listener:
-        return []
+        return [], ""
 
+    # _ApiCapture 类型
+    if isinstance(listener, _ApiCapture):
+        return listener.consume()
+
+    # DrissionPage Listener 类型
     candidates: list[dict[str, str]] = []
+    api_url = ""
     while True:
         try:
             packet = listener.wait(timeout=timeout, fit_count=False)
@@ -879,6 +1291,8 @@ def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.0
             try:
                 if getattr(p, "is_failed", False):
                     continue
+                if not api_url:
+                    api_url = getattr(p, "url", "") or ""
                 payload = p.response.body
                 candidates.extend(_extract_candidates_from_api_payload(payload))
             except Exception as e:
@@ -887,7 +1301,96 @@ def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.0
 
         timeout = 0.01
 
-    return candidates
+    return candidates, api_url
+
+
+def _parse_api_pagination(url: str) -> dict[str, Any] | None:
+    """从 BOSS 推荐接口 URL 中提取分页参数，用于后续直调。
+
+    BOSS 常见分页格式：
+      - page 参数：?page=1&pageSize=20
+      - cursor 参数：?cursor=abc123
+
+    Returns:
+        {'base_url': str, 'page_param': str, 'page_size': int, 'query_params': dict} or None
+    """
+    if not url:
+        return None
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    # 扁平化单值参数
+    flat_params = {k: v[0] for k, v in params.items()}
+
+    page_param = None
+    page_size = 20
+    if 'page' in flat_params:
+        page_param = 'page'
+        page_size = int(flat_params.get('pageSize', flat_params.get('page_size', 20)))
+    elif 'cursor' in flat_params:
+        page_param = 'cursor'
+        page_size = int(flat_params.get('pageSize', flat_params.get('page_size', 20)))
+
+    if page_param is None:
+        return None
+
+    base = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+    return {
+        'base_url': base,
+        'page_param': page_param,
+        'page_size': page_size,
+        'query_params': flat_params,
+    }
+
+
+def _fetch_api_page(page: Any, pagination: dict[str, Any], page_num: int) -> list[dict[str, str]]:
+    """通过浏览器 fetch 直接调用 BOSS 推荐接口分页。
+
+    Args:
+        page: DrissionPage ChromiumPage 对象
+        pagination: _parse_api_pagination 返回的分页信息
+        page_num: 要请求的页码（从 1 开始）
+
+    Returns:
+        候选人列表，失败时返回空列表
+    """
+    from urllib.parse import urlencode
+    params = dict(pagination['query_params'])
+    if pagination['page_param'] == 'page':
+        params['page'] = str(page_num)
+        params['pageSize'] = str(pagination['page_size'])
+    else:
+        # cursor 模式暂不支持直接分页，返回空让调用方回退
+        return []
+
+    query_string = urlencode(params)
+    full_url = f"{pagination['base_url']}?{query_string}"
+
+    js_code = f'''
+    (async () => {{
+        try {{
+            const resp = await fetch("{full_url}", {{credentials: "include"}});
+            if (!resp.ok) return JSON.stringify({{error: resp.status}});
+            return await resp.text();
+        }} catch(e) {{
+            return JSON.stringify({{error: e.message}});
+        }}
+    }})()
+    '''
+
+    try:
+        result = page.run_js(js_code)
+        if not result:
+            return []
+        import json as _json
+        payload = _json.loads(result)
+        if isinstance(payload, dict) and 'error' in payload:
+            print(f"  API 分页直调失败 (page={page_num}): {payload['error']}")
+            return []
+        return _extract_candidates_from_api_payload(payload)
+    except Exception as e:
+        print(f"  API 分页直调异常 (page={page_num}): {e}")
+        return []
 
 
 def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEFAULT, progress_callback=None, stop_event=None, captcha_callback=None):
@@ -909,23 +1412,20 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
     candidate_index_by_id: dict[str, int] = {}
     target = iframe if iframe else page
     consecutive_empty = 0
+
+    # 启动 API 监听后刷新页面，捕获首屏推荐接口（完整候选人结构化数据）。
+    # 刷新会使页面恢复默认岗位，但能确保 API 返回全部候选人。
     api_listener = _start_recommend_api_listener(page)
-    if api_listener:
-        # 不再 page.refresh()——刷新会重置用户手动选择的招聘职位
-        # 改为微滚动触发 API 请求，让监听器预热拿到结构化数据
+    if not api_listener:
+        print("[API] 监听启动失败，将仅使用 DOM 提取")
+    else:
         try:
-            iframe = get_iframe(page)
-            target = iframe if iframe else page
-            # 微滚动 50px：触发 BOSS 加载新数据的 API 请求，但不改变页面职位状态
-            if iframe:
-                iframe.run_js('window.scrollBy(0, 50)')
-            else:
-                page.run_js('window.scrollBy(0, 50)')
-            time.sleep(_human_delay(1.5, 0.5))
+            page.refresh()
+            time.sleep(_human_delay(1.2, 0.4))
             iframe = get_iframe(page)
             target = iframe if iframe else page
         except Exception as e:
-            print(f"API 监听预热微滚动失败，将继续使用当前页面：{e}")
+            print(f"API 监听预热刷新失败，将继续使用当前页面：{e}")
 
     try:
         for scroll_round in range(max_rounds):
@@ -949,15 +1449,58 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
             # 先滚动（第一轮跳过）
             if scroll_round > 0:
                 if iframe:
-                    # 同时滚动 window 和可能的滚动容器（BOSS 直聘虚拟列表的实际滚动目标）
-                    _scroll_sel = _sel('scroll', 'container_js_selectors',
-                        '.candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]')
-                    iframe.run_js(f'''
-                        window.scrollBy(0, {SCROLL_PX});
-                        var list = document.querySelector("{_scroll_sel}");
-                        if(list) list.scrollTop += {SCROLL_PX};
+                    # 滚动 window + 候选人列表的实际滚动容器
+                    scroll_result = iframe.run_js(f'''
+                        (function() {{
+                            var winBefore = window.scrollY || 0;
+                            window.scrollBy(0, {SCROLL_PX});
+                            var winAfter = window.scrollY || 0;
+                            // 从候选人卡片往上找真正的滚动容器
+                            var card = document.querySelector('[data-geekid]');
+                            var found = null;
+                            if (card) {{
+                                var el = card.parentElement;
+                                while (el && el !== document.body && el !== document.documentElement) {{
+                                    var ov = getComputedStyle(el).overflowY;
+                                    if (el.scrollHeight > el.clientHeight + 10
+                                        && (ov === 'auto' || ov === 'scroll')) {{
+                                        var before = el.scrollTop;
+                                        el.scrollTop += {SCROLL_PX};
+                                        found = {{
+                                            tag: el.tagName,
+                                            cls: (el.className || '').substring(0, 60),
+                                            before: before,
+                                            after: el.scrollTop,
+                                            sh: el.scrollHeight,
+                                            ch: el.clientHeight,
+                                            ov: ov
+                                        }};
+                                        break;
+                                    }}
+                                    el = el.parentElement;
+                                }}
+                            }}
+                            var cards = document.querySelectorAll('[data-geekid]');
+                            return {{
+                                winBefore: winBefore, winAfter: winAfter,
+                                container: found,
+                                cardCount: cards.length
+                            }};
+                        }})()
                     ''')
                     time.sleep(_human_delay(0.8, 0.5))
+                    # 诊断：前 3 轮打印滚动详情
+                    if scroll_result and scroll_round <= 3:
+                        c = scroll_result.get('container')
+                        if c:
+                            print(f"[SCROLL 轮{scroll_round+1}] window: {scroll_result.get('winBefore',0):.0f}→{scroll_result.get('winAfter',0):.0f}"
+                                  f" | 容器: <{c.get('tag')} class=\"{c.get('cls')}\"> scrollTop: {c.get('before',0)}→{c.get('after',0)}"
+                                  f" (Δ{c.get('after',0)-c.get('before',0)}px, sh={c.get('sh')}, ch={c.get('ch')}, ov={c.get('ov')})"
+                                  f" | 卡片数: {scroll_result.get('cardCount',0)}")
+                        else:
+                            print(f"[SCROLL 轮{scroll_round+1}] window: {scroll_result.get('winBefore',0):.0f}→{scroll_result.get('winAfter',0):.0f}"
+                                  f" | ⚠️ 未找到可滚动容器(overflowY=auto/scroll)"
+                                  f" | 卡片数: {scroll_result.get('cardCount',0)}")
                 else:
                     page.run_js(f'window.scrollBy(0, {SCROLL_PX})')
                     time.sleep(_human_delay(0.8, 0.5))
@@ -978,70 +1521,36 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         print(f"检测到'到底'提示，第 {scroll_round + 1} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
                         break
 
-            # 收集候选人：优先使用 API 监听结果，失败或无数据时降级为页面提取。
+            # 收集候选人：API 结构化数据优先，DOM 兜底
             candidates_in_round = []
-            current_round_ids = set()
 
             try:
-                batch = _consume_recommend_api_candidates(api_listener)
-                if not batch:
-                    batch = []
-                    dom_batch = _extract_cards_batch(target)
-                    for item in dom_batch:
-                        batch.append({
-                            'geek_id': item.get('geek_id', ''),
-                            'name': item.get('name', '未知'),
-                            'summary': item.get('text', ''),
-                            '_source': 'dom',
-                        })
-                else:
-                    for item in batch:
-                        item['_source'] = 'api'
+                batch = []
 
-                for item in batch:
-                    geek_id = item['geek_id']
-                    if not geek_id:
-                        continue
-                    if geek_id in seen_geek_ids or geek_id in current_round_ids:
-                        existing_idx = candidate_index_by_id.get(geek_id)
-                        if item.get('_source') == 'api' and existing_idx is not None:
-                            existing = all_candidates[existing_idx]
-                            new_summary = item.get('summary', '')
-                            if new_summary and len(new_summary) > len(existing.get('summary', '')):
-                                existing['summary'] = new_summary
-                                existing['name'] = item.get('name') or existing.get('name', '未知')
-                            # API 来源的结构化字段始终合并（不受 summary 长度判断影响）
-                            if item.get('structured') and not existing.get('structured'):
-                                existing['structured'] = item['structured']
-                        continue
+                # 消费 API 监听数据（结构化字段：薪资、经验、年龄等）
+                api_candidates, _api_url = _consume_recommend_api_candidates(api_listener)
+                if api_candidates and scroll_round < 3:
+                    print(f"[API] 轮{scroll_round+1}: 捕获 {len(api_candidates)} 个结构化候选人")
+                for item in api_candidates:
+                    item['_source'] = 'api'
+                batch.extend(api_candidates)
 
-                    current_round_ids.add(geek_id)
-
-                    text = item['summary']
-                    # 内容过滤（Python 端，零网络开销）
-                    has_candidate_info = (
-                        '经验' in text or '本科' in text or '硕士' in text or
-                        'Java' in text or '开发' in text or '工程师' in text or
-                        re.search(r'\d+年', text) or re.search(r'\d+岁', text)
-                    )
-                    if not has_candidate_info:
-                        continue
-
-                    candidates_in_round.append({
-                        'geek_id': geek_id,
-                        'name': item['name'],
-                        'summary': text,
-                        'structured': item.get('structured'),
+                # DOM 提取（始终执行，用于去重和兜底）
+                dom_batch = _extract_cards_batch(target)
+                for item in dom_batch:
+                    batch.append({
+                        'geek_id': item.get('geek_id', ''),
+                        'name': item.get('name', '未知'),
+                        'summary': item.get('text', ''),
+                        '_source': 'dom',
                     })
+
+                candidates_in_round = _merge_candidates_into_list(
+                    batch, all_candidates, seen_geek_ids, candidate_index_by_id
+                )
 
             except Exception as e:
                 print(f"提取候选人元素失败(轮次{scroll_round + 1}): {e}")
-
-            # 更新累计
-            for c in candidates_in_round:
-                candidate_index_by_id[c['geek_id']] = len(all_candidates)
-                all_candidates.append(c)
-                seen_geek_ids.add(c['geek_id'])
 
             new_count = len(candidates_in_round)
             total_count = len(all_candidates)
@@ -1065,6 +1574,12 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 api_listener.stop()
             except Exception:
                 pass
+
+    # 统计 API 结构化数据覆盖率
+    _api_count = sum(1 for c in all_candidates if c.get('structured'))
+    if all_candidates:
+        print(f"API 结构化数据: {_api_count}/{len(all_candidates)} 人"
+              f" ({_api_count * 100 // len(all_candidates)}%)")
 
     print(f"\n=== 提取完成 ===")
     print(f"总共找到 {len(all_candidates)} 个候选人")
@@ -1104,8 +1619,19 @@ def _find_card_by_scroll(target, card_css, stop_event=None, max_scrolls=MAX_SCRO
     try:
         target.run_js('''
             window.scrollTo(0, 0);
-            var list = document.querySelector(".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]");
-            if(list) list.scrollTop = 0;
+            var card = document.querySelector('[data-geekid]');
+            if (card) {
+                var el = card.parentElement;
+                while (el && el !== document.body && el !== document.documentElement) {
+                    var ov = getComputedStyle(el).overflowY;
+                    if (el.scrollHeight > el.clientHeight + 10
+                        && (ov === 'auto' || ov === 'scroll')) {
+                        el.scrollTop = 0;
+                        break;
+                    }
+                    el = el.parentElement;
+                }
+            }
         ''')
     except Exception:
         pass
@@ -1128,8 +1654,19 @@ def _find_card_by_scroll(target, card_css, stop_event=None, max_scrolls=MAX_SCRO
         try:
             target.run_js(f'''
                 window.scrollBy(0, {scroll_px});
-                var list = document.querySelector(".candidate-list,.geek-list,.recommend-list,[class*=list],[class*=scroll]");
-                if(list) list.scrollTop += {scroll_px};
+                var card = document.querySelector('[data-geekid]');
+                if (card) {{
+                    var el = card.parentElement;
+                    while (el && el !== document.body && el !== document.documentElement) {{
+                        var ov = getComputedStyle(el).overflowY;
+                        if (el.scrollHeight > el.clientHeight + 10
+                            && (ov === 'auto' || ov === 'scroll')) {{
+                            el.scrollTop += {scroll_px};
+                            break;
+                        }}
+                        el = el.parentElement;
+                    }}
+                }}
             ''')
         except Exception:
             break
@@ -1666,13 +2203,39 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             else:
                 recommend_level = "待定"
 
+            # 提取结构化字段（薪资、经验、年龄等）
+            summary_info = extract_summary_info(candidate['summary'])
+            # API 结构化数据优先覆盖 DOM 解析结果
+            structured = candidate.get('structured') or {}
+            if structured.get('exp_years'):
+                summary_info['exp_years'] = str(structured['exp_years'])
+            if structured.get('age'):
+                summary_info['age'] = str(structured['age'])
+            if structured.get('salary_min') and structured.get('salary_max'):
+                summary_info['salary'] = f"{structured['salary_min']}-{structured['salary_max']}K"
+            elif structured.get('salary_min'):
+                summary_info['salary'] = f"{structured['salary_min']}K"
+            if structured.get('city'):
+                summary_info['city'] = structured['city']
+            if structured.get('job_status'):
+                summary_info['job_status'] = structured['job_status']
+            # 薪资兜底：解析后仍为空则默认面议
+            if not summary_info.get('salary'):
+                summary_info['salary'] = '面议'
+
             candidate_record = {
                 "geek_id": candidate['geek_id'],
                 "name": candidate['name'],
                 "summary": candidate['summary'],
                 "job_id": job_info['job_id'],
                 "job_name": job_name.replace(" ", ""),  # 去除岗位名称中的空格
-                "city": _extract_city(candidate['summary']),
+                "salary": summary_info.get('salary', ''),
+                "age": summary_info.get('age', ''),
+                "exp_years": summary_info.get('exp_years', ''),
+                "education": summary_info.get('education', ''),
+                "city": summary_info.get('city') or _extract_city(candidate['summary']),
+                "job_status": summary_info.get('job_status', ''),
+                "company": summary_info.get('company', ''),
                 "match_rule": job_info['rule_key'],
                 "match_score": score,
                 "skill_matches": details.get('skill_matches', []),
@@ -1688,6 +2251,11 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 "followup_status": "未沟通",
                 "greet_sent": False
             }
+            # 保留 API 结构化数据和画像供后续使用
+            if structured:
+                candidate_record['structured'] = structured
+            if candidate.get('_api_profile'):
+                candidate_record['_api_profile'] = candidate['_api_profile']
             passed_candidates.append(candidate_record)
 
             if verbose:
@@ -1770,10 +2338,31 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         if not job_requirement:
             job_requirement = f"岗位：{job_name}，{rule.get('min_exp', 0)}年经验，{rule.get('edu', '不限')}学历"
 
-        print(f"\n=== AI 辅助评估（共 {len(passed_candidates)} 人，最多评估 50 人）===")
+        print(f"\n=== AI 辅助评估（共 {len(passed_candidates)} 人）===")
+        # 按规则评分降序排列，确保 AI 评估优先处理最有价值的候选人
+        passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
+
+        # 构建硬条件摘要，供 LLM 评估时参考
+        hard_parts = []
+        if rule.get('min_exp'):
+            hard_parts.append(f"- 经验：≥{rule['min_exp']}年")
+        if rule.get('edu') and rule.get('edu') != '不限':
+            hard_parts.append(f"- 学历：{rule['edu']}")
+        if rule.get('max_age'):
+            hard_parts.append(f"- 年龄：≤{rule['max_age']}岁")
+        if rule.get('work_location'):
+            hard_parts.append(f"- 地点：{rule['work_location']}")
+        if rule.get('salary_max'):
+            hard_parts.append(f"- 薪资上限：{rule['salary_max']}K")
+        req_conds = rule.get('required_conditions', [])
+        if req_conds:
+            cond_names = [c if isinstance(c, str) else c.get('name', str(c)) for c in req_conds]
+            hard_parts.append(f"- 必要条件：{'、'.join(cond_names)}")
+        hard_conditions = "## 筛选硬条件\n" + "\n".join(hard_parts) + "\n\n" if hard_parts else ""
+
         passed_candidates = evaluate_batch(
             passed_candidates, job_requirement, api_config, api_key,
-            max_candidates=50,
+            hard_conditions=hard_conditions,
             progress_callback=progress_callback,
             stop_event=stop_event,
         )
@@ -1868,7 +2457,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                     (iframe if iframe else page).run_js('window.scrollBy(0, 400)')
                     time.sleep(_human_delay(0.2, 0.15))
 
-                success, msg = send_greeting_on_list_page(page, candidate['geek_id'], stop_event=stop_event, captcha_callback=captcha_callback)
+                success, msg = send_greeting_on_list_page(
+                    page, candidate['geek_id'], stop_event=stop_event,
+                    captcha_callback=captcha_callback)
 
                 if success:
                     greet_success_count += 1
@@ -2031,7 +2622,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         greet_text = f" + 自动打招呼 ({greet_level_display})"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
-    print(f">>> BOSS 直聘候选人智能提取工具 v2.9.1 [{mode_text}{greet_text}]")
+    print(f">>> BOSS 直聘候选人智能提取工具 v2.10.1 [{mode_text}{greet_text}]")
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）

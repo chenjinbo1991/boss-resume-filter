@@ -712,6 +712,7 @@ class BossFilterGUI:
         # 浏览器状态
         self.browser_connected = False
         self.browser_page = None
+        self._api_listener = None  # 推荐接口监听器（连接时启动，扫描时复用）
         self._browser_auto_check_id = None  # after() 回调 ID
         self._browser_status_text = ""
         self._browser_status_help_text = ""
@@ -2478,7 +2479,9 @@ class BossFilterGUI:
         row_ai.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_ai, text="AI 评估:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
-        self.ai_eval_var = tk.BooleanVar(value=True)
+        # 检测 API Key 是否已配置，据此设置默认值
+        has_api_key = bool(self.api_config.get("api_key"))
+        self.ai_eval_var = tk.BooleanVar(value=has_api_key)
         # 大 indicator + 文字一体，用父容器 anchor 做垂直居中
         _cb_style = ttk.Style()
         _indicator_size = int(32 * self.dpi_scale * self.zoom_factor)
@@ -2492,6 +2495,17 @@ class BossFilterGUI:
                                    variable=self.ai_eval_var,
                                    style='AIEval.TCheckbutton')
         ai_check.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        # API Key 状态标签
+        _status_font = (FONT_FAMILY, int(11 * self.font_scale))
+        if has_api_key:
+            self.ai_status_label = tk.Label(row_ai, text="✓ 已配置", font=_status_font,
+                                            foreground=self.colors['success'],
+                                            background=self.colors['bg_card'])
+        else:
+            self.ai_status_label = tk.Label(row_ai, text="⚠ 未配置", font=_status_font,
+                                            foreground=self.colors['warning'],
+                                            background=self.colors['bg_card'])
+        self.ai_status_label.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
         # 备注：+- 分色显示
         _note_prefix = "(对通过筛选的候选人进行 LLM 二次评分，"
         _note_suffix = "10分调整)"
@@ -2703,6 +2717,22 @@ class BossFilterGUI:
             value_label.bind("<Button-1>", lambda e, vt=var_name: self.show_result_stat_detail(vt))
             label.bind("<Button-1>", lambda e, vt=var_name: self.show_result_stat_detail(vt))
 
+        # 搜索框 — 位于统计卡片和候选人列表之间
+        search_frame = ttk.Frame(self.result_page, style='Page.TFrame')
+        search_frame.pack(fill="x", pady=(int(12 * self.dpi_scale * self.zoom_factor), int(6 * self.dpi_scale * self.zoom_factor)))
+        ttk.Label(search_frame, text="搜索:", font=self.font_label,
+                 background=self.colors['bg_main']).pack(side="left")
+        self.result_search_var = tk.StringVar()
+        self.result_search_var.trace_add('write', lambda *_: self._filter_result_tree())
+        self.result_search_entry = ttk.Entry(
+            search_frame, textvariable=self.result_search_var, width=16, font=self.font_label)
+        self.result_search_entry.pack(side="left", padx=int(6 * self.dpi_scale * self.zoom_factor))
+        ttk.Label(search_frame, text="（姓名/匹配分/推荐指数/状态，Esc 清空）",
+                 font=(FONT_FAMILY, int(10 * self.font_scale)),
+                 foreground=self.colors.get('text_secondary', '#666'),
+                 background=self.colors['bg_main']).pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
+        self.result_search_entry.bind('<Escape>', lambda e: self.result_search_var.set(''))
+
         # 结果表格
         table_container = ttk.Frame(self.result_page, style='Card.TFrame')
         table_container.pack(fill="both", expand=True, pady=int(8 * self.dpi_scale * self.zoom_factor))
@@ -2728,7 +2758,7 @@ class BossFilterGUI:
         self.result_tree.column("score", width=70, minwidth=60, anchor='center')
         self.result_tree.column("ai_eval", width=70, minwidth=60, anchor='center')
         self.result_tree.column("level", width=110, minwidth=90, anchor='center')
-        self.result_tree.column("status", width=120, minwidth=90, anchor='center')
+        self.result_tree.column("status", width=180, minwidth=150, anchor='center')
 
         # 设置表格字体和样式
         style = ttk.Style()
@@ -2867,7 +2897,7 @@ class BossFilterGUI:
         self.stats_tree.heading("interviewed", text="已约面")
         self.stats_tree.heading("avg_score", text="平均分")
 
-        self.stats_tree.column("job", width=150, minwidth=110, anchor='w')
+        self.stats_tree.column("job", width=200, minwidth=150, anchor='w')
         self.stats_tree.column("filter_dist", width=175, minwidth=140, anchor='center')
         self.stats_tree.column("greeted", width=100, minwidth=80, anchor='center')
         self.stats_tree.column("feedback", width=80, minwidth=65, anchor='center')
@@ -3366,8 +3396,8 @@ class BossFilterGUI:
             detail_window.configure(bg=self.colors['bg_main'])
 
             # 设置固定大小并相对主窗口居中
-            window_width = 1080
-            window_height = 900
+            window_width = min(1280, self.root.winfo_width() - 100)
+            window_height = min(900, self.root.winfo_height() - 80)
             self._center_window(detail_window, window_width, window_height)
 
             # 标题
@@ -3416,7 +3446,7 @@ class BossFilterGUI:
             tree.column("score", width=90, minwidth=80, anchor='center')
             tree.column("ai_eval", width=90, minwidth=80, anchor='center')
             tree.column("level", width=120, minwidth=100, anchor='center')
-            tree.column("status", width=180, minwidth=150, anchor='center')
+            tree.column("status", width=220, minwidth=180, anchor='center')
 
             # 设置表格字体和样式 - 明细窗口使用较小字体
             detail_font = (FONT_FAMILY, int(11 * self.font_scale))
@@ -3536,6 +3566,31 @@ class BossFilterGUI:
 
             tree.bind('<Button-3>', on_detail_right_click)
 
+            def on_detail_double_click(event):
+                clicked_item = tree.identify_row(event.y)
+                if not clicked_item:
+                    return
+                vals = tree.item(clicked_item, 'values')
+                if vals:
+                    for c in filtered_ref[0]:
+                        if c.get('name') == vals[0]:
+                            d_win = tk.Toplevel(detail_window)
+                            d_win.title("候选人详情")
+                            d_win.transient(detail_window)
+                            d_win.withdraw()
+                            d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
+                            ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
+                                     foreground=self.colors['primary']).pack(pady=15)
+                            tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
+                            tw.pack(fill='both', expand=True, padx=20, pady=10)
+                            tw.insert('1.0', self._format_candidate_detail(c))
+                            self.bind_text_context_menu(tw, editable=False)
+                            _place_window_centered(d_win, 1000, 880, parent=self.root)
+                            d_win.deiconify()
+                            break
+
+            tree.bind('<Double-Button-1>', on_detail_double_click)
+
             # 填充数据
             for c in sorted(filtered, key=lambda x: x.get('match_score', 0), reverse=True):
                 score = c.get('match_score', 0)
@@ -3618,8 +3673,8 @@ class BossFilterGUI:
             detail_window.configure(bg=self.colors['bg_main'])
 
             # 设置固定大小并相对主窗口居中
-            window_width = 1080
-            window_height = 900
+            window_width = min(1280, self.root.winfo_width() - 100)
+            window_height = min(900, self.root.winfo_height() - 80)
             self._center_window(detail_window, window_width, window_height)
 
             # 标题
@@ -3667,7 +3722,7 @@ class BossFilterGUI:
             tree.column("score", width=90, minwidth=80, anchor='center')
             tree.column("ai_eval", width=90, minwidth=80, anchor='center')
             tree.column("level", width=120, anchor='center')
-            tree.column("status", width=180, minwidth=150, anchor='center')
+            tree.column("status", width=220, minwidth=180, anchor='center')
 
             # 设置表格字体和样式 - 明细窗口使用较小字体
             detail_font = (FONT_FAMILY, int(11 * self.font_scale))
@@ -3804,6 +3859,31 @@ class BossFilterGUI:
                 menu.tk_popup(event.x_root, event.y_root)
 
             tree.bind('<Button-3>', on_result_detail_right_click)
+
+            def on_result_detail_double_click(event):
+                clicked_item = tree.identify_row(event.y)
+                if not clicked_item:
+                    return
+                vals = tree.item(clicked_item, 'values')
+                if vals:
+                    for c in filtered_ref[0]:
+                        if c.get('name') == vals[0]:
+                            d_win = tk.Toplevel(detail_window)
+                            d_win.title("候选人详情")
+                            d_win.transient(detail_window)
+                            d_win.withdraw()
+                            d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
+                            ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
+                                     foreground=self.colors['primary']).pack(pady=15)
+                            tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
+                            tw.pack(fill='both', expand=True, padx=20, pady=10)
+                            tw.insert('1.0', self._format_candidate_detail(c))
+                            self.bind_text_context_menu(tw, editable=False)
+                            _place_window_centered(d_win, 1000, 880, parent=self.root)
+                            d_win.deiconify()
+                            break
+
+            tree.bind('<Double-Button-1>', on_result_detail_double_click)
 
         except Exception as e:
             messagebox.showerror("错误", f"显示详情失败：{e}")
@@ -3982,6 +4062,19 @@ class BossFilterGUI:
             config["foreground"] = foreground
         self.api_status_label.config(**config)
 
+    def _update_ai_eval_status(self):
+        """更新 AI 评估状态标签和 checkbox 默认值（根据当前 API Key 是否已配置）"""
+        if not hasattr(self, 'ai_status_label'):
+            return  # UI 尚未创建完成
+        has_key = bool(self.api_config.get("api_key"))
+        if has_key:
+            self.ai_status_label.config(text="✓ 已配置", foreground=self.colors['success'])
+        else:
+            self.ai_status_label.config(text="⚠ 未配置", foreground=self.colors['warning'])
+            # 无 key 时自动关闭 checkbox，防止用户勾选后静默跳过
+            if self.ai_eval_var.get():
+                self.ai_eval_var.set(False)
+
     def use_selected_model(self):
         """使用选中的模型 - 从系统钥匙串读取加密的 API Key（按服务商管理）"""
         selection = self.model_list_tree.selection()
@@ -4043,6 +4136,7 @@ class BossFilterGUI:
                 print(f"保存配置失败：{e}")
 
             self._update_api_status(text=f"✓ 已切换到 {provider_key}/{model_name}", foreground=self.colors['success'])
+            self._update_ai_eval_status()
             messagebox.showinfo("切换成功", f"已切换到模型：\n\n{provider_display} / {model_name}")
         else:
             messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
@@ -4214,6 +4308,8 @@ class BossFilterGUI:
             self.update_current_model_display()
 
             self._update_api_status(text="✓ 配置已保存并添加到列表", foreground=self.colors['success'])
+            # 更新 AI 评估状态标签（可能从未配置变为已配置）
+            self._update_ai_eval_status()
 
             # 保存成功后清除"API Key 未配置"警示卡片
             if getattr(self, 'reconfig_card', None) and self.reconfig_card.winfo_exists():
@@ -5705,7 +5801,7 @@ class BossFilterGUI:
             self._parse_requirement_button_text = self.btn_parse_requirement.cget("text")
             self.btn_parse_requirement.config(state="disabled", text=" 解析中...")
         if ai_key:
-            status = "正在解析：先提取基础信息，再请 AI 帮忙检查和补全。"
+            status = "正在解析：先提取基础信息，再利用AI增强解析补全。"
         else:
             status = "正在解析：使用本地规则提取岗位要求。"
         self._set_parse_result_text(status, self.colors['warning'])
@@ -5772,6 +5868,10 @@ class BossFilterGUI:
     def _friendly_ai_parse_reason(self, reason):
         """把底层 AI 错误转成普通用户能理解的回退原因。"""
         text = str(reason or "")
+        if "连接超时" in text:
+            return "网络连接太慢（DNS/代理/服务器不可达）"
+        if "读取超时" in text:
+            return "模型响应太慢"
         if any(token in text for token in ("超时", "Timeout", "timed out")):
             return "响应太慢"
         if any(token in text for token in ("鉴权", "401", "403", "API Key", "权限")):
@@ -6270,7 +6370,8 @@ class BossFilterGUI:
                 self.browser_status_indicator.config(text=indicator_text, foreground=indicator_color)
             if help_text is not None:
                 self.browser_status_help.config(text=help_text)
-            if start_state is not None:
+            # 运行中不覆盖按钮状态，防止轮询覆盖 start_run 的 disabled
+            if start_state is not None and not self.is_running:
                 self.start_btn.config(state=start_state)
 
         self.run_on_ui(apply_update)
@@ -6840,19 +6941,19 @@ class BossFilterGUI:
 
     @staticmethod
     def _parse_salary_exp(summary, structured=None):
-        """从候选人摘要中解析薪资和工作年限
+        """从候选人摘要中解析薪资和工作年限（复用 extract_summary_info，保持单一解析源）
 
         Args:
             summary: 候选人摘要文本
             structured: 结构化字段字典（优先使用）
 
         Returns:
-            (salary: str, exp: str) — 如 ("15K", "5年")
+            (salary: str, exp: str) — 如 ("15-20K", "5年")
         """
         salary = ''
         exp = ''
 
-        # 优先使用结构化字段
+        # 优先使用 API 结构化字段
         if structured:
             if structured.get('salary_min') is not None:
                 s_min = structured['salary_min']
@@ -6863,63 +6964,16 @@ class BossFilterGUI:
                     salary = f"{s_min}K"
             if structured.get('exp_years') is not None:
                 exp = f"{structured['exp_years']}年"
-            if salary or exp:
-                return salary, exp
 
-        if not summary:
-            return salary, exp
-
-        # 标签感知解析
-        for line in summary.split('\n'):
-            line = line.strip()
-            # 薪资
+        # 未解析到的字段用文本解析兜底
+        if not salary or not exp:
+            from bossmaster import extract_summary_info
+            info = extract_summary_info(summary or '')
             if not salary:
-                if line.startswith("期望薪资："):
-                    val = line[len("期望薪资："):].strip()
-                    if '面议' in val:
-                        salary = '面议'
-                    else:
-                        # 15K-25K / 15-20K
-                        m = re.search(r'(\d+(?:[.-]\d+)?)[Kk]\s*[-~～\-]\s*(\d+)\s*[Kk]', val)
-                        if m:
-                            salary = f"{m.group(1)}-{m.group(2)}K"
-                        else:
-                            # 15薪-25薪 (BOSS 格式，薪=千)
-                            m = re.search(r'(\d+(?:[.-]\d+)?)\s*薪\s*[-~～\-]\s*(\d+)\s*薪', val)
-                            if m:
-                                salary = f"{m.group(1)}-{m.group(2)}K"
-                            else:
-                                # 1.5万-2.5万
-                                m = re.search(r'(\d+(?:[.-]\d+)?)[万萬]\s*[-~～\-]\s*(\d+(?:[.-]\d+)?)[万萬]', val)
-                                if m:
-                                    salary = f"{int(float(m.group(1))*10)}-{int(float(m.group(2))*10)}K"
-                                else:
-                                    # 15K / 15K以上 / 15薪
-                                    m = re.search(r'(\d+(?:[.-]\d+)?)[Kk薪千]', val)
-                                    if m:
-                                        salary = m.group(1) + 'K'
-                                    elif '面议' in val:
-                                        salary = '面议'
-
-            # 工作年限
+                salary = info.get('salary', '')
             if not exp:
-                if line.startswith("经验："):
-                    val = line[len("经验："):].strip()
-                    m = re.search(r'(\d+)', val)
-                    if m:
-                        exp = m.group(1) + '年'
-                else:
-                    # DOM 格式 fallback
-                    m = re.search(r'(\d+)\s*年', line)
-                    if m and '年龄' not in line and '岁' not in line:
-                        exp = m.group(1) + '年'
-
-            if salary and exp:
-                break
-
-        # 兜底：面议
-        if not salary and '面议' in summary:
-            salary = '面议'
+                exp_raw = info.get('exp_years', '')
+                exp = f"{exp_raw}年" if exp_raw else ''
 
         return salary, exp
 
@@ -6933,7 +6987,11 @@ class BossFilterGUI:
         if self.is_running:
             return
 
+        # 立即禁用按钮，防止重复点击
+        self.start_btn.config(state="disabled")
+
         if not self.browser_connected:
+            self.start_btn.config(state="normal")
             messagebox.showwarning("未连接", "请先连接到 BOSS 直聘推荐页面后再运行")
             return
 
@@ -6941,20 +6999,26 @@ class BossFilterGUI:
             try:
                 current_url = self.browser_page.url
                 if 'zhipin.com/web/chat/recommend' not in current_url.lower():
+                    self.start_btn.config(state="normal")
                     messagebox.showwarning("页面错误", "请将浏览器导航到 BOSS 直聘推荐页面后再运行")
                     return
             except Exception:
+                self.start_btn.config(state="normal")
                 messagebox.showwarning("连接丢失", "浏览器连接已丢失，请重新检测/连接")
                 return
         else:
+            self.start_btn.config(state="normal")
             messagebox.showwarning("未连接", "请先检测/连接浏览器")
             return
 
         self.is_running = True
         self.stop_event.clear()
         self.status_label.config(text="🟡 运行中...", foreground=self.colors['warning'])
-        self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
+
+        # 重置进度显示
+        self.progress_var.set(0)
+        self.progress_label.config(text="0%", image='', compound='text')
 
         self.append_log(f"[{datetime.now().strftime('%H:%M:%S')}] ▶ 开始运行...")
 
@@ -7052,10 +7116,6 @@ class BossFilterGUI:
                 self.append_log(f"[初次扫描模式] 指定岗位：{job_arg}")
             else:
                 self.append_log("[初次扫描模式] 处理全部岗位")
-            self.append_log("请手动导航到 BOSS 直聘推荐页面...")
-            self.append_log("等待 3 秒...")
-            time.sleep(3)
-
             self.append_log("开始扫描候选人...")
 
             # 进度回调 — 将 bossmaster 的进度报告送入队列
@@ -7233,6 +7293,7 @@ class BossFilterGUI:
 
                 for item in self.result_tree.get_children():
                     self.result_tree.delete(item)
+                self._item_to_candidate: dict[str, dict] = {}
 
                 sorted_candidates = sorted(candidates, key=lambda x: x.get('match_score', 0), reverse=True)
 
@@ -7266,7 +7327,7 @@ class BossFilterGUI:
                     else:
                         ai_text = "—"
 
-                    self.result_tree.insert("", "end", values=(
+                    item_id = self.result_tree.insert("", "end", values=(
                         c.get('name', ''),
                         exp,
                         salary,
@@ -7276,10 +7337,12 @@ class BossFilterGUI:
                         level,
                         status
                     ), tags=(tag,))
+                    self._item_to_candidate[item_id] = c
 
                 # 存储原始数据用于排序和详情展示
                 self.result_tree_data = sorted_candidates[:100]
                 self.all_candidates = candidates  # 存储全部数据用于详情展示
+                self._tree_original_order = None  # 搜索排序缓存失效，下次搜索时重建
         except Exception as e:
             self.append_log(f"加载结果失败：{e}")
 
@@ -7341,9 +7404,108 @@ class BossFilterGUI:
         except Exception as e:
             pass
 
+    def _filter_result_tree(self):
+        """根据搜索框内容实时过滤 Treeview 行。
+
+        搜索范围：姓名、匹配分、推荐指数、状态。
+        匹配项红色文字高亮并按优先级排序（完全匹配姓名 > 部分匹配 > 分数 ≥ 搜索值 > 等级 > 状态），
+        清空搜索时恢复原始排序。
+        """
+        query = self.result_search_var.get().strip().lower()
+        all_items = self.result_tree.get_children()
+
+        # 保存原始顺序（首次过滤时）
+        if not hasattr(self, '_tree_original_order') or self._tree_original_order is None:
+            self._tree_original_order = list(all_items)
+
+        # 构建 item_id → candidate 映射（插入时建立，不受排序影响）
+        item_map = getattr(self, '_item_to_candidate', {}) or {}
+
+        if not query:
+            # 清空搜索：恢复原始排序，清除高亮
+            for item_id in all_items:
+                tags = list(self.result_tree.item(item_id, 'tags') or ())
+                if 'search_match' in tags:
+                    tags.remove('search_match')
+                    self.result_tree.item(item_id, tags=tuple(tags))
+            for i, item_id in enumerate(self._tree_original_order):
+                if self.result_tree.exists(item_id):
+                    self.result_tree.move(item_id, '', i)
+            self._tree_original_order = None
+            return
+
+        # 匹配判断：返回匹配类型用于优先级排序
+        def _match_type(cand: dict) -> str | None:
+            if not cand:
+                return None
+            name = str(cand.get('name', '')).lower()
+            score_str = str(cand.get('match_score', '')).lower()
+            level = str(cand.get('recommend_level', '')).lower()
+            status = str(cand.get('followup_status', '')).lower()
+            if query == name:
+                return 'exact_name'
+            if query in name:
+                return 'partial_name'
+            if query in level:
+                return 'level'
+            if query in status:
+                return 'status'
+            # 数字查询：匹配分数 ≥ 搜索值
+            try:
+                q_num = int(query)
+                s_num = int(score_str) if score_str else 0
+                if s_num >= q_num:
+                    return 'score'
+            except (ValueError, TypeError):
+                pass
+            return None
+
+        _priority = {'exact_name': 0, 'partial_name': 1, 'score': 2, 'level': 3, 'status': 4}
+        matched_with_type: list[tuple[str, str]] = []
+        unmatched: list[str] = []
+        for item_id in all_items:
+            mt = _match_type(item_map.get(item_id, {}))
+            if mt:
+                matched_with_type.append((item_id, mt))
+            else:
+                unmatched.append(item_id)
+
+        # 匹配项按优先级排序：完全匹配姓名 > 部分匹配姓名 > 分数 > 等级 > 状态
+        matched_with_type.sort(key=lambda x: _priority.get(x[1], 99))
+
+        # 清除旧高亮 tag
+        for item_id in all_items:
+            tags = list(self.result_tree.item(item_id, 'tags') or ())
+            if 'search_match' in tags:
+                tags.remove('search_match')
+                self.result_tree.item(item_id, tags=tuple(tags))
+
+        # 匹配项：加红色高亮 tag
+        self.result_tree.tag_configure('search_match', foreground='#E65100')
+        for item_id, _ in matched_with_type:
+            tags = list(self.result_tree.item(item_id, 'tags') or ())
+            if 'search_match' not in tags:
+                tags.append('search_match')
+            self.result_tree.item(item_id, tags=tuple(tags))
+
+        # detach 全部 → 按优先级 reattach
+        for item_id in all_items:
+            self.result_tree.detach(item_id)
+        for item_id, _ in matched_with_type:
+            self.result_tree.reattach(item_id, '', 'end')
+        for item_id in unmatched:
+            self.result_tree.reattach(item_id, '', 'end')
+
     def _bind_treeview_context_menu(self):
-        """绑定 Treeview 右键菜单"""
+        """绑定 Treeview 右键菜单和双击"""
         self.result_tree.bind('<Button-3>', self._show_context_menu)
+        self.result_tree.bind('<Double-Button-1>', self._on_tree_double_click)
+
+    def _on_tree_double_click(self, event):
+        """双击候选人查看详情"""
+        item = self.result_tree.identify_row(event.y)
+        if item:
+            self._show_candidate_detail(item)
 
     def _show_context_menu(self, event):
         """显示右键菜单"""
@@ -7691,41 +7853,54 @@ class BossFilterGUI:
         # 学历/学校/专业 — 支持多学历，每条一行
         edu_entries: list[str] = []
         edu = info.get('education')
+        api_profile = c.get('_api_profile')
 
-        # 优先从 "教育经历：" 标签行解析（API 格式，可能有多条）
-        # 格式："教育经历：清华大学 计算机 本科 2015.09 2018.06"
-        api_edu_found = False
-        for sline in summary.split('\n'):
-            sline = sline.strip()
-            if sline.startswith("教育经历："):
-                api_edu_found = True
-                val = sline[len("教育经历："):].strip()
-                parts = val.split()
-                if len(parts) >= 3:
-                    # 学校 专业 学历 [起始] [结束]
-                    entry_parts = [parts[0], parts[1], parts[2]]
-                    if len(parts) >= 4:
-                        entry_parts.append("-".join(parts[3:5]))
-                    edu_entries.append("·".join(entry_parts))
-                elif len(parts) == 2:
+        # API 结构化画像优先
+        if api_profile and api_profile.get('educations'):
+            for entry in api_profile['educations']:
+                parts = [entry.get(k, '') for k in ('school', 'major', 'degree')]
+                parts = [p for p in parts if p]
+                start = entry.get('start', '')
+                end = entry.get('end', '')
+                if start or end:
+                    parts.append(f"{start}-{end}")
+                if parts:
                     edu_entries.append("·".join(parts))
-
-        # DOM 格式兜底（无标签，学校名+专业+学历连写，可能有多条）
-        if not api_edu_found:
-            edu_entry_pat = re.compile(r'(.+(?:大学|学院))(.+?)(本科|硕士|博士|大专|MBA|EMBA)')
-            edu_nopat = re.compile(r'(.+(?:大学|学院))(本科|硕士|博士|大专|MBA|EMBA)')
+        else:
+            # 优先从 "教育经历：" 标签行解析（API 格式，可能有多条）
+            # 格式："教育经历：清华大学 计算机 本科 2015.09 2018.06"
+            api_edu_found = False
             for sline in summary.split('\n'):
                 sline = sline.strip()
-                m = edu_entry_pat.match(sline)
-                if m:
-                    entry_parts = [m.group(1)]
-                    if m.group(2):
-                        entry_parts.append(m.group(2))
-                    edu_entries.append("·".join(entry_parts))
-                    continue
-                m2 = edu_nopat.match(sline)
-                if m2:
-                    edu_entries.append(m2.group(1))
+                if sline.startswith("教育经历："):
+                    api_edu_found = True
+                    val = sline[len("教育经历："):].strip()
+                    parts = val.split()
+                    if len(parts) >= 3:
+                        # 学校 专业 学历 [起始] [结束]
+                        entry_parts = [parts[0], parts[1], parts[2]]
+                        if len(parts) >= 4:
+                            entry_parts.append("-".join(parts[3:5]))
+                        edu_entries.append("·".join(entry_parts))
+                    elif len(parts) == 2:
+                        edu_entries.append("·".join(parts))
+
+            # DOM 格式兜底（无标签，学校名+专业+学历连写，可能有多条）
+            if not api_edu_found:
+                edu_entry_pat = re.compile(r'(.+(?:大学|学院))(.+?)(本科|硕士|博士|大专|MBA|EMBA)')
+                edu_nopat = re.compile(r'(.+(?:大学|学院))(本科|硕士|博士|大专|MBA|EMBA)')
+                for sline in summary.split('\n'):
+                    sline = sline.strip()
+                    m = edu_entry_pat.match(sline)
+                    if m:
+                        entry_parts = [m.group(1)]
+                        if m.group(2):
+                            entry_parts.append(m.group(2))
+                        edu_entries.append("·".join(entry_parts))
+                        continue
+                    m2 = edu_nopat.match(sline)
+                    if m2:
+                        edu_entries.append(m2.group(1))
 
         # 展示多学历
         if edu_entries:
@@ -7747,14 +7922,18 @@ class BossFilterGUI:
         lines.append(f"  技能匹配：{c.get('skill_match_ratio', '—')}")
         breakdown = c.get('score_breakdown') or {}
         if breakdown:
-            lines.append(
-                "  评分拆解："
-                f"基础{breakdown.get('base', 0)} + "
-                f"技能{breakdown.get('skill', 0)} + "
-                f"经验{breakdown.get('experience', 0)} + "
-                f"学历{breakdown.get('education', 0)} + "
-                f"优先项{breakdown.get('preferred', 0)}"
-            )
+            parts = [
+                f"基础{breakdown.get('base', 0)}",
+                f"技能{breakdown.get('skill', 0)}",
+                f"经验{breakdown.get('experience', 0)}",
+                f"学历{breakdown.get('education', 0)}",
+                f"优先项{breakdown.get('preferred', 0)}",
+            ]
+            ai_adj = breakdown.get('ai_adjustment')
+            if ai_adj is not None and ai_adj != 0:
+                sign = "+" if ai_adj > 0 else ""
+                parts.append(f"AI{sign}{ai_adj}")
+            lines.append(f"  评分拆解：{' + '.join(parts)}")
         if c.get('greet_sent'):
             lines.append(f"  状态：已打招呼")
         else:
@@ -7859,15 +8038,39 @@ class BossFilterGUI:
             "工作职责": [],
             "技能标签": [],
         }
-        for sline in summary.split('\n'):
-            text = sline.strip()
-            for label in structured_summary:
-                prefix = f"{label}："
-                if text.startswith(prefix):
-                    value = text[len(prefix):].strip()
-                    if value:
-                        structured_summary[label].append(value)
-                    break
+
+        # API 结构化画像优先
+        if api_profile:
+            for edu in (api_profile.get('educations') or []):
+                parts = [edu.get(k, '') for k in ('school', 'major', 'degree')]
+                parts = [p for p in parts if p]
+                if parts:
+                    structured_summary["教育经历"].append(" ".join(parts))
+            for work in (api_profile.get('works') or []):
+                parts = [work.get(k, '') for k in ('company', 'position', 'category', 'start', 'end')]
+                parts = [p for p in parts if p]
+                if parts:
+                    structured_summary["工作经历"].append(" ".join(parts))
+                resp = work.get('responsibility', '')
+                if resp:
+                    structured_summary["工作职责"].append(resp)
+                skills = work.get('skills') or []
+                if skills:
+                    structured_summary["技能标签"].append("、".join(skills))
+            # 个人优势
+            personal = api_profile.get('personal_summary', '')
+            if personal:
+                structured_summary.setdefault("个人优势", []).append(personal)
+        else:
+            for sline in summary.split('\n'):
+                text = sline.strip()
+                for label in structured_summary:
+                    prefix = f"{label}："
+                    if text.startswith(prefix):
+                        value = text[len(prefix):].strip()
+                        if value:
+                            structured_summary[label].append(value)
+                        break
 
         if any(structured_summary.values()):
             section_titles = {
@@ -7875,15 +8078,16 @@ class BossFilterGUI:
                 "工作经历": "【工作经历】",
                 "工作职责": "【工作职责】",
                 "技能标签": "【技能标签】",
+                "个人优势": "【个人优势】",
             }
-            for label in ("教育经历", "工作经历", "工作职责", "技能标签"):
-                items = structured_summary[label]
+            for label in ("教育经历", "工作经历", "工作职责", "技能标签", "个人优势"):
+                items = structured_summary.get(label) or []
                 if not items:
                     continue
                 lines.append("")
                 lines.append(section_titles[label])
                 for idx, item in enumerate(items, 1):
-                    if label in ("工作职责", "技能标签"):
+                    if label in ("工作职责", "技能标签", "个人优势"):
                         lines.append(f"  {idx}. {item}")
                     else:
                         lines.append(f"  - {item}")

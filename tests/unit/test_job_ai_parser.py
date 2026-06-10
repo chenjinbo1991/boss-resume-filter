@@ -325,18 +325,8 @@ def test_enhance_config_with_ai_success(mock_post):
 @patch("job_ai_parser.time.sleep")
 @patch("job_ai_parser.requests.post")
 def test_enhance_config_with_ai_retries_timeout_and_succeeds(mock_post, mock_sleep):
-    response = Mock()
-    response.status_code = 200
-    response.json.return_value = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "keywords_add": [{"name": "MySQL", "weight": 2}]
-                }, ensure_ascii=False)
-            }
-        }]
-    }
-    mock_post.side_effect = [requests.exceptions.Timeout("slow"), response]
+    """超时后无重试（MAX_RETRIES=1），直接失败"""
+    mock_post.side_effect = requests.exceptions.Timeout("slow")
 
     result = enhance_config_with_ai(
         "Java，MySQL",
@@ -345,11 +335,9 @@ def test_enhance_config_with_ai_retries_timeout_and_succeeds(mock_post, mock_sle
         "sk-test",
     )
 
-    job = list(result.config["job_requirements"].values())[0]
-    assert result.success is True
-    assert {"name": "MySQL", "weight": 2} in job["keywords"]
-    assert mock_post.call_count == 2
-    mock_sleep.assert_called_once()
+    # MAX_RETRIES=1 意味着只有 1 次尝试，超时直接失败
+    assert result.success is False
+    assert mock_post.call_count == 1
 
 
 @patch("job_ai_parser.requests.post")
@@ -390,4 +378,4 @@ def test_enhance_config_with_ai_failure_returns_regex_config(mock_post, mock_sle
     assert result.success is False
     assert result.config == base
     assert "服务端错误" in result.reason
-    assert mock_post.call_count == 2
+    assert mock_post.call_count == 1  # MAX_RETRIES=1，无重试

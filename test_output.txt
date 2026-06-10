@@ -1,0 +1,499 @@
+PASS test_changelog_parser.py::test_extract_changelog_section_accepts_with_or_without_v_prefix
+PASS test_changelog_parser.py::test_extract_changelog_section_returns_none_for_missing_version
+PASS test_changelog_parser.py::test_normalize_version_strips_v_prefix
+PASS test_changelog_parser.py::test_parse_changelog_versions_extracts_sections
+PASS test_changelog_parser.py::test_split_version_heading_supports_chinese_and_short_dash
+PASS test_constants.py::test_chinese_numerals_has_all_basic_entries
+PASS test_constants.py::test_chinese_numerals_values_are_correct
+PASS test_constants.py::test_major_cities_contains_key_cities
+PASS test_constants.py::test_major_cities_sorted_by_length_descending
+PASS test_constants.py::test_non_regular_edu_contains_essential_keywords
+PASS test_constants.py::test_score_components_sum_to_100
+PASS test_constants.py::test_score_thresholds_are_strictly_ascending
+PASS test_core_logic.py::test_api_candidate_summary_participates_in_existing_filtering
+ÕıÔÚÌáÈ¡ºòÑ¡ÈË...
+Ê×ÂÖ API ÌáÈ¡£º1 ¸öºòÑ¡ÈË£¨ÀÛ¼Æ 1£©
+API ·ÖÒ³Ö±µ÷Ä£Ê½£ºhttps://www.zhipin.com/wapi/zpjob/rec/geek/list£¬Ã¿Ò³ 20 ÈË
+API ·ÖÒ³µÚ 2 Ò³Î´ĞÂÔöºòÑ¡ÈË£¬Í£Ö¹Ö±µ÷²¢»ØÍË¹ö¶¯¶µµ×
+ÂÖ´Î 1/1: +1, ÀÛ¼Æ 2 ¸ö
+
+=== ÌáÈ¡Íê³É ===
+×Ü¹²ÕÒµ½ 2 ¸öºòÑ¡ÈË
+PASS test_core_logic.py::test_api_direct_pagination_duplicate_page_falls_back_to_dom
+¿ªÊ¼ÖÇÄÜÉ¨ÃèºòÑ¡ÈË... (¸ÚÎ»£ºJava ¹¤³ÌÊ¦, ×Ô¶¯´òÕĞºô£ºÊÇ (Ç¿ÁÒÍÆ¼ö + ÍÆ¼ö), ÂÖ´Î£º1)
+Ô­Ê¼ÌáÈ¡µ½ 1 ¸öÎ¨Ò»ºòÑ¡ÈË
+
+=== ½×¶Î 1: É¸Ñ¡ºòÑ¡ÈË ===
+
+É¸Ñ¡Íê³É£ºÍ¨¹ı 1/1 ¸ö
+
+=== ½×¶Î 2: °´·ÖÊıÅÅĞò´òÕĞºô ===
+ÕıÔÚË¢ĞÂºòÑ¡ÈËÁĞ±í...
+ĞèÒª´òÕĞºô£º0 ÈË (Ç¿ÁÒÍÆ¼ö + ÍÆ¼ö)
+  ÒÑÌø¹ı 1 ÈË£ºĞèÒªÈË¹¤È·ÈÏºóÔÙ´òÕĞºô
+
+´òÕĞºôÍê³É£º³É¹¦ 0 ÈË£¬Ê§°Ü 0 ÈË
+PASS test_core_logic.py::test_auto_greet_skips_manual_review_candidates
+PASS test_core_logic.py::test_bossmaster_keeps_filtering_compatibility_exports
+PASS test_core_logic.py::test_bossmaster_keeps_storage_compatibility_exports
+PASS test_core_logic.py::test_education_bonus_tiers_are_stable
+PASS test_core_logic.py::test_export_to_excel_keeps_full_candidate_summary_in_detail_column
+PASS test_core_logic.py::test_extract_job_salary_range_handles_numeric_and_negotiable_text
+PASS test_core_logic.py::test_extract_summary_info_education_priority
+PASS test_core_logic.py::test_extract_summary_info_empty_text
+PASS test_core_logic.py::test_extract_summary_info_full_text
+PASS test_core_logic.py::test_extract_summary_info_negotiable_salary
+PASS test_core_logic.py::test_extract_summary_info_status_with_company
+PASS test_core_logic.py::test_filter_candidate_age_boundaries_are_stable
+PASS test_core_logic.py::test_filter_candidate_flags_non_regular_bachelor_even_with_school_mark
+PASS test_core_logic.py::test_filter_candidate_scores_and_hard_rejections_are_stable
+PASS test_core_logic.py::test_find_card_by_scroll_returns_to_top_after_failed_estimate
+PASS test_core_logic.py::test_geek_card_api_payload_builds_complete_candidate_summary
+PASS test_core_logic.py::test_keyword_matching_uses_word_boundaries_for_english_terms
+PASS test_core_logic.py::test_load_candidates_all_restores_from_backup_when_main_json_is_corrupt
+PASS test_core_logic.py::test_load_job_config_corrupt_json_returns_default
+PASS test_core_logic.py::test_load_job_config_deduplicates_dict_format_keywords
+PASS test_core_logic.py::test_load_job_config_deduplicates_keywords_case_insensitive
+PASS test_core_logic.py::test_load_job_config_extracts_default_rule
+PASS test_core_logic.py::test_load_job_config_jobs_key_format
+PASS test_core_logic.py::test_load_job_config_missing_file_returns_default
+PASS test_core_logic.py::test_load_job_config_strips_spaces_from_job_name
+PASS test_core_logic.py::test_parse_candidate_salary_range_from_summary_first_line
+PASS test_core_logic.py::test_parse_experience_years_supports_arabic_and_chinese_numbers
+PASS test_core_logic.py::test_required_conditions_support_string_or_and
+PASS test_core_logic.py::test_save_candidates_all_accepts_explicit_path
+PASS test_core_logic.py::test_save_candidates_all_deduplicates_by_geek_id_and_job_name
+PASS test_core_logic.py::test_save_candidates_all_filters_below_55
+PASS test_doc_parser.py::test_age_buchaoguo
+PASS test_doc_parser.py::test_age_le_ascii
+PASS test_doc_parser.py::test_age_le_symbol
+PASS test_doc_parser.py::test_age_nianling_yixia_no_sui
+PASS test_doc_parser.py::test_age_no_false_positive_experience
+PASS test_doc_parser.py::test_age_range_takes_max
+PASS test_doc_parser.py::test_age_yinei_suffix
+PASS test_doc_parser.py::test_age_yixia
+PASS test_doc_parser.py::test_age_zhousui
+PASS test_doc_parser.py::test_age_zhousui_yinei
+PASS test_doc_parser.py::test_bonus_keywords_from_youxi_lines
+PASS test_doc_parser.py::test_dead_code_removed
+PASS test_doc_parser.py::test_education_985_211_preferred_not_required
+PASS test_doc_parser.py::test_education_boshi_xueli_youxian_exclude
+PASS test_doc_parser.py::test_education_boshi_xueli_zhe_exclude
+PASS test_doc_parser.py::test_education_default_unlimited
+PASS test_doc_parser.py::test_education_explicit_field
+PASS test_doc_parser.py::test_education_from_low_to_high
+PASS test_doc_parser.py::test_education_master
+PASS test_doc_parser.py::test_education_phd_priority_excluded
+PASS test_doc_parser.py::test_education_preferred_school_keeps_hard_regular_bachelor_without_markdown
+PASS test_doc_parser.py::test_education_shuoshi_xueli_youxian_exclude
+PASS test_doc_parser.py::test_education_youboshi_exclude
+PASS test_doc_parser.py::test_empty_text_returns_defaults
+PASS test_doc_parser.py::test_experience_budiyu
+PASS test_doc_parser.py::test_experience_bushaoyu
+PASS test_doc_parser.py::test_experience_chinese_liang_nian
+PASS test_doc_parser.py::test_experience_chinese_san_nian
+PASS test_doc_parser.py::test_experience_chinese_wu_nian
+PASS test_doc_parser.py::test_experience_chinese_zhishao
+PASS test_doc_parser.py::test_experience_default_zero
+PASS test_doc_parser.py::test_experience_explicit_field
+PASS test_doc_parser.py::test_experience_from_general_text
+PASS test_doc_parser.py::test_experience_juyou
+PASS test_doc_parser.py::test_experience_markdown_bold
+PASS test_doc_parser.py::test_experience_range_takes_minimum
+PASS test_doc_parser.py::test_experience_zhishao
+PASS test_doc_parser.py::test_extract_work_location_fallback_scans_full_text
+PASS test_doc_parser.py::test_extract_work_location_multiple_cities
+PASS test_doc_parser.py::test_extract_work_location_patterns
+PASS test_doc_parser.py::test_extract_work_location_remote_or_nationwide_disables_filter
+PASS test_doc_parser.py::test_full_requirement_parsing
+PASS test_doc_parser.py::test_generated_config_defaults_max_age_to_35_when_missing
+PASS test_doc_parser.py::test_generated_config_keeps_explicit_max_age
+PASS test_doc_parser.py::test_generated_config_moves_tech_conditions_to_required_or_only
+PASS test_doc_parser.py::test_golden_sample_mid_senior_ai_engineer_template
+PASS test_doc_parser.py::test_hard_line_and_condition_from_simultaneous_hint
+PASS test_doc_parser.py::test_hard_line_or_condition_from_slash_or_hint
+PASS test_doc_parser.py::test_industry_experience_bond_fund_futures
+PASS test_doc_parser.py::test_industry_experience_no_trigger_no_detection
+PASS test_doc_parser.py::test_industry_experience_partial_sub_keywords
+PASS test_doc_parser.py::test_job_title_analyst
+PASS test_doc_parser.py::test_job_title_bracket_format
+PASS test_doc_parser.py::test_job_title_ceishi
+PASS test_doc_parser.py::test_job_title_colon_format
+PASS test_doc_parser.py::test_job_title_dba
+PASS test_doc_parser.py::test_job_title_default_when_not_found
+PASS test_doc_parser.py::test_job_title_fuzeren
+PASS test_doc_parser.py::test_job_title_markdown_heading
+PASS test_doc_parser.py::test_job_title_yanfa
+PASS test_doc_parser.py::test_job_title_yunwei
+PASS test_doc_parser.py::test_location_hq_excluded_fallback
+PASS test_doc_parser.py::test_location_hq_with_explicit_workplace
+PASS test_doc_parser.py::test_location_multiple_cities_first_non_hq
+PASS test_doc_parser.py::test_location_office_keyword
+PASS test_doc_parser.py::test_location_work_city_keyword
+PASS test_doc_parser.py::test_markdown_format_full
+PASS test_doc_parser.py::test_preferred_experience_phrase_fullstack_and_dba
+PASS test_doc_parser.py::test_preprocess_emoji_in_requirement
+PASS test_doc_parser.py::test_preprocess_emoji_stripped
+PASS test_doc_parser.py::test_preprocess_fullwidth_digits
+PASS test_doc_parser.py::test_preprocess_fullwidth_letters
+PASS test_doc_parser.py::test_preprocess_fullwidth_salary_parses
+PASS test_doc_parser.py::test_preprocess_zero_width_stripped
+PASS test_doc_parser.py::test_required_condition_certification
+PASS test_doc_parser.py::test_required_condition_cfa
+PASS test_doc_parser.py::test_required_conditions_985_211
+PASS test_doc_parser.py::test_required_conditions_age_limit
+PASS test_doc_parser.py::test_required_conditions_quanrizhi
+PASS test_doc_parser.py::test_required_conditions_shuangzheng
+PASS test_doc_parser.py::test_required_conditions_tongzhao
+PASS test_doc_parser.py::test_resolve_city_unknown_returns_empty
+PASS test_doc_parser.py::test_resolve_city_with_suffix
+PASS test_doc_parser.py::test_resolve_city_without_suffix
+PASS test_doc_parser.py::test_salary_annual_range
+PASS test_doc_parser.py::test_salary_annual_single
+PASS test_doc_parser.py::test_salary_budi
+PASS test_doc_parser.py::test_salary_daiyu_congyou
+PASS test_doc_parser.py::test_salary_miantan
+PASS test_doc_parser.py::test_salary_min_only_qi
+PASS test_doc_parser.py::test_salary_min_only_yishang
+PASS test_doc_parser.py::test_salary_multi_level_ranges
+PASS test_doc_parser.py::test_salary_multi_level_ranges_three_tiers
+PASS test_doc_parser.py::test_salary_multi_month_format
+PASS test_doc_parser.py::test_salary_multi_month_lowercase_k
+PASS test_doc_parser.py::test_salary_negotiable_returns_none
+PASS test_doc_parser.py::test_salary_no_false_positive_experience
+PASS test_doc_parser.py::test_salary_no_k_suffix
+PASS test_doc_parser.py::test_salary_no_label_range
+PASS test_doc_parser.py::test_salary_range_extracted
+PASS test_doc_parser.py::test_salary_single_range_unchanged
+PASS test_doc_parser.py::test_salary_xinchou_prefix
+PASS test_doc_parser.py::test_salary_xinzi_miantan
+PASS test_doc_parser.py::test_salary_zhi_separator
+PASS test_doc_parser.py::test_section_bibe_tiaojian
+PASS test_doc_parser.py::test_section_gangwei_yaoqiu
+PASS test_doc_parser.py::test_section_gangwei_zhize
+PASS test_doc_parser.py::test_section_jiafen_xiang
+PASS test_doc_parser.py::test_section_nengli_yaoqiu
+PASS test_doc_parser.py::test_section_renzhi_yaoqiu
+PASS test_doc_parser.py::test_section_women_xiwang
+PASS test_doc_parser.py::test_section_yingpin_yaoqiu
+PASS test_doc_parser.py::test_section_yingxing_yaoqiu
+PASS test_doc_parser.py::test_securities_fixed_income_python_analyst_real_template
+PASS test_doc_parser.py::test_skill_aliases_are_canonicalized
+PASS test_doc_parser.py::test_skill_csharp_no_false_match
+PASS test_doc_parser.py::test_skill_go_no_false_match_google
+PASS test_doc_parser.py::test_skill_go_real_match
+PASS test_doc_parser.py::test_skill_java_in_chinese_context
+PASS test_doc_parser.py::test_skill_weight_jingtong_no_space
+PASS test_doc_parser.py::test_skill_weight_no_space_chinese
+PASS test_doc_parser.py::test_skill_weight_same_line_youxian
+PASS test_doc_parser.py::test_skill_weight_youxian_no_space
+PASS test_doc_parser.py::test_soft_skills_ai_keywords
+PASS test_doc_parser.py::test_soft_skills_basic_extraction
+PASS test_doc_parser.py::test_soft_skills_deduplication
+PASS test_doc_parser.py::test_soft_skills_spring_cloud_normalized
+PASS test_doc_parser.py::test_specialized_experience_conditions_are_extracted
+PASS test_doc_parser.py::test_tech_conditions_extracted_from_required_section
+PASS test_doc_parser.py::test_tech_conditions_spring_ecosystem
+PASS test_doc_parser.py::test_tech_skills_sql_agent_crawler
+PASS test_doc_parser.py::test_title_fallback_analyst
+PASS test_doc_parser.py::test_title_fallback_no_false_positive_on_kai_fa
+PASS test_doc_parser.py::test_title_fallback_researcher
+PASS test_doc_parser.py::test_title_fallback_strips_numbered_prefix
+PASS test_filtering.py::test_calc_edu_bonus_tiers
+PASS test_filtering.py::test_check_required_condition_985_bachelor_no_non_regular_mark
+PASS test_filtering.py::test_check_required_condition_and_match
+PASS test_filtering.py::test_check_required_condition_empty_items_pass
+PASS test_filtering.py::test_check_required_condition_industry_alias_bond
+PASS test_filtering.py::test_check_required_condition_industry_alias_fund
+PASS test_filtering.py::test_check_required_condition_industry_alias_quant
+PASS test_filtering.py::test_check_required_condition_master_satisfies_bachelor
+PASS test_filtering.py::test_check_required_condition_non_regular_requires_manual_review
+PASS test_filtering.py::test_check_required_condition_or_match
+PASS test_filtering.py::test_check_required_condition_or_uses_industry_aliases
+PASS test_filtering.py::test_check_required_condition_or_uses_school_aliases
+PASS test_filtering.py::test_check_required_condition_plain_string
+PASS test_filtering.py::test_check_required_condition_regular_bachelor
+PASS test_filtering.py::test_check_required_condition_specialized_experience_years
+PASS test_filtering.py::test_evaluate_candidate_returns_bool
+PASS test_filtering.py::test_extract_city_explicit_label
+PASS test_filtering.py::test_extract_city_longer_name_matched_first
+PASS test_filtering.py::test_extract_city_mentioned_in_text
+PASS test_filtering.py::test_extract_city_no_city_returns_empty
+PASS test_filtering.py::test_extract_city_with_shi_suffix
+PASS test_filtering.py::test_filter_candidate_age_at_limit_passes
+PASS test_filtering.py::test_filter_candidate_age_over_limit_rejected
+PASS test_filtering.py::test_filter_candidate_chinese_experience_years
+PASS test_filtering.py::test_filter_candidate_empty_rule_passes_everyone
+PASS test_filtering.py::test_filter_candidate_exception_returns_graceful
+PASS test_filtering.py::test_filter_candidate_experience_insufficient
+PASS test_filtering.py::test_filter_candidate_fulltime_bachelor_passes
+PASS test_filtering.py::test_filter_candidate_keyword_with_special_chars
+PASS test_filtering.py::test_filter_candidate_master_rejected_when_rule_requires_master
+PASS test_filtering.py::test_filter_candidate_max_age_none_means_unlimited
+PASS test_filtering.py::test_filter_candidate_multi_city_structured_fields
+PASS test_filtering.py::test_filter_candidate_multi_city_work_location
+PASS test_filtering.py::test_filter_candidate_negotiable_salary_skips_check
+PASS test_filtering.py::test_filter_candidate_no_age_in_text_passes
+PASS test_filtering.py::test_filter_candidate_no_keywords_full_skill_score
+PASS test_filtering.py::test_filter_candidate_non_regular_bachelor_requires_manual_review
+PASS test_filtering.py::test_filter_candidate_preferred_keywords_add_bonus_without_skill_denominator
+PASS test_filtering.py::test_filter_candidate_returns_keyword_evidence_snippets
+PASS test_filtering.py::test_filter_candidate_returns_score_explanation_and_breakdown
+PASS test_filtering.py::test_filter_candidate_salary_exact_boundary_passes
+PASS test_filtering.py::test_filter_candidate_salary_structured_fields
+PASS test_filtering.py::test_filter_candidate_salary_too_high_rejected
+PASS test_filtering.py::test_filter_candidate_strong_passes
+PASS test_filtering.py::test_filter_candidate_tech_conditions_or
+PASS test_filtering.py::test_filter_candidate_weighted_skill_scoring
+PASS test_filtering.py::test_filter_candidate_wrong_city_rejected
+PASS test_filtering.py::test_keyword_found_ai_agent_aliases
+PASS test_filtering.py::test_keyword_found_case_insensitive
+PASS test_filtering.py::test_keyword_found_chinese_substring
+PASS test_filtering.py::test_keyword_found_english_word_boundary
+PASS test_filtering.py::test_parse_experience_years_arabic_numbers
+PASS test_filtering.py::test_parse_experience_years_arabic_takes_precedence
+PASS test_filtering.py::test_parse_experience_years_chinese_numbers
+PASS test_filtering.py::test_parse_experience_years_no_cross_line_matching
+PASS test_filtering.py::test_parse_experience_years_no_match_returns_none
+PASS test_filtering.py::test_parse_salary_range_api_format
+PASS test_filtering.py::test_parse_salary_range_negotiable
+PASS test_filtering.py::test_parse_salary_range_no_salary
+PASS test_filtering.py::test_parse_salary_range_separator_variants
+PASS test_filtering.py::test_parse_salary_range_single_value
+PASS test_filtering.py::test_parse_salary_range_with_k
+PASS test_filtering.py::test_score_base_only
+PASS test_filtering.py::test_score_edu_bonus_added
+PASS test_filtering.py::test_score_exp_bonus_capped
+PASS test_gui_job_config.py::test_blank_max_age_saves_as_unlimited
+PASS test_gui_job_config.py::test_candidate_detail_groups_api_resume_sections
+PASS test_gui_job_config.py::test_humanize_ai_parse_warning_replaces_internal_field_names
+PASS test_gui_job_config.py::test_invalid_max_age_is_rejected_with_field_name
+PASS test_gui_job_config.py::test_optional_max_age_none_displays_as_blank
+PASS test_gui_job_config.py::test_optional_max_age_number_displays_as_number_text
+PASS test_job_ai_parser.py::test_enhance_config_with_ai_auth_error_does_not_retry
+FAIL test_job_ai_parser.py::test_enhance_config_with_ai_failure_returns_regex_config: 
+FAIL test_job_ai_parser.py::test_enhance_config_with_ai_retries_timeout_and_succeeds: 
+PASS test_job_ai_parser.py::test_enhance_config_with_ai_success
+PASS test_job_ai_parser.py::test_merge_patch_adds_ai_enhancements_without_losing_regex_base
+PASS test_job_ai_parser.py::test_merge_patch_clamps_weights_and_deduplicates
+PASS test_job_ai_parser.py::test_merge_patch_filters_ai_keyword_noise_and_soft_trait_conditions
+PASS test_job_ai_parser.py::test_merge_patch_filters_ai_preferred_items_without_preferred_clause_evidence
+PASS test_job_ai_parser.py::test_merge_patch_filters_ai_skill_requirements_from_required_conditions
+PASS test_job_ai_parser.py::test_merge_patch_keeps_default_max_age_when_ai_returns_null
+PASS test_job_ai_parser.py::test_merge_patch_limits_ai_preferred_bonus_and_avoids_preferred_keyword_duplicates
+PASS test_job_ai_parser.py::test_merge_patch_normalizes_ai_agent_keyword_names
+PASS test_job_ai_parser.py::test_merge_patch_normalizes_ai_required_education_and_experience
+PASS test_job_ai_parser.py::test_merge_patch_normalizes_ai_work_location_to_city
+PASS test_job_ai_parser.py::test_merge_patch_strips_numbered_job_title_prefix
+PASS test_job_ai_parser.py::test_parse_json_response_from_markdown_block
+PASS test_llm_eval.py::test_batch_empty_candidates
+PASS test_llm_eval.py::test_batch_failure_preserves_score
+PASS test_llm_eval.py::test_batch_level_upgrade
+PASS test_llm_eval.py::test_batch_max_candidates_limit
+PASS test_llm_eval.py::test_batch_progress_callback
+PASS test_llm_eval.py::test_batch_score_clamped_high
+PASS test_llm_eval.py::test_batch_score_clamped_low
+PASS test_llm_eval.py::test_batch_sends_compact_summary_to_llm
+PASS test_llm_eval.py::test_batch_stop_event_interrupts
+PASS test_llm_eval.py::test_batch_success_updates_candidate
+PASS test_llm_eval.py::test_build_llm_candidate_summary_compacts_api_resume_sections
+PASS test_llm_eval.py::test_build_prompt_returns_system_and_user
+PASS test_llm_eval.py::test_call_llm_api_client_error_no_retry
+PASS test_llm_eval.py::test_call_llm_api_missing_config
+PASS test_llm_eval.py::test_call_llm_api_success
+PASS test_llm_eval.py::test_call_llm_api_timeout_retries
+PASS test_llm_eval.py::test_parse_response_adjustment_clamped_high
+PASS test_llm_eval.py::test_parse_response_adjustment_clamped_low
+PASS test_llm_eval.py::test_parse_response_chinese_punctuation_normalized
+PASS test_llm_eval.py::test_parse_response_empty_raises
+PASS test_llm_eval.py::test_parse_response_float_adjustment_to_int
+PASS test_llm_eval.py::test_parse_response_json_in_markdown_block
+PASS test_llm_eval.py::test_parse_response_json_with_surrounding_text
+PASS test_llm_eval.py::test_parse_response_missing_adjustment_defaults_zero
+PASS test_llm_eval.py::test_parse_response_plain_json
+PASS test_llm_eval.py::test_parse_response_reason_truncated
+PASS test_llm_eval.py::test_parse_response_unparseable_raises
+PASS test_llm_eval.py::test_recalc_pending
+PASS test_llm_eval.py::test_recalc_recommend
+PASS test_llm_eval.py::test_recalc_strong_recommend
+PASS test_no_ai_fallback.py::test_cli_ai_eval_no_key_skips_gracefully
+PASS test_no_ai_fallback.py::test_cli_no_api_config_runs_normally
+PASS test_no_ai_fallback.py::test_cli_smart_scan_skips_ai_without_key
+PASS test_no_ai_fallback.py::test_connect_timeout_error_message
+PASS test_no_ai_fallback.py::test_friendly_reason_connect_timeout
+PASS test_no_ai_fallback.py::test_friendly_reason_read_timeout
+PASS test_no_ai_fallback.py::test_gui_no_key_checkbox_defaults_off
+PASS test_no_ai_fallback.py::test_gui_status_label_shows_configured
+PASS test_no_ai_fallback.py::test_gui_status_label_shows_unconfigured
+PASS test_no_ai_fallback.py::test_gui_update_ai_eval_status_disables_checkbox_when_no_key
+PASS test_no_ai_fallback.py::test_gui_update_ai_eval_status_keeps_checkbox_off_when_already_off
+PASS test_no_ai_fallback.py::test_gui_with_key_checkbox_defaults_on
+PASS test_no_ai_fallback.py::test_integration_cli_greet_without_ai_eval
+PASS test_no_ai_fallback.py::test_integration_gui_startup_no_key_no_crash
+PASS test_no_ai_fallback.py::test_read_timeout_error_message
+PASS test_packaging_dependencies.py::test_release_workflow_rebuilds_macos_when_dmg_is_missing
+PASS test_packaging_dependencies.py::test_runtime_import_dependencies_are_not_excluded_from_pyinstaller
+PASS test_paths.py::test_base_dir_constant
+PASS test_paths.py::test_candidates_path_constant
+PASS test_paths.py::test_candidates_xlsx_path_constant
+PASS test_paths.py::test_config_path_constant
+PASS test_paths.py::test_ensure_config_files_noop_in_source
+PASS test_paths.py::test_ensure_config_files_noop_without_meipass
+PASS test_paths.py::test_get_base_dir_exists
+PASS test_paths.py::test_get_base_dir_returns_path
+PASS test_paths.py::test_get_base_dir_source_mode
+PASS test_paths.py::test_selectors_path_constant
+PASS test_security.py::test_delete_api_key_failure
+PASS test_security.py::test_delete_api_key_success
+PASS test_security.py::test_delete_api_key_with_base_url
+PASS test_security.py::test_get_api_key_exception
+PASS test_security.py::test_get_api_key_found
+PASS test_security.py::test_get_api_key_not_found
+PASS test_security.py::test_get_api_key_with_base_url_fallback
+PASS test_security.py::test_get_api_key_with_base_url_found
+PASS test_security.py::test_get_storage_key_format_with_base_url
+PASS test_security.py::test_get_storage_key_format_without_base_url
+PASS test_security.py::test_list_all_providers_returns_list
+PASS test_security.py::test_save_api_key_failure
+PASS test_security.py::test_save_api_key_success
+PASS test_security.py::test_save_api_key_with_base_url
+PASS test_security.py::test_service_name_is_set
+PASS test_selectors.py::test_load_selectors_cached
+PASS test_selectors.py::test_load_selectors_file_not_found_returns_empty
+PASS test_selectors.py::test_load_selectors_has_expected_groups
+PASS test_selectors.py::test_load_selectors_returns_dict
+PASS test_selectors.py::test_sel_captcha_css_selectors_is_list
+PASS test_selectors.py::test_sel_captcha_keywords_is_list
+PASS test_selectors.py::test_sel_card_by_id_template
+PASS test_selectors.py::test_sel_greet_button_xpath
+PASS test_selectors.py::test_sel_limit_keywords_is_list
+PASS test_selectors.py::test_sel_returns_default_for_missing_group
+PASS test_selectors.py::test_sel_returns_default_for_missing_key
+PASS test_selectors.py::test_sel_returns_value
+PASS test_selectors.py::test_sel_scroll_bottom_texts
+PASS test_storage.py::test_build_greeted_index_only_greeted
+PASS test_storage.py::test_build_greeted_index_skips_no_geek_id
+PASS test_storage.py::test_dedupe_clears_greeting_in_progress_when_greeted
+PASS test_storage.py::test_dedupe_different_job_names_not_merged
+PASS test_storage.py::test_dedupe_empty_job_name_defaults_to_empty_string
+PASS test_storage.py::test_dedupe_empty_list
+PASS test_storage.py::test_dedupe_keeps_greeting_in_progress_when_not_greeted
+PASS test_storage.py::test_dedupe_keeps_higher_score
+PASS test_storage.py::test_dedupe_merges_greet_sent_from_new_to_old
+PASS test_storage.py::test_dedupe_merges_greet_sent_from_old_to_new
+PASS test_storage.py::test_dedupe_no_geek_id_skipped
+PASS test_storage.py::test_dedupe_preserves_feedback_from_new_to_old
+PASS test_storage.py::test_dedupe_preserves_feedback_from_old_to_new
+PASS test_storage.py::test_dedupe_preserves_followup_from_new_to_old
+PASS test_storage.py::test_dedupe_preserves_followup_from_old_to_new
+PASS test_storage.py::test_get_greeted_geek_ids_empty
+PASS test_storage.py::test_get_greeted_geek_ids_extracts_greeted
+PASS test_storage.py::test_is_already_greeted_by_geek_id_and_job
+PASS test_storage.py::test_is_already_greeted_index_without_job_name
+PASS test_storage.py::test_is_already_greeted_with_index
+PASS test_storage.py::test_is_already_greeted_without_job_name
+PASS test_storage.py::test_load_backup_corrupted_returns_empty
+PASS test_storage.py::test_load_happy_path_from_valid_file
+PASS test_storage.py::test_load_restores_backup_and_copies_to_main
+PASS test_storage.py::test_load_returns_empty_when_both_files_corrupt
+PASS test_storage.py::test_load_returns_empty_when_no_file
+PASS test_storage.py::test_save_backup_failure_still_saves
+PASS test_storage.py::test_save_creates_backup_of_existing_file
+PASS test_storage.py::test_save_no_backup_when_no_existing_file
+PASS test_storage.py::test_save_no_tmp_file_left_behind
+PASS test_storage.py::test_save_then_load_roundtrip
+PASS test_storage.py::test_save_with_explicit_path_creates_backup
+  [OK] å·²ä» GitHub Release è¯»å–å¯¹ç«¯äº§ç‰©å®Œæ•´æ€§å…ƒæ•°æ®
+PASS test_update_integrity.py::test_collect_github_release_asset_metadata_uses_remote_digest_before_download
+PASS test_update_integrity.py::test_cross_platform_rebuild_policy_distinguishes_build_and_docs_changes
+PASS test_update_integrity.py::test_current_platform_update_artifact_names_macos
+PASS test_update_integrity.py::test_current_platform_update_artifact_names_windows
+PASS test_update_integrity.py::test_gitee_asset_can_reuse_github_metadata_from_latest_json
+PASS test_update_integrity.py::test_gitee_asset_matches_local_downloads_remote_hash_when_digest_missing
+PASS test_update_integrity.py::test_gitee_asset_matches_local_uses_latest_json_metadata_before_download
+
+>>> Gitee æ—§ç‰ˆæœ¬é™„ä»¶æ¸…ç†å°†åˆ é™¤ï¼ˆä¿ç•™ v9.9.9ï¼‰
+  æ—§é™„ä»¶æ•°é‡: 2
+  å¯é‡Šæ”¾ç©ºé—´: 500 B
+  - v9.9.8: BOSS_ResumeFilter.exe (200 B)
+  - v9.9.7: README.md (300 B)
+
+  [OK] Gitee æ—§ç‰ˆæœ¬é™„ä»¶å·²æ¸…ç†ï¼Œä¿ç•™ v9.9.9 çš„äº§ç‰©
+PASS test_update_integrity.py::test_gitee_clean_old_assets_apply_deletes_only_non_current_assets
+
+>>> Gitee æ—§ç‰ˆæœ¬é™„ä»¶æ¸…ç†é¢„è§ˆï¼ˆä¿ç•™ v9.9.9ï¼‰
+  æ—§é™„ä»¶æ•°é‡: 1
+  å¯é‡Šæ”¾ç©ºé—´: 200 B
+  - v9.9.8: BOSS_ResumeFilter.exe (200 B)
+
+  [é¢„è§ˆ] æœªæ‰§è¡Œåˆ é™¤ã€‚ç¡®è®¤åè¿è¡Œï¼š
+  python build.py --gitee-clean-old-assets 9.9.9 --apply
+PASS test_update_integrity.py::test_gitee_clean_old_assets_dry_run_keeps_all_assets
+PASS test_update_integrity.py::test_github_asset_matches_local_by_digest_without_download
+PASS test_update_integrity.py::test_github_asset_size_mismatch_requires_upload
+PASS test_update_integrity.py::test_latest_json_manifest_keeps_download_and_asset_keys_consistent
+PASS test_update_integrity.py::test_needs_local_rebuild_uses_build_fingerprint
+PASS test_update_integrity.py::test_release_asset_metadata_from_remote_assets_uses_github_digest
+PASS test_update_integrity.py::test_release_version_rules_reject_zero_patch_tags
+  [è·³è¿‡] Gitee å¯¹ç«¯äº§ç‰©å·²å¯å¤ç”¨: BOSS_ResumeFilter_mac.zip (GitHub digest ä¸ latest.json ä¸€è‡´)
+  [è·³è¿‡] Gitee å¯¹ç«¯äº§ç‰©å·²å¯å¤ç”¨: BOSS_ResumeFilter.dmg (GitHub digest ä¸ latest.json ä¸€è‡´)
+  [è·³è¿‡] æ— éœ€ä¸‹è½½å¯¹ç«¯äº§ç‰©
+PASS test_update_integrity.py::test_sync_gitee_from_github_refreshes_stale_release_cache_before_upload
+  [è·³è¿‡] Gitee å¯¹ç«¯äº§ç‰©å·²å¯å¤ç”¨: BOSS_ResumeFilter_mac.zip (GitHub digest ä¸ latest.json ä¸€è‡´)
+  [è·³è¿‡] Gitee å¯¹ç«¯äº§ç‰©å·²å¯å¤ç”¨: BOSS_ResumeFilter.dmg (GitHub digest ä¸ latest.json ä¸€è‡´)
+  [è·³è¿‡] æ— éœ€ä¸‹è½½å¯¹ç«¯äº§ç‰©
+PASS test_update_integrity.py::test_sync_gitee_from_github_skips_download_when_remote_assets_are_reusable
+  ä¸‹è½½å¯¹ç«¯äº§ç‰© å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter.exe
+  [OK] å·²ä¸‹è½½: BOSS_ResumeFilter.exe
+  ä¸Šä¼  1 ä¸ªå¯¹ç«¯äº§ç‰© å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter.exe
+  [OK] Gitee å·²ä¸Šä¼ : BOSS_ResumeFilter.exe
+PASS test_update_integrity.py::test_sync_gitee_from_github_supports_macos_release_waiting_for_windows_exe
+  ä¸‹è½½å¯¹ç«¯äº§ç‰© å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter_mac.zip
+  [OK] å·²ä¸‹è½½: BOSS_ResumeFilter_mac.zip
+  ä¸‹è½½å¯¹ç«¯äº§ç‰© å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter.dmg
+  [OK] å·²ä¸‹è½½: BOSS_ResumeFilter.dmg
+  ä¸Šä¼  1 ä¸ªå¯¹ç«¯äº§ç‰© å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter_mac.zip
+  [OK] Gitee å·²ä¸Šä¼ : BOSS_ResumeFilter_mac.zip
+  ä¸Šä¼  DMG å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter.dmg
+  [OK] Gitee å·²ä¸Šä¼ : BOSS_ResumeFilter.dmg
+PASS test_update_integrity.py::test_sync_gitee_from_github_transfers_macos_zip_before_dmg
+  æµ‹è¯•ä¼ è¾“ å°æ–‡ä»¶å¹¶å‘: 1 ä¸ª (workers=1)
+  æµ‹è¯•ä¼ è¾“ å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter_mac.zip
+  æµ‹è¯•ä¼ è¾“ å¤§æ–‡ä»¶ä¸²è¡Œ: BOSS_ResumeFilter.dmg
+PASS test_update_integrity.py::test_transfer_batch_runs_small_files_before_large_files
+PASS test_update_integrity.py::test_update_latest_json_preserves_existing_release_date_for_same_version
+PASS test_update_integrity.py::test_update_latest_json_requires_complete_auto_update_metadata
+PASS test_update_integrity.py::test_update_latest_json_skips_when_content_is_unchanged
+PASS test_update_integrity.py::test_update_latest_json_writes_asset_metadata
+PASS test_update_integrity.py::test_update_latest_json_writes_macos_update_asset_metadata
+PASS test_update_integrity.py::test_verify_downloaded_file_accepts_matching_size_and_sha256
+PASS test_update_integrity.py::test_verify_downloaded_file_rejects_invalid_exe_header
+PASS test_update_integrity.py::test_verify_downloaded_file_rejects_invalid_zip_header
+PASS test_update_integrity.py::test_verify_downloaded_file_rejects_missing_integrity_metadata
+PASS test_update_integrity.py::test_verify_downloaded_file_rejects_sha256_mismatch
+PASS test_update_integrity.py::test_verify_downloaded_file_rejects_size_mismatch
+  [OK] ç‰ˆæœ¬å†å²å®Œæ•´æ€§æ£€æŸ¥é€šè¿‡ï¼šCHANGELOG å«å…¨éƒ¨ 3 ä¸ªå†å²ç‰ˆæœ¬ï¼ŒREADME ä¿ç•™æœ€è¿‘ 3 ä¸ªç‰ˆæœ¬æ‘˜è¦
+PASS test_update_integrity.py::test_version_history_integrity_ignores_invalid_zero_patch_local_tag
+PASS test_update_integrity.py::test_windows_update_script_resets_pyinstaller_runtime_env
+PASS test_window_positioning.py::test_effective_scale_grows_on_large_standard_dpi_screen
+PASS test_window_positioning.py::test_effective_scale_keeps_existing_default_on_normal_screen
+PASS test_window_positioning.py::test_effective_scale_no_reduction_below_130_percent
+PASS test_window_positioning.py::test_effective_scale_reduces_4k_175
+PASS test_window_positioning.py::test_effective_scale_reduces_high_dpi_150_percent
+PASS test_window_positioning.py::test_effective_scale_uses_compact_target_on_2560x1440_screen
+PASS test_window_positioning.py::test_enable_high_dpi_awareness_is_noop_off_windows
+PASS test_window_positioning.py::test_place_main_window_ignores_physical_monitor_area_when_tk_uses_virtual_pixels
+PASS test_window_positioning.py::test_place_main_window_uses_fixed_startup_monitor_area
+PASS test_window_positioning.py::test_place_window_centered_clamps_oversized_window_to_screen_ratio
+PASS test_window_positioning.py::test_place_window_centered_compensates_parent_titlebar_on_y_only
+PASS test_window_positioning.py::test_place_window_centered_keeps_parent_center_inside_visible_screen
+PASS test_window_positioning.py::test_place_window_centered_uses_non_zero_screen_origin
+PASS test_window_positioning.py::test_place_window_centered_uses_requested_size_when_hidden_window_reports_one_pixel
+PASS test_window_positioning.py::test_resolve_display_scale_prefers_tk_dpi_in_system_dpi_aware_mode
+PASS test_window_positioning.py::test_resolve_display_scale_uses_physical_virtual_ratio_in_dpi_unaware_mode
+PASS test_window_positioning.py::test_show_main_window_centered_reveals_after_delayed_centering
+PASS test_window_positioning.py::test_system_dpi_aware_detection_requires_physical_pixels_and_native_dpi
+PASS test_window_positioning.py::test_system_dpi_aware_font_scale_is_restrained_below_native_4k_175
+PASS test_window_positioning.py::test_system_dpi_aware_scale_is_larger_than_dpi_unaware_reduction_on_4k_175
+PASS test_window_positioning.py::test_update_dialog_centering_clamps_to_visible_screen
+SUMMARY total=438 failures=2
