@@ -205,8 +205,6 @@ def extract_summary_info(text: str) -> dict[str, Any]:
                                 info['salary'] = m.group(1) + 'K'
                             elif '面议' in val:
                                 info['salary'] = '面议'
-                            elif val.strip():
-                                print(f"[DEBUG] 期望薪资解析失败: raw='{val}'")
             break
 
     # DOM 格式兜底
@@ -1053,8 +1051,6 @@ def _extract_candidates_from_api_payload(payload: Any) -> list[dict[str, str]]:
                 if m:
                     structured['salary_min'] = int(m.group(1))
                     structured['salary_max'] = int(m.group(1))
-                else:
-                    print(f"[DEBUG] 薪资解析失败: raw='{salary_text}'")
         candidates.append({
             "geek_id": geek_id,
             "name": _pick_api_text(geek_card, "geekName", "name", "encryptGeekName") or "未知",
@@ -1188,18 +1184,15 @@ class _ApiCapture:
             # 验证注入是否生效
             injected = target.run_js('return !!window.__bossApiCapture && window.__bossApiCapture.injected')
             if not injected:
-                print("[API] JS 注入未生效（可能是跨域 iframe），回退到主页面")
                 page.run_js(self._INJECT_JS)
                 target = page
                 injected = page.run_js('return !!window.__bossApiCapture && window.__bossApiCapture.injected')
             self._page = page
             self._iframe = target if target is not page else None
             self._active = bool(injected)
-            where = "iframe" if self._iframe else "主页面"
-            print(f"[API] JS fetch 拦截已启动（{where}），注入验证: {injected}")
             return self._active
-        except Exception as e:
-            print(f"[API] JS 拦截启动失败: {e}")
+        except Exception:
+            pass
         return False
 
     def consume(self) -> tuple[list[dict[str, str]], str]:
@@ -1253,10 +1246,9 @@ def _start_recommend_api_listener(page: ChromiumPage) -> Any | None:
         except Exception:
             pass
         listener.start("zpjob/rec/geek/list", method=("GET", "POST"), res_type=("XHR", "Fetch"))
-        print(f"[API] 原生 listener 已启动，listening={listener.listening}")
         return listener
-    except Exception as e:
-        print(f"[API] 原生 listener 启动失败，尝试 JS 拦截兜底：{e}")
+    except Exception:
+        pass
 
     capture = _ApiCapture()
     if capture.start(page):
@@ -1417,7 +1409,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
     # 刷新会使页面恢复默认岗位，但能确保 API 返回全部候选人。
     api_listener = _start_recommend_api_listener(page)
     if not api_listener:
-        print("[API] 监听启动失败，将仅使用 DOM 提取")
+        pass  # 仅使用 DOM 提取
     else:
         try:
             page.refresh()
@@ -1489,18 +1481,6 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         }})()
                     ''')
                     time.sleep(_human_delay(0.8, 0.5))
-                    # 诊断：前 3 轮打印滚动详情
-                    if scroll_result and scroll_round <= 3:
-                        c = scroll_result.get('container')
-                        if c:
-                            print(f"[SCROLL 轮{scroll_round+1}] window: {scroll_result.get('winBefore',0):.0f}→{scroll_result.get('winAfter',0):.0f}"
-                                  f" | 容器: <{c.get('tag')} class=\"{c.get('cls')}\"> scrollTop: {c.get('before',0)}→{c.get('after',0)}"
-                                  f" (Δ{c.get('after',0)-c.get('before',0)}px, sh={c.get('sh')}, ch={c.get('ch')}, ov={c.get('ov')})"
-                                  f" | 卡片数: {scroll_result.get('cardCount',0)}")
-                        else:
-                            print(f"[SCROLL 轮{scroll_round+1}] window: {scroll_result.get('winBefore',0):.0f}→{scroll_result.get('winAfter',0):.0f}"
-                                  f" | ⚠️ 未找到可滚动容器(overflowY=auto/scroll)"
-                                  f" | 卡片数: {scroll_result.get('cardCount',0)}")
                 else:
                     page.run_js(f'window.scrollBy(0, {SCROLL_PX})')
                     time.sleep(_human_delay(0.8, 0.5))
@@ -1529,8 +1509,6 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
 
                 # 消费 API 监听数据（结构化字段：薪资、经验、年龄等）
                 api_candidates, _api_url = _consume_recommend_api_candidates(api_listener)
-                if api_candidates and scroll_round < 3:
-                    print(f"[API] 轮{scroll_round+1}: 捕获 {len(api_candidates)} 个结构化候选人")
                 for item in api_candidates:
                     item['_source'] = 'api'
                 batch.extend(api_candidates)
