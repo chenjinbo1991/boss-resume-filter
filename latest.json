@@ -1,33 +1,33 @@
 {
-  "version": "2.10.1",
-  "release_date": "2026-06-09",
+  "version": "2.10.2",
+  "release_date": "2026-06-11",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/BOSS_ResumeFilter.dmg",
-    "job_config": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/job_config.json",
-    "readme": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/README.md"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/BOSS_ResumeFilter.dmg",
+    "job_config": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/job_config.json",
+    "readme": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/README.md"
   },
   "assets": {
     "windows": {
-      "size": 45631317,
-      "sha256": "6394b4204487ef2ffd49c21c9f519ad71eae714d96144b4dd45b744f53bc534c"
+      "size": 45657501,
+      "sha256": "4c1e852a5c3fd65f76c1a15eafb4a7c02e410bc80fae37a17e109aa60840417e"
     },
     "macos_dmg": {
-      "size": 33198756,
-      "sha256": "f12c6e02a4f32d09f5d6eb926b70215190c770989dc64f53dd40607ff32fb3c4"
+      "size": 33229334,
+      "sha256": "63b7ef35e0dd87de8b7adabd6a27b350f26bed82a9ca005dde686d88599373e8"
     },
     "macos": {
-      "size": 34671776,
-      "sha256": "486ac95f34f3908570b5fec8e3763be563d632f5e4fcdda73151f8a35eac3f79"
+      "size": 34699762,
+      "sha256": "148a53631e51f53134442278203f0839dfed245b9942c9a25ff95f63f1b00490"
     }
   },
-  "release_notes": "### 新增功能\n\n- **API 候选人提取**：支持从 BOSS 推荐接口 JSON 直接提取候选人，不再完全依赖页面滚动获取，提升数据完整性和提取速度\n\n### 体验优化\n\n- **候选人信息正确显示**：修复薪资、工作年限、教育经历在 API 格式下解析错误的问题，支持多学历展示\n- **运行页职位不再重置**：移除 API 监听预热时的页面刷新，改为微滚动，避免重置用户手动选择的招聘职位\n- **淘汰原因归类合并**：筛选淘汰原因按类别（经验/学历/年龄/地点/薪资/技术条件）合并统计，不再逐条列出\n- **AI 评估进度即时更新**：提交评估任务后立即显示进度，不再等第一个结果返回；评估日志格式统一\n- **筛选完成状态标识**：进度条最终状态显示自绘彩色图标（绿色勾/红色叉），附带通过数/总数/已打招呼统计\n- **选择器检查静默化**：连接后自动检查选择器，一切正常时不输出日志，仅异常时提示\n- **学历筛选更合理**：疑似非统招本科不再直接淘汰，改为标记风险提示，确认后再决定是否沟通\n- **Excel 导出增强**：新增\"是否需人工确认\"、\"风险提示\"、\"自动打招呼阻断原因\"三列，方便离线审阅\n- **候选人详情展示风险**：详情页和打招呼确认弹窗展示风险提示，避免误操作\n- **AI 评估更精准**：传给大模型的候选人信息经过结构化压缩，评估质量和响应速度均有提升\n- **AI 评估更稳定**：调整网络超时参数，减少因网络波动导致的评估失败\n- **API 提取数据更精准**：候选人经验、年龄、期望城市、期望薪资等关键信息直接从接口数据传递，不再依赖文本正则重新解析，筛选结果更可靠\n- **薪资筛选更稳定**：兼容更多薪资格式（如\"15K以上\"），减少因格式差异导致薪资过滤被跳过\n- **多城市候选人匹配**：期望多个城市的候选人不再被误判为\"地点不符\"\n\n### 问题修复\n\n- **启动崩溃修复**：修复部分环境下 GUI 启动时因状态图标初始化顺序错误导致崩溃的问题",
+  "release_notes": "### 新增功能\n\n- **API 直调候选人提取**：默认从当前推荐页岗位参数直接调用 BOSS 推荐接口分页获取候选人，优先使用接口 JSON 中的结构化履历数据，减少对页面滚动和 DOM 可见文本的依赖\n- **多级提取兜底链路**：API 直调不可用时自动降级到 `listener + page.refresh()` 获取首屏接口数据；刷新监听也不可用时继续回退到 DOM 提取，保证接口变化时仍可运行\n\n### 体验优化\n\n- **刷新兜底更安全**：备用刷新方案会比较刷新前后的岗位标识；如刷新后岗位变化，停止扫描并提示先将目标岗位设为默认岗位，避免静默抓取错误岗位的候选人\n- **API 结构化数据全链路复用**：接口获取到的完整候选人摘要继续写入 JSON、Excel 详细信息、AI 二次评估输入和候选人详情页，不新增重复摘要字段\n\n### 问题修复\n\n- **API 监听稳定性修复**：修复微滚动只能捕获少量候选人接口数据的问题；当直调失败时，刷新监听作为受保护的备用路径获取完整结构化数据",
   "downloads_cn": {
-    "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/job_config.json",
-    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/README.md",
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/BOSS_ResumeFilter.exe",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.1/BOSS_ResumeFilter.dmg"
+    "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/job_config.json",
+    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/README.md",
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/BOSS_ResumeFilter.exe",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.10.2/BOSS_ResumeFilter.dmg"
   }
 }
