@@ -255,7 +255,7 @@ def test_dom_scan_uses_conservative_empty_limit_without_api_listener():
     with patch('bossmaster.time.sleep'), \
             patch('bossmaster._human_delay', return_value=0), \
             patch('bossmaster.get_iframe', return_value=None), \
-            patch('bossmaster._start_recommend_api_listener') as mock_start_listener, \
+            patch('bossmaster._start_recommend_api_listener', return_value=None) as mock_start_listener, \
             patch('bossmaster._consume_recommend_api_candidates', return_value=([], "")) as mock_consume_api, \
             patch('bossmaster._detect_captcha', return_value=(False, "")), \
             patch('bossmaster._extract_cards_batch', side_effect=dom_batches) as mock_dom_extract:
@@ -263,11 +263,147 @@ def test_dom_scan_uses_conservative_empty_limit_without_api_listener():
 
     assert len(candidates) == 15
     assert mock_dom_extract.call_count == 6
-    # API 监听始终启用；启动后预热刷新一次，以捕获首屏接口包。
+    # 无法从当前页构造 API 分页时，降级到 listener + DOM，但不刷新页面。
     mock_start_listener.assert_called_once()
-    assert page.refresh_count == 1
+    assert page.refresh_count == 0
     # API 消费调用：每轮 1 次，共 6 轮
     assert mock_consume_api.call_count == 6
+
+
+def test_recommend_api_pagination_builds_from_current_iframe_jobid():
+    class FakeFrame:
+        def run_js(self, script):
+            assert script == 'return location.href'
+            return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+
+    pagination = bossmaster._build_recommend_api_pagination_from_page(FakeFrame())
+
+    assert pagination["base_url"] == "https://www.zhipin.com/wapi/zpjob/rec/geek/list"
+    assert pagination["page_param"] == "page"
+    assert pagination["page_size"] is None
+    assert pagination["query_params"]["jobId"] == "job-123"
+    assert pagination["query_params"]["page"] == "1"
+
+
+def test_scan_uses_direct_api_pagination_without_refresh_or_dom_scroll():
+    class FakeFrame:
+        def __init__(self):
+            self.refresh_count = 0
+
+        def run_js(self, script):
+            if script == 'return location.href':
+                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+            return None
+
+        def refresh(self):
+            self.refresh_count += 1
+
+    page = FakeFrame()
+    api_pages = [
+        ([{"geek_id": "g-api-1", "name": "张三", "summary": "本科，5年 Java", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-api-2", "name": "李四", "summary": "本科，6年 Java", "structured": {"exp_years": 6}}], False),
+        ([], False),
+    ]
+
+    with patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener') as mock_start_listener, \
+            patch('bossmaster._fetch_api_page_result', side_effect=api_pages) as mock_fetch, \
+            patch('bossmaster._consume_recommend_api_candidates') as mock_consume_api, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=3)
+
+    assert [c["geek_id"] for c in candidates] == ["g-api-1", "g-api-2"]
+    assert page.refresh_count == 0
+    assert mock_fetch.call_count == 3
+    mock_start_listener.assert_called_once()
+    mock_consume_api.assert_not_called()
+    mock_dom_extract.assert_not_called()
+
+
+def test_scan_falls_back_to_refresh_listener_when_direct_api_unavailable():
+    class FakeListener:
+        def stop(self):
+            pass
+
+    class FakePage:
+        def __init__(self):
+            self.refresh_count = 0
+
+        def run_js(self, script):
+            if script == 'return location.href':
+                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+            if "document.body" in script:
+                return "Java 工程师 _ 南京 15-20K"
+            return None
+
+        def refresh(self):
+            self.refresh_count += 1
+
+    page = FakePage()
+
+    with patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener', return_value=FakeListener()) as mock_start_listener, \
+            patch('bossmaster._fetch_api_page_result', return_value=([], False)) as mock_fetch, \
+            patch('bossmaster._consume_recommend_api_candidates', return_value=(
+                [{"geek_id": "g-api-refresh", "name": "王五", "summary": "本科，7年 Java", "structured": {"exp_years": 7}}],
+                "https://www.zhipin.com/wapi/zpjob/rec/geek/list",
+            )) as mock_consume_api, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=1)
+
+    assert [c["geek_id"] for c in candidates] == ["g-api-refresh"]
+    assert page.refresh_count == 1
+    mock_start_listener.assert_called_once()
+    mock_fetch.assert_called_once()
+    mock_consume_api.assert_called_once()
+    mock_dom_extract.assert_not_called()
+
+
+def test_refresh_listener_stops_when_refresh_changes_job_identity():
+    class FakeListener:
+        def stop(self):
+            pass
+
+    class FakePage:
+        def __init__(self):
+            self.refresh_count = 0
+
+        def run_js(self, script):
+            if script == 'return location.href':
+                job_id = "job-after" if self.refresh_count else "job-before"
+                return f"https://www.zhipin.com/web/frame/recommend/?jobid={job_id}&status=0"
+            if "document.body" in script:
+                return "默认岗位 _ 南京 10-15K" if self.refresh_count else "目标岗位 _ 南京 15-20K"
+            return None
+
+        def refresh(self):
+            self.refresh_count += 1
+
+    page = FakePage()
+
+    with patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener', return_value=FakeListener()), \
+            patch('bossmaster._fetch_api_page_result', return_value=([], None)), \
+            patch('bossmaster._consume_recommend_api_candidates') as mock_consume_api, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=1)
+
+    assert candidates == []
+    assert page.refresh_count == 1
+    assert "刷新后岗位已变化，请先将目标岗位设为默认岗位" in output.getvalue()
+    mock_consume_api.assert_not_called()
+    mock_dom_extract.assert_not_called()
 
 
 def test_find_card_by_scroll_returns_to_top_after_current_position_miss():

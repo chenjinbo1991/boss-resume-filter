@@ -9,7 +9,7 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.10.1）
+├── gui_main.py           # 图形界面主程序（v2.10.2）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
@@ -140,7 +140,7 @@ boss-resume-filter/
 
 ### 候选人提取
 
-`_start_recommend_api_listener()` 监听推荐接口，`page.refresh()` 触发 API 调用，listener 捕获完整候选人列表（含结构化字段：exp_years/age/degree/city/salary_min/salary_max）。BOSS 推荐页只在页面加载时发一次完整 API，滚动不触发新请求，因此必须 refresh 触发。refresh 会重置岗位到默认，是当前接受的代价。DOM 滚动提取（`_extract_cards_batch()`）作为兜底。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
+三级提取链路：**API 直调**（`_build_recommend_api_pagination_from_page()` 从当前页面 URL 读取 jobId 直接调用推荐接口分页）→ **监听兜底**（`_start_recommend_api_listener()` + `page.refresh()` 触发接口，会重置岗位）→ **DOM 提取**（`_extract_cards_batch()` 滚动提取）。API 直调不触发页面刷新，是默认首选。`_read_recommend_page_identity()` 用于刷新前后比对岗位标识，防止兜底方案静默抓取错误岗位。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
 
 ### 滚动提前终止
 
@@ -243,17 +243,7 @@ boss-resume-filter/
 
 ### macOS Tk 8.6 字体物理像素减半
 
-Apple Silicon 报告 DPI 72，Intel Mac venv 报告 96（系统 Tk 8.5 报告 144 不受影响）。阈值 `< 80` 区分需补偿环境：
-
-```python
-if sys.platform == 'darwin':
-    self.font_boost = 1.65 if self.root.winfo_fpixels('1i') < 80 else 1.0
-else:
-    self.font_boost = 1.0
-self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost
-```
-
-`font_scale` 仅用于字体，布局/间距/图标/窗口/rowheight 仍用 `dpi_scale × zoom_factor`。
+Apple Silicon 报告 DPI 72，Intel Mac venv 报告 96（系统 Tk 8.5 报告 144 不受影响）。阈值 `< 80` 区分需补偿环境：`self.font_boost = 1.65 if (sys.platform == 'darwin' and self.root.winfo_fpixels('1i') < 80) else 1.0`，然后 `self.font_scale = self.dpi_scale * self.zoom_factor * self.font_boost`。`font_scale` 仅用于字体，布局/间距/图标/窗口/rowheight 仍用 `dpi_scale × zoom_factor`。
 
 ### 字体常量与 Combobox 规范
 
@@ -288,12 +278,16 @@ PATCH release 必须带 `tag_name` 和 `body`（只传 `name` 返回 400）。re
 
 ### CI 模式下 babel locale-data 路径查找
 
-CI 使用 `.venv-ci` 目录，但本地打包用 `pack_venv`。`build.py` 中 babel locale-data 的搜索路径必须同时覆盖两种虚拟环境目录（`pack_venv` 和 `.venv-ci`），否则 CI 构建的 Mac 产物会缺少 locale .dat 文件，导致 `tkcalendar.DateEntry` 运行时 `FileNotFoundError` 崩溃。搜索路径缺失时 `build.py` 会打印显式告警，不再静默跳过。
+CI 用 `.venv-ci`，本地打包用 `pack_venv`。`build.py` 中 babel locale-data 搜索路径必须同时覆盖两种虚拟环境目录，否则 CI 构建的 Mac 产物缺少 locale .dat，`tkcalendar.DateEntry` 运行时 `FileNotFoundError`。
 
 ### provider 显示名称与内部键不一致
 
-GUI 中 `api_provider_var.get()` 返回显示名称（如「通义千问」），但 `get_api_key()` / keyring 存的是内部键（如 `qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换，否则 keyring 查不到 Key。`get_api_key(provider, base_url)` 按 provider + base_url 组合查找，新 key 找不到时自动回退旧格式（仅 provider）实现向后兼容。
+GUI `api_provider_var.get()` 返回显示名称（「通义千问」），keyring 存内部键（`qwen`）。调用前必须通过 `DISPLAY_TO_KEY` 映射转换。`get_api_key(provider, base_url)` 按 provider + base_url 组合查找，新 key 找不到时自动回退旧格式（仅 provider）。
 
 ### 更新弹窗必须使用 GUI 缩放参数
 
-`updater.py` 的 `show_update_dialog()` 接收 `gui` 参数，使用 `gui.font_scale`/`gui.dpi_scale`/`gui.zoom_factor` 计算字体和布局。不能硬编码字号，否则高 DPI 下字体模糊或过小。更新内容从远端 `CHANGELOG.md` 提取（Gitee → GitHub fallback），不用 `latest.json` 的 `release_notes`（后者可能是简化版）。Text 控件参数（`wrap="char"`、`lmargin1`、`lmargin2`、`spacing1/2/3`）必须与主界面版本历史一致，否则排版错乱。
+`updater.py` 的 `show_update_dialog()` 接收 `gui` 参数，使用 `gui.font_scale`/`gui.dpi_scale`/`gui.zoom_factor` 计算字体和布局。不能硬编码字号，否则高 DPI 下字体模糊或过小。更新内容从远端 `CHANGELOG.md` 提取（Gitee → GitHub fallback），不用 `latest.json` 的 `release_notes`。
+
+### API 监听依赖 page.refresh 触发完整数据
+
+`extract_candidates_by_comprehensive_analysis()` 启动 `_start_recommend_api_listener()` 后必须 `page.refresh()` 才能触发完整的推荐接口调用（返回全部候选人结构化数据）。微滚动只能触发部分数据（约 28%），后续滚动不触发新 API 请求。`page.refresh()` 会重置岗位筛选到默认岗位，这是当前接受的代价。

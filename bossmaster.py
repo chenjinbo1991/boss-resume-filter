@@ -1335,31 +1335,114 @@ def _parse_api_pagination(url: str) -> dict[str, Any] | None:
     }
 
 
-def _fetch_api_page(page: Any, pagination: dict[str, Any], page_num: int) -> list[dict[str, str]]:
-    """通过浏览器 fetch 直接调用 BOSS 推荐接口分页。
+def _build_recommend_api_pagination_from_page(target: Any) -> dict[str, Any] | None:
+    """从当前推荐页 iframe URL 构造推荐接口分页参数，不刷新页面。"""
+    try:
+        href = target.run_js('return location.href') or ""
+    except Exception:
+        return None
 
-    Args:
-        page: DrissionPage ChromiumPage 对象
-        pagination: _parse_api_pagination 返回的分页信息
-        page_num: 要请求的页码（从 1 开始）
+    from urllib.parse import urlparse, parse_qs, urlunparse
+    parsed = urlparse(href)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    job_id = (params.get('jobid') or params.get('jobId') or [""])[0]
+    if not job_id:
+        return None
 
-    Returns:
-        候选人列表，失败时返回空列表
-    """
+    base = urlunparse((parsed.scheme, parsed.netloc, "/wapi/zpjob/rec/geek/list", '', '', ''))
+    return {
+        'base_url': base,
+        'page_param': 'page',
+        'page_size': None,
+        'query_params': {
+            'age': '16,-1',
+            'activation': '0',
+            'school': '0',
+            'gender': '0',
+            'recentNotView': '0',
+            'exchangeResumeWithColleague': '0',
+            'major': '0',
+            'keyword1': '-1',
+            'switchJobFrequency': '0',
+            'degree': '0',
+            'experience': '0',
+            'intention': '0',
+            'salary': '0',
+            'jobId': job_id,
+            'page': '1',
+            'coverScreenMemory': '0',
+            'cardType': '0',
+        },
+    }
+
+
+def _read_recommend_page_identity(target: Any) -> dict[str, str]:
+    """读取当前推荐 iframe 的岗位标识，用于刷新监听兜底前后校验。"""
+    try:
+        href = target.run_js('return location.href') or ""
+    except Exception:
+        href = ""
+
+    job_id = ""
+    if href:
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(href)
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            job_id = (params.get('jobid') or params.get('jobId') or [""])[0]
+        except Exception:
+            job_id = ""
+
+    title = ""
+    try:
+        title = target.run_js(r'''
+            return (function() {
+                const text = (document.body && document.body.innerText || '').split('\n')
+                    .map(s => s.trim()).filter(Boolean);
+                for (let i = 0; i < text.length; i++) {
+                    if (text[i] === '最新' && text[i + 1]) return text[i + 1];
+                    if (text[i] === '推荐' && text[i + 1] && text[i + 1] !== '最新') return text[i + 1];
+                }
+                return '';
+            })()
+        ''') or ""
+    except Exception:
+        title = ""
+
+    return {"job_id": job_id, "job_title": title, "href": href}
+
+
+def _same_recommend_page_identity(before: dict[str, str], after: dict[str, str]) -> bool:
+    """判断刷新前后是否仍是同一推荐岗位。"""
+    before_job = before.get("job_id", "")
+    after_job = after.get("job_id", "")
+    if before_job and after_job and before_job != after_job:
+        return False
+
+    before_title = before.get("job_title", "")
+    after_title = after.get("job_title", "")
+    if before_title and after_title and before_title != after_title:
+        return False
+
+    return True
+
+
+def _fetch_api_page_result(page: Any, pagination: dict[str, Any], page_num: int) -> tuple[list[dict[str, str]], bool | None]:
+    """通过浏览器 fetch 直接调用 BOSS 推荐接口分页，返回候选人和 hasMore。"""
     from urllib.parse import urlencode
     params = dict(pagination['query_params'])
     if pagination['page_param'] == 'page':
         params['page'] = str(page_num)
-        params['pageSize'] = str(pagination['page_size'])
+        if pagination.get('page_size'):
+            params['pageSize'] = str(pagination['page_size'])
     else:
-        # cursor 模式暂不支持直接分页，返回空让调用方回退
-        return []
+        return [], None
 
     query_string = urlencode(params)
     full_url = f"{pagination['base_url']}?{query_string}"
 
     js_code = f'''
-    (async () => {{
+    return (async () => {{
         try {{
             const resp = await fetch("{full_url}", {{credentials: "include"}});
             if (!resp.ok) return JSON.stringify({{error: resp.status}});
@@ -1373,16 +1456,33 @@ def _fetch_api_page(page: Any, pagination: dict[str, Any], page_num: int) -> lis
     try:
         result = page.run_js(js_code)
         if not result:
-            return []
+            return [], None
         import json as _json
         payload = _json.loads(result)
         if isinstance(payload, dict) and 'error' in payload:
             print(f"  API 分页直调失败 (page={page_num}): {payload['error']}")
-            return []
-        return _extract_candidates_from_api_payload(payload)
+            return [], None
+        zp_data = payload.get('zpData') if isinstance(payload, dict) else {}
+        has_more = zp_data.get('hasMore') if isinstance(zp_data, dict) else None
+        return _extract_candidates_from_api_payload(payload), has_more
     except Exception as e:
         print(f"  API 分页直调异常 (page={page_num}): {e}")
-        return []
+        return [], None
+
+
+def _fetch_api_page(page: Any, pagination: dict[str, Any], page_num: int) -> list[dict[str, str]]:
+    """通过浏览器 fetch 直接调用 BOSS 推荐接口分页。
+
+    Args:
+        page: DrissionPage ChromiumPage 对象
+        pagination: _parse_api_pagination 返回的分页信息
+        page_num: 要请求的页码（从 1 开始）
+
+    Returns:
+        候选人列表，失败时返回空列表
+    """
+    candidates, _ = _fetch_api_page_result(page, pagination, page_num)
+    return candidates
 
 
 def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEFAULT, progress_callback=None, stop_event=None, captcha_callback=None):
@@ -1405,19 +1505,12 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
     target = iframe if iframe else page
     consecutive_empty = 0
 
-    # 启动 API 监听后刷新页面，捕获首屏推荐接口（完整候选人结构化数据）。
-    # 刷新会使页面恢复默认岗位，但能确保 API 返回全部候选人。
+    # 优先使用当前 iframe 的 jobid 直接请求推荐接口分页，不刷新页面、不重置岗位。
+    # 原生 listener 保留为兜底：当直调失败或 BOSS 接口参数变化时仍可通过页面请求补充。
+    api_pagination = _build_recommend_api_pagination_from_page(target)
     api_listener = _start_recommend_api_listener(page)
-    if not api_listener:
-        pass  # 仅使用 DOM 提取
-    else:
-        try:
-            page.refresh()
-            time.sleep(_human_delay(1.2, 0.4))
-            iframe = get_iframe(page)
-            target = iframe if iframe else page
-        except Exception as e:
-            print(f"API 监听预热刷新失败，将继续使用当前页面：{e}")
+    refresh_listener_attempted = False
+    stop_after_identity_mismatch = False
 
     try:
         for scroll_round in range(max_rounds):
@@ -1438,8 +1531,8 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 pct = int((scroll_round + 1) / max_rounds * 100)
                 progress_callback(pct, f"正在扫描候选人... 第{scroll_round + 1}/{max_rounds}轮")
 
-            # 先滚动（第一轮跳过）
-            if scroll_round > 0:
+            # API 直调可直接分页，不需要滚动触发接口；无直调时保留原 DOM 滚动策略。
+            if scroll_round > 0 and not api_pagination:
                 if iframe:
                     # 滚动 window + 候选人列表的实际滚动容器
                     scroll_result = iframe.run_js(f'''
@@ -1507,21 +1600,49 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
             try:
                 batch = []
 
-                # 消费 API 监听数据（结构化字段：薪资、经验、年龄等）
-                api_candidates, _api_url = _consume_recommend_api_candidates(api_listener)
+                # API 直调优先；失败时降级为监听消费。
+                if api_pagination:
+                    api_candidates, has_more = _fetch_api_page_result(target, api_pagination, scroll_round + 1)
+                    if not api_candidates and scroll_round == 0:
+                        api_pagination = None
+                        api_candidates = []
+                    elif has_more is False and not api_candidates:
+                        break
+                else:
+                    api_candidates, _api_url = _consume_recommend_api_candidates(api_listener)
+
+                # 直调不可用且监听尚未捕获首屏时，尝试备用方案：listener + page.refresh()。
+                if not api_candidates and scroll_round == 0 and api_listener and not refresh_listener_attempted:
+                    refresh_listener_attempted = True
+                    before_identity = _read_recommend_page_identity(target)
+                    try:
+                        page.refresh()
+                        time.sleep(_human_delay(1.2, 0.4))
+                        iframe = get_iframe(page)
+                        target = iframe if iframe else page
+                        after_identity = _read_recommend_page_identity(target)
+                        if not _same_recommend_page_identity(before_identity, after_identity):
+                            print("刷新后岗位已变化，请先将目标岗位设为默认岗位。")
+                            stop_after_identity_mismatch = True
+                            break
+                        api_candidates, _api_url = _consume_recommend_api_candidates(api_listener, timeout=2.0)
+                    except Exception as e:
+                        print(f"刷新监听备用方案失败，将继续使用 DOM 提取：{e}")
+
                 for item in api_candidates:
                     item['_source'] = 'api'
                 batch.extend(api_candidates)
 
-                # DOM 提取（始终执行，用于去重和兜底）
-                dom_batch = _extract_cards_batch(target)
-                for item in dom_batch:
-                    batch.append({
-                        'geek_id': item.get('geek_id', ''),
-                        'name': item.get('name', '未知'),
-                        'summary': item.get('text', ''),
-                        '_source': 'dom',
-                    })
+                # DOM 提取：API 不可用或本轮无 API 数据时兜底。
+                if not api_candidates:
+                    dom_batch = _extract_cards_batch(target)
+                    for item in dom_batch:
+                        batch.append({
+                            'geek_id': item.get('geek_id', ''),
+                            'name': item.get('name', '未知'),
+                            'summary': item.get('text', ''),
+                            '_source': 'dom',
+                        })
 
                 candidates_in_round = _merge_candidates_into_list(
                     batch, all_candidates, seen_geek_ids, candidate_index_by_id
@@ -1546,6 +1667,9 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
             if (scroll_round + 1) % 10 == 0 or (scroll_round + 1) == max_rounds:
                 status = f"+{new_count}" if new_count > 0 else "无新增"
                 print(f"轮次 {scroll_round + 1}/{max_rounds}: {status}, 累计 {total_count} 个")
+
+            if stop_after_identity_mismatch:
+                break
     finally:
         if api_listener:
             try:
@@ -2498,6 +2622,10 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         stats['raw_count'] = len(raw_candidates)
         stats['passed_count'] = len(passed_candidates)
         stats['greeted_count'] = sum(1 for c in passed_candidates if c.get('greet_sent'))
+        if ai_eval and passed_candidates:
+            evaluated = [c for c in passed_candidates if c.get('llm_evaluated')]
+            stats['ai_eval_count'] = len(evaluated)
+            stats['ai_downgraded'] = sum(1 for c in evaluated if c.get('match_score', 0) < SCORE_THRESHOLD_PASS)
 
     return passed_candidates
 
@@ -2786,6 +2914,8 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         total_raw = 0
         total_passed = 0
         total_greeted = 0
+        total_ai_evaluated = 0
+        total_ai_downgraded = 0
 
         # 逐个岗位处理
         for idx, job_name in enumerate(jobs_to_run, 1):
@@ -2823,6 +2953,8 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
             total_raw += job_stats.get('raw_count', 0)
             total_passed += job_stats.get('passed_count', 0)
             total_greeted += job_stats.get('greeted_count', 0)
+            total_ai_evaluated += job_stats.get('ai_eval_count', 0)
+            total_ai_downgraded += job_stats.get('ai_downgraded', 0)
 
         # 最后生成 Excel 文件
         existing_all = load_candidates_all()
@@ -2834,7 +2966,12 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
         # 全部岗位处理完毕，更新进度为最终状态
         if progress_callback:
-            progress_callback(100, f"[完成] 筛选完成：通过 {total_passed}/{total_raw} 个，{total_greeted} 人已打招呼")
+            msg = f"[完成] 筛选完成：通过 {total_passed}/{total_raw} 个"
+            if total_ai_evaluated > 0 and total_ai_downgraded > 0:
+                effective = total_passed - total_ai_downgraded
+                msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，有效 {effective} 人"
+            msg += f"，{total_greeted} 人已打招呼"
+            progress_callback(100, msg)
 
     except StopRequested:
         print(f"\n\n⏹ 用户停止，保存当前进度...")
@@ -2844,7 +2981,12 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
             print(f"[SAVE] Excel 文件：{excel_file.name}")
         print(f"已保存 {len(existing_all)} 个候选人的状态")
         if progress_callback:
-            progress_callback(100, f"[已停止] 通过 {total_passed}/{total_raw} 个，{total_greeted} 人已打招呼")
+            stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
+            if total_ai_evaluated > 0 and total_ai_downgraded > 0:
+                effective = total_passed - total_ai_downgraded
+                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，有效 {effective} 人"
+            stop_msg += f"，{total_greeted} 人已打招呼"
+            progress_callback(100, stop_msg)
 
     except KeyboardInterrupt:
         print(f"\n\n检测到中断，保存当前进度...")
@@ -2855,7 +2997,12 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
             print(f"[SAVE] Excel 文件：{excel_file.name}")
         print(f"已保存 {len(existing_all)} 个候选人的状态")
         if progress_callback:
-            progress_callback(100, f"[已停止] 通过 {total_passed}/{total_raw} 个，{total_greeted} 人已打招呼")
+            stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
+            if total_ai_evaluated > 0 and total_ai_downgraded > 0:
+                effective = total_passed - total_ai_downgraded
+                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，有效 {effective} 人"
+            stop_msg += f"，{total_greeted} 人已打招呼"
+            progress_callback(100, stop_msg)
         raise
 
     except Exception as e:
