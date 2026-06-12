@@ -463,6 +463,8 @@ def test_export_to_excel_keeps_full_candidate_summary_in_detail_column():
         from openpyxl import load_workbook
 
         workbook = load_workbook(output)
+        assert workbook.sheetnames == ["全部候选人", "数据分析师", "统计摘要"]
+
         sheet = workbook["全部候选人"]
         headers = [cell.value for cell in sheet[1]]
         detail_col = headers.index("详细信息") + 1
@@ -472,6 +474,16 @@ def test_export_to_excel_keeps_full_candidate_summary_in_detail_column():
         assert sheet.cell(row=2, column=detail_col).value == long_summary
         assert sheet.cell(row=2, column=manual_review_col).value == "是"
         assert sheet.cell(row=2, column=risk_col).value == "学历形式待确认：疑似非统招本科"
+
+        job_sheet = workbook["数据分析师"]
+        assert job_sheet.cell(row=2, column=1).value == 1
+
+        summary_sheet = workbook["统计摘要"]
+        summary_headers = [cell.value for cell in summary_sheet[1]]
+        total_col = summary_headers.index("总人数") + 1
+        avg_col = summary_headers.index("平均分") + 1
+        assert summary_sheet.cell(row=2, column=total_col).value == 1
+        assert summary_sheet.cell(row=2, column=avg_col).value == "80.0"
 
 
 def test_auto_greet_skips_manual_review_candidates():

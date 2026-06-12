@@ -573,7 +573,6 @@ def _create_mac_dmg():
 # PyPI 包名 → import 名 映射（部分包名与 import 名不同）
 REQUIRED_IMPORTS = {
     "DrissionPage": "DrissionPage",
-    "pandas": "pandas",
     "openpyxl": "openpyxl",
     "requests": "requests",
     "dotenv": "python-dotenv",
@@ -3217,6 +3216,9 @@ def main():
         '--exclude-module=boto3',
         '--exclude-module=matplotlib',
         '--exclude-module=scipy',
+        # openpyxl 会可选导入 numpy 以支持 numpy 标量；本应用导出普通 Python 值，强制排除避免打进 OpenBLAS。
+        '--exclude-module=numpy',
+        '--exclude-module=numpy.libs',
         '--exclude-module=IPython',
         '--exclude-module=pytest',
         '--exclude-module=notebook',

@@ -326,8 +326,7 @@ pyinstaller --onedir --noconsole \
 | tkinter | GUI 框架 |
 | DrissionPage | 浏览器自动化 |
 | requests | HTTP 请求 |
-| pandas | Excel 导出 |
-| openpyxl | Excel 格式 |
+| openpyxl | Excel 导出（直写，不依赖 pandas） |
 | Pillow | 图标绘制（PIL.ImageDraw） |
 | keyring | API Key 加密存储 |
 | python-dotenv | 环境变量管理 |

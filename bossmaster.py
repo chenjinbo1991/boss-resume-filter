@@ -49,14 +49,7 @@ def _human_delay(center: float, spread: float = 0.3) -> float:
 
 
 try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
-    print("警告：pandas 未安装，Excel 导出功能将不可用")
-    print("安装命令：pip install pandas openpyxl")
-
-try:
+    from openpyxl import Workbook
     from openpyxl.styles import PatternFill
     OPENPYXL_AVAILABLE = True
 except ImportError:
@@ -298,7 +291,7 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
         - 颜色标识推荐指数和打招呼状态
         - 自动筛选和冻结窗格
     """
-    if not PANDAS_AVAILABLE:
+    if not OPENPYXL_AVAILABLE:
         return False
 
     def _format_score_breakdown(c: dict[str, Any]) -> str:
@@ -479,8 +472,6 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             }
             data.append(row)
 
-        df = pd.DataFrame(data)
-
         # 列顺序：身份 → 画像 → 评估 → 跟进 → 原始
         columns = [
             '序号', '岗位', '姓名', 'geek_id',
@@ -491,69 +482,81 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             '是否需人工确认', '风险提示', '自动打招呼阻断原因',
             '批次', '详细信息',
         ]
-        df = df[[col for col in columns if col in df.columns]]
+        def _write_rows(ws, header: list[str], sheet_rows: list) -> None:
+            ws.append(header)
+            for row in sheet_rows:
+                if isinstance(row, dict):
+                    ws.append([row.get(col, '') for col in header])
+                else:
+                    ws.append(row)
 
-        # 使用 ExcelWriter 创建多工作表
-        with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-            # 主工作表：所有候选人
-            df.to_excel(writer, index=False, sheet_name='全部候选人')
+        def _safe_sheet_name(job_name: str) -> str:
+            return str(job_name).translate(str.maketrans({
+                '\\': '-', '/': '-', '*': '-', '?': '-',
+                '[': '(', ']': ')', ':': '-'
+            }))[:31] or "未命名岗位"
 
-            # 按岗位分工作表
-            if '岗位' in df.columns:
-                for job_name in df['岗位'].drop_duplicates():
-                    job_df = df[df['岗位'] == job_name].copy()
-                    # 重新编号
-                    job_df['序号'] = range(1, len(job_df) + 1)
-                    # Excel 工作表名不允许: \ / * ? [ ] :
-                    sheet_name = job_name.translate(str.maketrans({
-                        '\\': '-', '/': '-', '*': '-', '?': '-',
-                        '[': '(', ']': ')', ':': '-'
-                    }))[:31]
-                    job_df.to_excel(writer, index=False, sheet_name=sheet_name)
+        wb = Workbook()
+        ws_all = wb.active
+        ws_all.title = '全部候选人'
+        _write_rows(ws_all, columns, data)
 
-            # 统计摘要工作表
-            summary_data = []
-            if '岗位' in df.columns:
-                for job_name in df['岗位'].drop_duplicates():
-                    job_df = df[df['岗位'] == job_name]
-                    total = len(job_df)
-                    strong_recommend = len(job_df[job_df['推荐指数'] == '强烈推荐'])
-                    recommend = len(job_df[job_df['推荐指数'] == '推荐'])
-                    pending = len(job_df[job_df['推荐指数'] == '待定'])
-                    greeted = len(job_df[job_df['是否打招呼'] == '是'])
-                    avg_score = job_df['匹配分'].mean() if '匹配分' in job_df.columns else 0
-                    replied = len(job_df[job_df['跟进状态'] == '已回复']) if '跟进状态' in job_df.columns else 0
-                    interview_pending = len(job_df[job_df['跟进状态'] == '待约面']) if '跟进状态' in job_df.columns else 0
-                    interviewed = len(job_df[job_df['跟进状态'] == '已约面']) if '跟进状态' in job_df.columns else 0
-                    rejected = len(job_df[job_df['跟进状态'] == '不合适']) if '跟进状态' in job_df.columns else 0
-                    suitable = len(job_df[job_df['人工反馈'] == '合适']) if '人工反馈' in job_df.columns else 0
-                    false_positive = len(job_df[job_df['人工反馈'] == '误推']) if '人工反馈' in job_df.columns else 0
-                    abandoned = len(job_df[job_df['人工反馈'] == '放弃']) if '人工反馈' in job_df.columns else 0
+        rows_by_job: dict[str, list[dict[str, Any]]] = {}
+        for row in data:
+            rows_by_job.setdefault(row['岗位'], []).append(row)
 
-                    summary_data.append({
-                        '岗位': job_name,
-                        '总人数': total,
-                        '强烈推荐': strong_recommend,
-                        '推荐': recommend,
-                        '待定': pending,
-                        '已打招呼': greeted,
-                        '已回复': replied,
-                        '待约面': interview_pending,
-                        '已约面': interviewed,
-                        '不合适': rejected,
-                        '反馈合适': suitable,
-                        '反馈误推': false_positive,
-                        '反馈放弃': abandoned,
-                        '平均分': f"{avg_score:.1f}"
-                    })
+        for job_name, job_rows in rows_by_job.items():
+            value_rows = []
+            for idx, row in enumerate(job_rows, start=1):
+                value_rows.append([idx] + [row[col] for col in columns[1:]])
+            _write_rows(wb.create_sheet(_safe_sheet_name(job_name)), columns, value_rows)
 
-            if summary_data:
-                summary_df = pd.DataFrame(summary_data)
-                summary_df.to_excel(writer, index=False, sheet_name='统计摘要')
+        summary_data = []
+        for job_name, job_rows in rows_by_job.items():
+            rec_counts: dict[str, int] = {}
+            greet_count = 0
+            followup_counts: dict[str, int] = {}
+            feedback_counts: dict[str, int] = {}
+            scores: list[float] = []
+            for row in job_rows:
+                rec = row.get('推荐指数', '')
+                rec_counts[rec] = rec_counts.get(rec, 0) + 1
+                if row.get('是否打招呼') == '是':
+                    greet_count += 1
+                fu = row.get('跟进状态', '')
+                if fu:
+                    followup_counts[fu] = followup_counts.get(fu, 0) + 1
+                fb = row.get('人工反馈', '')
+                if fb:
+                    feedback_counts[fb] = feedback_counts.get(fb, 0) + 1
+                score = row.get('匹配分', 0)
+                if isinstance(score, (int, float)):
+                    scores.append(score)
+            avg_score = sum(scores) / len(scores) if scores else 0
+            summary_data.append({
+                '岗位': job_name,
+                '总人数': len(job_rows),
+                '强烈推荐': rec_counts.get('强烈推荐', 0),
+                '推荐': rec_counts.get('推荐', 0),
+                '待定': rec_counts.get('待定', 0),
+                '已打招呼': greet_count,
+                '已回复': followup_counts.get('已回复', 0),
+                '待约面': followup_counts.get('待约面', 0),
+                '已约面': followup_counts.get('已约面', 0),
+                '不合适': followup_counts.get('不合适', 0),
+                '反馈合适': feedback_counts.get('合适', 0),
+                '反馈误推': feedback_counts.get('误推', 0),
+                '反馈放弃': feedback_counts.get('放弃', 0),
+                '平均分': f"{avg_score:.1f}",
+            })
 
-        # 格式化所有工作表
-        from openpyxl import load_workbook
-        wb = load_workbook(filename)
+        if summary_data:
+            summary_columns = [
+                '岗位', '总人数', '强烈推荐', '推荐', '待定', '已打招呼',
+                '已回复', '待约面', '已约面', '不合适', '反馈合适', '反馈误推',
+                '反馈放弃', '平均分',
+            ]
+            _write_rows(wb.create_sheet('统计摘要'), summary_columns, summary_data)
 
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
