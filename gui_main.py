@@ -27,7 +27,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 from security import save_api_key, get_api_key, delete_api_key
-import updater
 from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG, USER_AGENT
 from storage import save_candidates_all
 import gui_dialogs
@@ -777,12 +776,6 @@ class BossFilterGUI:
         if _NEED_COCOA_SCROLL_HOOK:
             self.root.after(500, self._setup_cocoa_scroll_hook)
 
-        # 启动时自动检查更新（延迟执行，避开 GUI 初始化和 PyInstaller 释放窗口）
-        updater.auto_check_on_startup(self.root, delay_ms=12000, gui=self)
-        if getattr(sys, 'frozen', False):
-            self.root.after(1000, updater.mark_update_success_and_cleanup)
-            self.root.after(2500, lambda: updater.notify_previous_update_failure(self.root))
-
     def _setup_macos_reopen_handler(self):
         """点击 macOS Dock 图标时恢复主窗口。"""
         if sys.platform != 'darwin':
@@ -1048,17 +1041,6 @@ class BossFilterGUI:
             'index': settings_idx
         })
         self.nav_labels.append(settings_text)
-
-        # 底部信息 - 仅版本号 - 调大字体
-        bottom_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
-        bottom_frame.pack(side="bottom", fill="x", padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(20 * self.dpi_scale * self.zoom_factor))
-
-        version_label = ttk.Label(bottom_frame, text=f"v{__version__}",
-                                  font=(FONT_FAMILY, int(12 * self.font_scale)),
-                                  foreground=self.colors['text_sidebar_version'], background=self.colors['bg_sidebar'],
-                                  cursor="hand2")
-        version_label.pack(anchor="w")
-        version_label.bind("<Button-1>", lambda e: self.show_changelog())
 
     def create_main_content(self):
         """创建主内容区域"""
