@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.10.4"
+__version__ = "2.10.3"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -583,8 +583,8 @@ def _draw_search_icon(S, fill, sw_ratio=0.10):
     img = Image.new('RGBA', (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     # 镜片
-    rim_color = '#6366F1'
-    glass_fill = (224, 231, 255, 120)
+    rim_color = '#4B5563'      # 金属边框
+    glass_fill = (147, 197, 253, 80)  # 淡蓝玻璃
     rim_w = max(3, int(S * 0.07))
     r = int(S * 0.24)
     cx, cy = int(S * 0.33), int(S * 0.33)
@@ -604,7 +604,7 @@ def _draw_search_icon(S, fill, sw_ratio=0.10):
     sy2 = int(shine_y + shine_len * math.sin(angle))
     d.line([(sx1, sy1), (sx2, sy2)], fill=shine_color, width=shine_w)
     # 手柄
-    handle_color = '#4338CA'
+    handle_color = '#374151'
     handle_w = max(3, int(S * 0.07))
     angle45 = math.radians(45)
     hx0 = int(cx + (r + rim_w // 2) * math.cos(angle45))
@@ -809,36 +809,32 @@ class BossFilterGUI:
             except tk.TclError:
                 pass  # 使用默认主题
 
-        # 配色方案 — Indigo + Slate 现代 SaaS 风格
+        # 配色方案 - 现代化渐变色
         self.colors = {
-            'primary': '#4F46E5',
-            'primary_dark': '#4338CA',
-            'primary_light': '#818CF8',
-            'success': '#059669',
-            'success_light': '#34D399',
-            'warning': '#D97706',
-            'danger': '#DC2626',
-            'purple': '#7C3AED',
-            'bg_main': '#F1F5F9',
-            'bg_card': '#FFFFFF',
-            'bg_card_header': '#F8FAFC',
-            'bg_input': '#F8FAFC',
-            'bg_sidebar': '#0F172A',
-            'bg_sidebar_active': '#1E293B',
-            'bg_sidebar_hover': '#334155',
-            'bg_tree_tag_high': '#ECFDF5',
-            'bg_tree_tag_mid': '#FFFBEB',
-            'bg_tree_tag_low': '#F8FAFC',
-            'text_primary': '#0F172A',
-            'text_secondary': '#64748B',
-            'text_muted': '#94A3B8',
-            'text_sidebar': '#94A3B8',
-            'text_sidebar_active': '#F8FAFC',
-            'text_sidebar_subtitle': '#64748B',
-            'text_sidebar_version': '#475569',
-            'border': '#E2E8F0',
-            'border_soft': '#F1F5F9',
-            'bg_hover': '#F1F5F9',
+            'primary': '#1E88E5',      # 主蓝色
+            'primary_dark': '#1565C0',
+            'primary_light': '#64B5F6',
+            'success': '#43A047',       # 成功绿
+            'success_light': '#81C784',
+            'warning': '#FB8C00',       # 警告橙
+            'danger': '#E53935',        # 危险红
+            'purple': '#8E24AA',        # 紫色
+            'bg_main': '#F8F9FA',       # 主背景
+            'bg_card': '#FFFFFF',       # 卡片背景
+            'bg_input': '#FAFAFA',      # 输入框背景
+            'bg_sidebar': '#2D3748',    # 侧边栏背景
+            'bg_tree_tag_high': '#E8F5E9',   # 表格高权重行
+            'bg_tree_tag_mid': '#FFF3E0',    # 表格中权重行
+            'bg_tree_tag_low': '#F5F5F5',    # 表格低权重行
+            'text_primary': '#1A202C',  # 主文字
+            'text_secondary': '#718096',# 次要文字
+            'text_muted': '#999999',    # 弱化文字
+            'text_sidebar': '#A0AEC0',  # 侧边栏文字
+            'text_sidebar_active': '#FFFFFF',      # 侧边栏激活文字
+            'text_sidebar_subtitle': '#94A3B8',    # 侧边栏副标题
+            'text_sidebar_version': '#64748B',     # 侧边栏版本号
+            'border': '#E2E8F0',        # 边框
+            'bg_hover': '#EDF2F7',      # 悬停背景
         }
 
         # 设置右侧功能页字体。左侧边栏在 create_sidebar() 中单独计算，避免被这里牵动。
@@ -868,13 +864,7 @@ class BossFilterGUI:
                         background=self.colors['bg_card'])
         style.configure('TButton', font=self.font_label, padding=(15, 8))
         style.configure('Accent.TButton', font=(FONT_FAMILY_SEMIBOLD, int(13 * page_fs)), padding=(20, 8))
-        style.configure('Accent.TButton', background=self.colors['primary'], foreground='#FFFFFF')
-        style.map('Accent.TButton',
-                  background=[('active', self.colors['primary_dark']),
-                              ('pressed', self.colors['primary_dark']),
-                              ('disabled', self.colors['border'])],
-                  foreground=[('disabled', self.colors['text_muted'])])
-        style.configure('Card.TFrame', background=self.colors['bg_card'], relief='flat', borderwidth=0)
+        style.configure('Card.TFrame', background=self.colors['bg_card'], relief='solid', borderwidth=1)
         style.configure('WelcomeCard.TFrame', background=self.colors['bg_card'],
                         relief='flat', borderwidth=0)
         style.configure('WelcomeInner.TFrame', background=self.colors['bg_card'])
@@ -911,12 +901,6 @@ class BossFilterGUI:
                                    ('disabled', self.colors['bg_input'])])
         style.configure('Custom.TLabelframe', font=self.font_label, background=self.colors['bg_card'])
         style.configure('Custom.TLabelframe.Label', font=self.font_label, background=self.colors['bg_card'])
-        style.configure('Treeview', rowheight=int(30 * fs))
-        style.configure('Treeview.Heading',
-                        background=self.colors['bg_card_header'],
-                        foreground=self.colors['text_primary'],
-                        relief='flat')
-        style.map('Treeview.Heading', background=[('active', self.colors['bg_hover'])])
 
     def create_sidebar(self):
         """创建左侧边栏"""
@@ -932,7 +916,7 @@ class BossFilterGUI:
         title_row = ttk.Frame(logo_frame, style='Sidebar.TFrame')
         title_row.pack(anchor="center")
         gap = int(4 * self.dpi_scale * self.zoom_factor)
-        logo_icon = self.icons.logo('shield_check', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
+        logo_icon = self.icons.logo('search_color', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
         logo_icon_label = ttk.Label(title_row, image=logo_icon, background=self.colors['bg_sidebar'])
         logo_icon_label._icon_ref = logo_icon
         logo_icon_label.pack(side="left")
@@ -963,47 +947,53 @@ class BossFilterGUI:
         self.nav_labels = []
         self.nav_components = []  # 保存所有导航组件引用，用于 hover 效果
         sidebar_nav_font_size = int(15 * self.font_scale)
-        self._sidebar_nav_font_size = sidebar_nav_font_size
+
+        # 设置导航项样式
+        style = ttk.Style()
+        style.configure('SidebarNav.TLabel',
+                       font=(FONT_FAMILY, sidebar_nav_font_size),
+                       foreground=self.colors['text_sidebar'],
+                       background=self.colors['bg_sidebar'])
+        style.configure('SidebarNavSelected.TLabel',
+                       font=(FONT_FAMILY_SEMIBOLD, sidebar_nav_font_size),
+                       foreground=self.colors['text_sidebar_active'],
+                       background=self.colors['bg_sidebar'])
 
         # emoji 容器内边距（固定宽度，确保文字对齐）- 增大左侧距使导航项整体居中
-        emoji_padx = int(36 * self.dpi_scale * self.zoom_factor)
+        emoji_padx = int(40 * self.dpi_scale * self.zoom_factor)
         text_padx = int(10 * self.dpi_scale * self.zoom_factor)
-        nav_pady = int(12 * self.dpi_scale * self.zoom_factor)
 
         for idx, (icon_name, text, command) in enumerate(nav_items):
+            # 生成两个颜色版本的图标
             icon_default = self.icons.nav(icon_name, self.colors['text_sidebar'], self.colors['bg_sidebar'])
-            icon_active = self.icons.nav(icon_name, self.colors['primary_light'], self.colors['bg_sidebar_active'])
+            icon_active = self.icons.nav(icon_name, self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
 
-            nav_frame = tk.Frame(sidebar, bg=self.colors['bg_sidebar'], cursor="hand2")
-            nav_frame.pack(fill="x", padx=int(8 * self.dpi_scale * self.zoom_factor), pady=2)
+            # 使用 Frame 容器
+            nav_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
+            nav_frame.pack(fill="x", padx=0, pady=1)
 
-            indicator = tk.Frame(nav_frame, width=int(3 * self.dpi_scale * self.zoom_factor),
-                                 bg=self.colors['bg_sidebar'])
-            indicator.pack(side="left", fill="y")
-
-            content = tk.Frame(nav_frame, bg=self.colors['bg_sidebar'])
-            content.pack(side="left", fill="x", expand=True)
-
-            icon_label = tk.Label(content, image=icon_default, bg=self.colors['bg_sidebar'], cursor="hand2")
+            # 图标标签
+            icon_label = ttk.Label(nav_frame, image=icon_default,
+                                   style='SidebarNav.TLabel', cursor="hand2")
             icon_label._icon_default = icon_default
             icon_label._icon_active = icon_active
-            icon_label.pack(side="left", padx=(emoji_padx, 0), pady=nav_pady)
+            icon_label.pack(side="left", padx=(emoji_padx, 0))
 
-            text_label = tk.Label(content, text=text,
-                                  font=(FONT_FAMILY, sidebar_nav_font_size),
-                                  fg=self.colors['text_sidebar'],
-                                  bg=self.colors['bg_sidebar'], cursor="hand2")
-            text_label.pack(side="left", padx=(text_padx, int(12 * self.dpi_scale * self.zoom_factor)), pady=nav_pady)
+            # 文字标签
+            text_label = ttk.Label(nav_frame, text=text,
+                                  style='SidebarNav.TLabel', cursor="hand2",
+                                  padding=(text_padx, int(14 * self.dpi_scale * self.zoom_factor)))
+            text_label.pack(side="left", fill="x", expand=True)
 
-            for widget in [nav_frame, content, icon_label, text_label, indicator]:
+            # 绑定点击和 hover 事件 - 所有子组件绑定到同一个 command
+            for widget in [nav_frame, icon_label, text_label]:
                 widget.bind("<Button-1>", lambda e, c=command: c())
                 widget.bind("<Enter>", lambda e, i=idx: self.on_nav_enter(i))
                 widget.bind("<Leave>", lambda e, i=idx: self.on_nav_leave(i))
 
+            # 保存所有组件引用，用于 hover 效果
             self.nav_components.append({
                 'frame': nav_frame,
-                'content': content,
-                'indicator': indicator,
                 'icon': icon_label,
                 'icon_default': icon_default,
                 'icon_active': icon_active,
@@ -1018,42 +1008,31 @@ class BossFilterGUI:
         sep2 = ttk.Separator(sidebar, orient='horizontal')
         sep2.pack(fill="x", padx=0, pady=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 系统设置（独立导航项）
+        # 系统设置（独立导航项）- 使用 Frame 容器保持一致对齐
         settings_idx = len(nav_items)
+        settings_frame = ttk.Frame(sidebar, style='Sidebar.TFrame')
+        settings_frame.pack(fill="x", padx=0, pady=1)
+
         settings_icon_default = self.icons.nav('gear', self.colors['text_sidebar'], self.colors['bg_sidebar'])
-        settings_icon_active = self.icons.nav('gear', self.colors['primary_light'], self.colors['bg_sidebar_active'])
-
-        settings_frame = tk.Frame(sidebar, bg=self.colors['bg_sidebar'], cursor="hand2")
-        settings_frame.pack(fill="x", padx=int(8 * self.dpi_scale * self.zoom_factor), pady=2)
-
-        settings_indicator = tk.Frame(settings_frame, width=int(3 * self.dpi_scale * self.zoom_factor),
-                                      bg=self.colors['bg_sidebar'])
-        settings_indicator.pack(side="left", fill="y")
-
-        settings_content = tk.Frame(settings_frame, bg=self.colors['bg_sidebar'])
-        settings_content.pack(side="left", fill="x", expand=True)
-
-        settings_icon_label = tk.Label(settings_content, image=settings_icon_default,
-                                         bg=self.colors['bg_sidebar'], cursor="hand2")
+        settings_icon_active = self.icons.nav('gear', self.colors['text_sidebar_active'], self.colors['bg_sidebar'])
+        settings_icon_label = ttk.Label(settings_frame, image=settings_icon_default,
+                                  style='SidebarNav.TLabel', cursor="hand2")
         settings_icon_label._icon_default = settings_icon_default
         settings_icon_label._icon_active = settings_icon_active
-        settings_icon_label.pack(side="left", padx=(emoji_padx, 0), pady=nav_pady)
+        settings_icon_label.pack(side="left", padx=(emoji_padx, 0))
 
-        settings_text = tk.Label(settings_content, text="系统设置",
-                                 font=(FONT_FAMILY, sidebar_nav_font_size),
-                                 fg=self.colors['text_sidebar'],
-                                 bg=self.colors['bg_sidebar'], cursor="hand2")
-        settings_text.pack(side="left", padx=(text_padx, int(12 * self.dpi_scale * self.zoom_factor)), pady=nav_pady)
+        settings_text = ttk.Label(settings_frame, text="系统设置",
+                                 style='SidebarNav.TLabel', cursor="hand2",
+                                 padding=(text_padx, int(14 * self.dpi_scale * self.zoom_factor)))
+        settings_text.pack(side="left", fill="x", expand=True)
 
-        for widget in [settings_frame, settings_content, settings_icon_label, settings_text, settings_indicator]:
+        for widget in [settings_frame, settings_icon_label, settings_text]:
             widget.bind("<Button-1>", lambda e: self.show_page_api())
             widget.bind("<Enter>", lambda e, i=settings_idx: self.on_nav_enter(i))
             widget.bind("<Leave>", lambda e, i=settings_idx: self.on_nav_leave(i))
 
         self.nav_components.append({
             'frame': settings_frame,
-            'content': settings_content,
-            'indicator': settings_indicator,
             'icon': settings_icon_label,
             'icon_default': settings_icon_default,
             'icon_active': settings_icon_active,
@@ -1128,7 +1107,8 @@ class BossFilterGUI:
                         highlightbackground=self.colors['border'], highlightthickness=1)
         card.pack(**pack_opts)
 
-        title_bg = self.colors['bg_card_header']
+        # 标题行 - 左侧蓝色竖线 + 浅灰背景，与页面标题风格一致
+        title_bg = '#F7F8FA'
         title_bar = tk.Frame(card, bg=title_bg)
         title_bar.pack(fill="x")
 
@@ -1156,8 +1136,7 @@ class BossFilterGUI:
 
         # 页面标题 - 白色卡片 + 左侧蓝色竖线，避免文字直接浮在灰色背景上
         _card_pad = int(20 * self.dpi_scale * self.zoom_factor)
-        header_card = tk.Frame(self.home_page, bg=self.colors['bg_card'],
-                               highlightbackground=self.colors['border'], highlightthickness=1)
+        header_card = ttk.Frame(self.home_page, style='WelcomeCard.TFrame')
         header_card.pack(fill="x", pady=(0, int(25 * self.dpi_scale * self.zoom_factor)))
 
         # 左侧蓝色竖线
@@ -1165,17 +1144,17 @@ class BossFilterGUI:
                               bg=self.colors['primary'])
         accent_bar.pack(side="left", fill="y")
 
-        header_frame = tk.Frame(header_card, bg=self.colors['bg_card'])
+        header_frame = ttk.Frame(header_card, style='WelcomeInner.TFrame')
         header_frame.pack(fill="x", padx=(_card_pad, _card_pad), pady=(_card_pad, _card_pad))
 
-        title_label = tk.Label(header_frame, text="欢迎使用 BOSS 简历筛选器",
-                               font=self.font_title, fg=self.colors['text_primary'],
-                               bg=self.colors['bg_card'])
+        title_label = ttk.Label(header_frame, text="欢迎使用 BOSS 简历筛选器",
+                               font=self.font_title, foreground=self.colors['text_primary'],
+                               background=self.colors['bg_card'])
         title_label.pack(anchor="w")
 
-        subtitle_label = tk.Label(header_frame, text="智能解析、智能匹配、AI 评估、自动打招呼、人工反馈、跟进状态、数据复盘",
-                                   font=self.font_label, fg=self.colors['text_secondary'],
-                                   bg=self.colors['bg_card'])
+        subtitle_label = ttk.Label(header_frame, text="智能解析、智能匹配、AI 评估、自动打招呼、人工反馈、跟进状态、数据复盘",
+                                   font=self.font_label, foreground=self.colors['text_secondary'],
+                                   background=self.colors['bg_card'])
         subtitle_label.pack(anchor="w", pady=(int(10 * self.dpi_scale * self.zoom_factor), 0))
 
         # 岗位过滤
@@ -1194,35 +1173,34 @@ class BossFilterGUI:
         stats_container = ttk.Frame(self.home_page, style='Page.TFrame')
         stats_container.pack(fill="x", pady=int(30 * self.dpi_scale * self.zoom_factor))
 
-        # 卡片数据：(图标, 标签, 变量名, 图标色, 底色)
+        # 卡片数据
         cards_data = [
-            ("people", "累计候选人", "total_home", self.colors['primary'], '#EEF2FF'),
-            ("star", "强烈推荐", "strong_home", self.colors['purple'], '#F5F3FF'),
-            ("thumbs_up", "推荐", "recommended_home", self.colors['success'], '#ECFDF5'),
-            ("chat", "已打招呼", "greeted_home", self.colors['warning'], '#FFFBEB'),
+            ("people", "累计候选人", "total_home", self.colors['primary']),
+            ("star", "强烈推荐", "strong_home", self.colors['purple']),
+            ("thumbs_up", "推荐", "recommended_home", self.colors['success']),
+            ("chat", "已打招呼", "greeted_home", self.colors['warning']),
         ]
 
         self.home_stats_vars = {}
         self.home_stats_labels = {}  # 保存标签引用用于绑定事件
-        for icon_name, label_text, var_name, color, tint in cards_data:
-            card_frame = tk.Frame(stats_container, bg=self.colors['bg_card'],
-                                  highlightbackground=self.colors['border'], highlightthickness=1)
-            card_frame.pack(side="left", fill="x", expand=True,
-                            padx=int(15 * self.dpi_scale * self.zoom_factor),
-                            pady=int(12 * self.dpi_scale * self.zoom_factor))
+        for icon_name, label_text, var_name, color in cards_data:
+            card_frame = ttk.Frame(stats_container, style='Card.TFrame')
+            card_frame.pack(side="left", fill="x", expand=True, padx=int(15 * self.dpi_scale * self.zoom_factor), pady=int(12 * self.dpi_scale * self.zoom_factor))
 
-            # 图标容器 - 浅色圆形底 + 彩色图标
+            # 图标容器 - 彩色圆形背景
             icon_size = int(UI_CONFIG['stat_icon_size'] * self.dpi_scale * self.zoom_factor)
             icon_canvas = tk.Canvas(card_frame, width=icon_size, height=icon_size,
                                     bg=self.colors['bg_card'], highlightthickness=0)
             icon_canvas.pack(anchor="center",
                             pady=(int(20 * self.dpi_scale * self.zoom_factor), int(8 * self.dpi_scale * self.zoom_factor)))
 
+            # 绘制彩色圆形背景
             margin = int(UI_CONFIG['icon_margin'] * self.dpi_scale * self.zoom_factor)
             icon_canvas.create_oval(margin, margin, icon_size - margin, icon_size - margin,
-                                    fill=tint, outline=color, width=1)
+                                    fill=color, outline='')
 
-            stat_icon = self.icons.stat(icon_name, color, tint)
+            # 在圆形上绘制白色图标（使用 PhotoImage）
+            stat_icon = self.icons.stat(icon_name, 'white')
             icon_canvas.create_image(icon_size // 2, icon_size // 2, image=stat_icon)
             icon_canvas._icon_ref = stat_icon
 
@@ -1253,15 +1231,15 @@ class BossFilterGUI:
         quick_buttons = ttk.Frame(quick_frame, style='TFrame')
         quick_buttons.pack(fill="x")
 
-        icon_play = self.icons.button('play', self.colors['primary'])
+        icon_play = self.icons.button('play', self.colors['text_primary'])
         btn1 = ttk.Button(quick_buttons, image=icon_play, text=" 开始筛选", compound=tk.LEFT, command=self.show_page_run, style='TButton')
         btn1._icon_ref = icon_play
         btn1.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        icon_filter = self.icons.button('filter', self.colors['primary'])
+        icon_filter = self.icons.button('filter', self.colors['text_primary'])
         btn2 = ttk.Button(quick_buttons, image=icon_filter, text=" 查看结果", compound=tk.LEFT, command=self.show_page_result, style='TButton')
         btn2._icon_ref = icon_filter
         btn2.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        icon_briefcase = self.icons.button('briefcase', self.colors['primary'])
+        icon_briefcase = self.icons.button('briefcase', self.colors['text_primary'])
         btn3 = ttk.Button(quick_buttons, image=icon_briefcase, text=" 配置岗位", compound=tk.LEFT, command=self.show_page_config, style='TButton')
         btn3._icon_ref = icon_briefcase
         btn3.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
@@ -3167,36 +3145,28 @@ class BossFilterGUI:
         for page in [self.home_page, self.config_page, self.api_config_page, self.run_page, self.result_page, self.stats_page]:
             page.pack_forget()
 
-    def _apply_nav_style(self, index, *, hovered=False):
-        """统一设置侧边栏导航项的视觉状态。"""
-        comp = self.nav_components[index]
-        selected = index == self.current_page_index
-        active = selected or hovered
-        frame_bg = self.colors['bg_sidebar_active'] if active else self.colors['bg_sidebar']
-        text_fg = self.colors['text_sidebar_active'] if active else self.colors['text_sidebar']
-        indicator_bg = self.colors['primary'] if selected else frame_bg
-        icon_image = comp['icon_active'] if active else comp['icon_default']
-        font = (FONT_FAMILY_SEMIBOLD if active else FONT_FAMILY, self._sidebar_nav_font_size)
-
-        for widget in (comp['frame'], comp['content'], comp['icon'], comp['text']):
-            widget.configure(bg=frame_bg)
-        comp['indicator'].configure(bg=indicator_bg)
-        comp['icon'].configure(image=icon_image)
-        comp['text'].configure(fg=text_fg, font=font)
-
     def update_nav_highlight(self):
-        """更新导航高亮 - 当前页面使用选中样式"""
-        for i in range(len(self.nav_components)):
-            self._apply_nav_style(i, hovered=False)
+        """更新导航高亮 - 当前页面使用选中颜色，其他使用默认颜色"""
+        for i, comp in enumerate(self.nav_components):
+            if i == self.current_page_index:
+                comp['icon'].configure(image=comp['icon_active'])
+                comp['text'].configure(foreground=self.colors['text_sidebar_active'])
+            else:
+                comp['icon'].configure(image=comp['icon_default'])
+                comp['text'].configure(foreground=self.colors['text_sidebar'])
 
     def on_nav_enter(self, index):
-        """鼠标移入导航项时高亮"""
-        self._apply_nav_style(index, hovered=True)
+        """鼠标移入导航项时高亮（交换图标和前景色）"""
+        comp = self.nav_components[index]
+        comp['icon'].configure(image=comp['icon_active'])
+        comp['text'].configure(foreground=self.colors['text_sidebar_active'])
 
     def on_nav_leave(self, index):
         """鼠标移出导航项时恢复样式（当前页面除外）"""
         if index != self.current_page_index:
-            self._apply_nav_style(index, hovered=False)
+            comp = self.nav_components[index]
+            comp['icon'].configure(image=comp['icon_default'])
+            comp['text'].configure(foreground=self.colors['text_sidebar'])
 
     # ===== 右键菜单功能 =====
     def bind_entry_context_menu(self, entry_widget):
@@ -3357,7 +3327,7 @@ class BossFilterGUI:
         """设置窗口图标，替换 tkinter 默认羽毛图标"""
         try:
             from PIL import Image, ImageTk
-            icon_img = _draw_search_icon(256, '#4F46E5', sw_ratio=0.10)
+            icon_img = _draw_search_icon(256, '#2563EB', sw_ratio=0.10)
             # 用 iconphoto 设置高分图标，Windows 10/11 原生缩放比 ICO 清晰
             self._icon_photo = ImageTk.PhotoImage(icon_img)
             self.root.iconphoto(True, self._icon_photo)
@@ -7493,7 +7463,7 @@ class BossFilterGUI:
                 self.result_tree.item(item_id, tags=tuple(tags))
 
         # 匹配项：加红色高亮 tag
-        self.result_tree.tag_configure('search_match', foreground=self.colors['warning'])
+        self.result_tree.tag_configure('search_match', foreground='#E65100')
         for item_id, _ in matched_with_type:
             tags = list(self.result_tree.item(item_id, 'tags') or ())
             if 'search_match' not in tags:
