@@ -2070,14 +2070,26 @@ def _get_changed_files_since_tag(old_tag_commit=None):
     用于判断是否需要触发跨平台 CI 重建。传入 tag force 更新前的旧 commit，
     对比当前 HEAD，只包含本次发布实际变更的文件。
     如果没有旧 commit（首次发布），则用 git describe 查找上一个 tag。
+    如果 old_tag_commit 等于 HEAD（中断重入场景），回退到上一个版本 tag。
     """
     import re as _re
 
     base_ref = None
     if old_tag_commit:
+        # 检测中断重入：上次 _git_tag() 已执行但 push 失败，
+        # 导致 old_tag_commit == HEAD，diff 为空。回退到上一个版本 tag。
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=BASE_DIR,
+        )
+        if head.returncode == 0 and head.stdout.strip() == old_tag_commit:
+            print("  [信息] old_tag_commit 等于 HEAD（中断重入），回退到上一个版本 tag")
+            old_tag_commit = None  # 走下方 fallback 逻辑
+
+    if old_tag_commit:
         base_ref = old_tag_commit
     else:
-        # 首次发布：查找上一个版本 tag
+        # 首次发布或中断重入：查找上一个版本 tag
         r = subprocess.run(
             ["git", "tag", "-l", "v*"],
             capture_output=True, text=True, cwd=BASE_DIR,
