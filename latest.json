@@ -10,8 +10,8 @@
   },
   "assets": {
     "windows": {
-      "size": 28144262,
-      "sha256": "930b1a85a27b9cd3a53735aba9f1ad9115a6522fcd42adf9df4492ee1e10a30f"
+      "size": 38909280,
+      "sha256": "0a5fadec4499ee5c5b874c37e7f996006cb9c3bd582c81fd1f93d6cda219bc17"
     },
     "macos_dmg": {
       "size": 22759145,
@@ -22,12 +22,12 @@
       "sha256": "5b322551ea838d1a4f744a1609d5a9b1e890ccc8778464bc89c7d5513fd2a99c"
     }
   },
-  "release_notes": "### 新增功能\n\n- **候选人黑名单**：筛选结果和明细窗口支持将候选人加入黑名单，记录屏蔽原因；后续扫描按 `geek_id` 跨岗位跳过该候选人，统计和 Excel 导出也不再计入\n- **简历二次评估**：支持导入候选人 PDF/Word 简历，用完整简历再次调用 LLM 评估并叠加调整分；结果页、详情页和 Excel 导出同步展示二次评估分数与理由\n- **显示已屏蔽候选人**：结果页新增开关，可临时查看已加入黑名单的候选人，并支持移出黑名单\n\n### 体验优化\n\n- **黑名单弹窗布局优化**：加入黑名单弹窗改为更宽的业务弹窗，屏蔽原因使用提示文本引导填写，确认/取消按钮与关于弹窗保持同一套自绘按钮风格\n- **简历评估完成页优化**：调整二次评估完成弹窗的按钮尺寸、底部间距和内容布局，减少按钮贴边或漂移的问题\n- **发布流程更稳**：Release 工作流改为手动触发，发布脚本负责校验 GitHub/Gitee 附件完整性和更新包 SHA256，避免 tag push 与本地发布流程互相抢跑\n- **安装包更轻**：简历 PDF 解析从 PyMuPDF（50MB）换为 pypdf（3MB），Windows 安装包减小约 16MB\n\n### 问题修复\n\n- **命令行版本显示修复**：CLI 启动横幅改为读取 `gui_main.py` 中的版本号，不再显示旧的硬编码版本\n- **黑名单数据保留修复**：清空候选人时保留已屏蔽记录，避免黑名单被误清后再次刷到同一候选人",
+  "release_notes": "### 新增功能\n\n- **候选人黑名单**：筛选结果和明细窗口支持将候选人加入黑名单，记录屏蔽原因；后续扫描按 `geek_id` 跨岗位跳过该候选人，统计和 Excel 导出也不再计入\n- **简历二次评估**：支持导入候选人 PDF/Word 简历，用完整简历再次调用 LLM 评估并叠加调整分；结果页、详情页和 Excel 导出同步展示二次评估分数与理由\n- **显示已屏蔽候选人**：结果页新增开关，可临时查看已加入黑名单的候选人，并支持移出黑名单\n\n### 体验优化\n\n- **黑名单弹窗布局优化**：加入黑名单弹窗改为更宽的业务弹窗，屏蔽原因使用提示文本引导填写，确认/取消按钮与关于弹窗保持同一套自绘按钮风格\n- **简历评估完成页优化**：调整二次评估完成弹窗的按钮尺寸、底部间距和内容布局，减少按钮贴边或漂移的问题\n- **安装包更轻**：简历 PDF 解析从 PyMuPDF（50MB）换为 pypdf（3MB），Windows 安装包减小约 16MB\n\n### 问题修复\n\n- **中文简历解析修复**：PDF 简历改用 pdfminer.six 解析，解决中文简历内容乱码或提取不全的问题\n- **命令行版本显示修复**：CLI 启动横幅改为读取 `gui_main.py` 中的版本号，不再显示旧的硬编码版本\n- **黑名单数据保留修复**：清空候选人时保留已屏蔽记录，避免黑名单被误清后再次刷到同一候选人",
   "downloads_cn": {
     "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11/job_config.json",
     "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11/README.md",
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11/BOSS_ResumeFilter.exe",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11/BOSS_ResumeFilter.dmg",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11/BOSS_ResumeFilter_mac.zip"
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11/BOSS_ResumeFilter.dmg"
   }
 }
