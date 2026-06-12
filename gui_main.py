@@ -7926,16 +7926,14 @@ class BossFilterGUI:
         try:
             if ext == '.pdf':
                 try:
-                    import fitz  # PyMuPDF
+                    from pypdf import PdfReader
                 except ImportError:
                     messagebox.showwarning("缺少依赖",
-                        "需要安装 PyMuPDF 才能解析 PDF 文件。\n\n"
-                        "安装命令：pip install PyMuPDF")
+                        "需要安装 pypdf 才能解析 PDF 文件。\n\n"
+                        "安装命令：pip install pypdf")
                     return
-                doc = fitz.open(filepath)
-                pages_text = [page.get_text() for page in doc]
-                resume_text = "\n".join(pages_text)
-                doc.close()
+                reader = PdfReader(filepath)
+                resume_text = "\n".join(page.extract_text() or "" for page in reader.pages)
             elif ext == '.docx':
                 try:
                     import docx

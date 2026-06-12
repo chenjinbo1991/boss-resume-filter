@@ -2,6 +2,16 @@ name: Build & Release
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform: all, macos, or windows'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - macos
+          - windows
 
 permissions:
   contents: write
@@ -18,18 +28,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
+          PLATFORM="${{ inputs.platform || 'all' }}"
           needs='[]'
 
           assets=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
                    --jq '.assets[].name' 2>/dev/null || true)
 
-          if ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.exe$'; then
-            needs=$(echo "$needs" | jq -c '. + [{"os":"windows-latest","platform":"windows"}]')
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "windows" ]]; then
+            if ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.exe$'; then
+              needs=$(echo "$needs" | jq -c '. + [{"os":"windows-latest","platform":"windows"}]')
+            fi
           fi
 
-          if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$' || \
-             ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.dmg$'; then
-            needs=$(echo "$needs" | jq -c '. + [{"os":"macos-latest","platform":"macos"}]')
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "macos" ]]; then
+            if ! echo "$assets" | grep -q '^BOSS_ResumeFilter_mac\.zip$' || \
+               ! echo "$assets" | grep -q '^BOSS_ResumeFilter\.dmg$'; then
+              needs=$(echo "$needs" | jq -c '. + [{"os":"macos-latest","platform":"macos"}]')
+            fi
           fi
 
           echo "needs=$needs" >> "$GITHUB_OUTPUT"

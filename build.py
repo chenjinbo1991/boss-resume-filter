@@ -579,7 +579,7 @@ REQUIRED_IMPORTS = {
     "keyring": "keyring",
     "PIL": "Pillow",
     "tkcalendar": "tkcalendar",
-    "fitz": "PyMuPDF",
+    "pypdf": "pypdf",
     "docx": "python-docx",
 }
 
@@ -1838,8 +1838,13 @@ def _print_progress(step, total, message, start_time=None):
 
 
 def _gh_release(version, release_title, release_notes, progress=None,
-                enable_gitee=True, enable_ci_sync=True, old_tag_commit=None):
-    """创建/更新 GitHub Release 并上传资源文件"""
+                enable_gitee=True, enable_ci_sync=True, old_tag_commit=None,
+                ci_already_triggered=False):
+    """创建/更新 GitHub Release 并上传资源文件
+
+    ci_already_triggered: 如果 CI 已在 PyInstaller 打包前提前触发，跳过内部 CI 触发逻辑，
+    但仍等待 CI 完成并同步对端产物到 Gitee。
+    """
     import time
     tag = f"v{version}"
     cfg = DIST_DIR / "job_config.json"
@@ -1924,88 +1929,114 @@ def _gh_release(version, release_title, release_notes, progress=None,
     finally:
         _notes_file.unlink(missing_ok=True)
 
-    _sub(f'上传 {len(artifacts)} 个文件到 GitHub...')
-    uploaded_names = set()
-    to_upload = []
+    # --- 预计算：哪些本地产物需要上传 ---
+    expected_uploads = set()
     for f, label in artifacts:
         if f.exists():
             remote_asset = remote_assets.get(f.name)
             if remote_asset:
                 same, reason = _github_asset_matches_local(tag, f, remote_asset)
                 if same:
-                    _sub(f'[跳过] {f.name} 已一致: {reason}')
                     continue
-                _sub(f'[更新] {f.name}: {reason}')
+            expected_uploads.add(f.name)
+
+    # --- 并行：GH 上传 || (CI 触发 + Gitee 上传) ---
+    def _gh_upload_task():
+        """上传本地产物到 GitHub Release"""
+        uploaded = set()
+        to_upload = []
+        for f, label in artifacts:
+            if not f.exists():
+                _sub(f'[GH] [跳过] {f.name}')
+                continue
+            if f.name not in expected_uploads:
+                _sub(f'[GH] [跳过] {f.name} 已一致')
+                continue
             to_upload.append(f)
-        else:
-            _sub(f'[跳过] {f.name}')
 
-    def _github_upload_success(f, name):
-        uploaded_names.add(name)
-        _sub(f'[OK] {name}')
+        def _ok(f, name):
+            uploaded.add(name)
+            _sub(f'[GH] [OK] {name}')
+        def _fail(f, error):
+            _sub(f'[GH] [失败] {f.name}: {error}')
+            raise error
 
-    def _github_upload_failure(f, error):
-        _sub(f'[失败] {f.name} 上传失败: {error}')
-        raise error
+        if to_upload:
+            _sub(f'[GH] 上传 {len(to_upload)} 个文件到 GitHub...')
+            _run_transfer_batch(
+                to_upload,
+                "上传 GitHub Release",
+                lambda f: _upload_github_release_asset(tag, f, report=_sub),
+                _ok,
+                _fail,
+            )
+        _ensure_current_platform_github_assets_match_local(
+            tag,
+            [f for f, _label in artifacts if f.exists()],
+            report=_sub,
+        )
+        return uploaded
 
-    _run_transfer_batch(
-        to_upload,
-        "上传 GitHub Release",
-        lambda f: _upload_github_release_asset(tag, f, report=_sub),
-        _github_upload_success,
-        _github_upload_failure,
-    )
+    def _gitee_task():
+        """CI 触发（如未提前触发）+ Gitee 本地产物上传"""
+        need_ci = False
+        old_assets_info = {}
 
-    _ensure_current_platform_github_assets_match_local(
-        tag,
-        [f for f, _label in artifacts if f.exists()],
-        report=_sub,
-    )
+        # CI 触发：仅当未在打包前提前触发、且需要时
+        if enable_ci_sync and not ci_already_triggered:
+            changed_update = expected_uploads & _current_platform_update_artifact_names()
+            if changed_update:
+                _sub(f'[CI] 检查跨平台重建: {", ".join(sorted(changed_update))}')
+                need_ci, old_assets_info = _trigger_cross_platform_ci(tag, old_tag_commit)
+            else:
+                _sub('[CI] 跳过跨平台 CI 检查：当前平台更新产物未变化')
 
-    changed_update_artifacts = uploaded_names & _current_platform_update_artifact_names()
-    if not enable_ci_sync:
-        _sub('跳过跨平台 CI 检查：--no-ci-sync')
-        need_ci, old_assets_info = False, {}
-    elif changed_update_artifacts:
-        _sub(f'检查是否需要跨平台 CI 重建: {", ".join(sorted(changed_update_artifacts))}')
-        need_ci, old_assets_info = _trigger_cross_platform_ci(tag, old_tag_commit)
-    else:
-        _sub('跳过跨平台 CI 检查：当前平台更新产物未变化')
-        need_ci, old_assets_info = False, {}
-
-    # 获取 Gitee Release 缓存（一次 API 调用，两个上传函数复用）
-    if enable_gitee:
-        _sub('准备 Gitee Release 上传...')
-        release_cache = _gitee_get_release_cache(version, release_title, release_notes)
-    else:
-        _sub('跳过 Gitee Release 上传：--no-gitee')
+        # Gitee 本地上传
+        downloads_cn_partial = None
         release_cache = None
+        if enable_gitee:
+            _sub('[Gitee] 准备上传...')
+            release_cache = _gitee_get_release_cache(version, release_title, release_notes)
+            if release_cache:
+                _sub('[Gitee] 上传本地产物...')
+                try:
+                    downloads_cn_partial = _gitee_upload_local(
+                        version, release_title, release_notes, release_cache)
+                except Exception as e:
+                    _sub(f'[Gitee] [警告] 本地产物上传失败: {e}')
+        else:
+            _sub('[Gitee] 跳过：--no-gitee')
 
-    # 上传本地平台产物到 Gitee Release（国内下载源）
-    downloads_cn = None
-    if release_cache:
-        _sub('上传本地产物到 Gitee...')
-        try:
-            downloads_cn = _gitee_upload_local(version, release_title, release_notes, release_cache)
-        except Exception as e:
-            _sub(f'[警告] Gitee 本地产物上传失败: {e}')
+        return need_ci, old_assets_info, downloads_cn_partial, release_cache
 
+    # 执行并行
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        gh_future = pool.submit(_gh_upload_task)
+        gitee_future = pool.submit(_gitee_task)
+
+        uploaded_names = gh_future.result()
+        need_ci, old_assets_info, downloads_cn, release_cache = gitee_future.result()
+
+    # CI 已在打包前提前触发，这里标记 need_ci 以便后续等待
+    if ci_already_triggered:
+        need_ci = True
+
+    # --- 等待 CI 完成 + 同步对端产物到 Gitee ---
+    if enable_ci_sync and release_cache:
         if need_ci:
             _sub('等待 CI 完成并同步对端产物到 Gitee...')
-        elif enable_ci_sync:
-            _sub('同步对端产物到 Gitee...')
         else:
-            _sub('跳过对端产物同步：--no-ci-sync')
+            _sub('同步对端产物到 Gitee...')
 
-        if enable_ci_sync:
-            try:
-                gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
-                                                      need_wait=need_ci, release_cache=release_cache)
-                if gitee_sync:
-                    downloads_cn = downloads_cn or {}
-                    downloads_cn.update(gitee_sync)
-            except Exception as e:
-                _sub(f'[警告] Gitee 对端产物同步失败: {e}')
+        try:
+            gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
+                                                  need_wait=need_ci, release_cache=release_cache)
+            if gitee_sync:
+                downloads_cn = downloads_cn or {}
+                downloads_cn.update(gitee_sync)
+        except Exception as e:
+            _sub(f'[警告] Gitee 对端产物同步失败: {e}')
 
     _sub('校验 Release 附件完整性...')
     if not _verify_release_assets_complete(tag, release_cache=release_cache, report=_sub):
@@ -2292,26 +2323,25 @@ def _trigger_cross_platform_ci(tag, old_tag_commit=None):
     if changed_files:
         print(f"  变更文件: {', '.join(changed_files[:5])}{'...' if len(changed_files) > 5 else ''}")
 
-    # 2. 检查对端产物是否存在
+    # 2. 检查对端旧产物并删除（首次发布时 present 为空，跳过删除但仍触发 CI）
     current_assets = _get_github_release_assets(tag)
     present = {n: current_assets[n] for n in opposite_assets if n in current_assets}
+    old_assets_info = dict(present) if present else {}
 
-    if not present:
-        print("  [跳过] 对端产物不存在，无需触发 CI")
-        return False, {}
+    if present:
+        print(f"  发现对端旧产物: {', '.join(present.keys())}")
 
-    print(f"  发现对端旧产物: {', '.join(present.keys())}")
-    old_assets_info = dict(present)
+        # 3. 删除对端旧产物
+        deleted = _delete_github_release_assets(tag, list(present.keys()))
+        if not deleted:
+            print("  [跳过] 删除失败，不触发 CI")
+            return False, {}
 
-    # 3. 删除对端旧产物
-    deleted = _delete_github_release_assets(tag, list(present.keys()))
-    if not deleted:
-        print("  [跳过] 删除失败，不触发 CI")
-        return False, {}
-
-    # 4. 验证删除已生效（防止 GitHub API 延迟导致 CI 看到旧产物而跳过构建）
-    if not _verify_assets_deleted(tag, deleted):
-        print("  [警告] 对端产物删除未生效，CI 可能跳过构建")
+        # 4. 验证删除已生效（防止 GitHub API 延迟导致 CI 看到旧产物而跳过构建）
+        if not _verify_assets_deleted(tag, deleted):
+            print("  [警告] 对端产物删除未生效，CI 可能跳过构建")
+    else:
+        print("  [信息] 对端产物不存在（首次发布），直接触发 CI")
 
     # 5. 触发 CI workflow
     r = subprocess.run(
@@ -3270,10 +3300,13 @@ def main():
 ╚══════════════════════════════════════════════════════════════╝
 """)
 
-    # 步骤名称定义（release 模式 6 步，纯打包模式 2 步）
+    # 步骤名称定义（release 模式 5 步，纯打包模式 2 步）
     if args.release:
-        step_names = ['发布前检查', 'PyInstaller 打包', 'Git 提交 + 打标签',
-                      '推送到远程仓库', 'Release 发布', 'latest.json 更新']
+        step_names = ['发布前检查',
+                      'Git 提交 + 打标签 + 推送 + 触发 CI',
+                      'PyInstaller 打包',
+                      'Release 发布',
+                      'latest.json 更新']
     else:
         step_names = ['发布前检查', 'PyInstaller 打包']
     progress = ReleaseProgress(_read_version(), step_names)
@@ -3406,19 +3439,70 @@ def main():
         str(BASE_DIR / "gui_main.py")
     ]
 
-    # ---- 步骤 2：PyInstaller 打包 ----
+    # ---- Release 模式提前：Git commit + tag + push + 触发 CI ----
+    # 在 PyInstaller 打包前完成 Git 操作并触发 macOS CI，使 CI 与本地打包并行
+    ci_triggered = False
+    old_tag_commit = None
+    if args.release and not args.ci:
+        progress.start_step(1)
+
+        # 2a: 提交变更（如 --version 导致的版本号修改）
+        allowed = ["gui_main.py"] if args.version else []
+        _git_commit(current_version, allowed_paths=allowed)
+
+        # 2b: 记录旧 tag commit（用于 CI diff），然后打 tag
+        old_tag_commit = _git_tag(current_version)
+
+        # 2c: 推送 master + tag
+        _git_push(current_version, auto=args.auto)
+
+        # 2d: 提前触发 macOS CI（与后续 PyInstaller 并行）
+        if not args.no_ci_sync:
+            tag = f"v{current_version}"
+            changed_files = _get_changed_files_since_tag(old_tag_commit)
+            if _needs_cross_platform_rebuild(changed_files):
+                # 删除对端旧产物（首次发布时不存在则跳过）
+                current_assets = _get_github_release_assets(tag)
+                if IS_MAC:
+                    opposite = ["BOSS_ResumeFilter.exe"]
+                else:
+                    opposite = ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
+                present = {n: current_assets[n] for n in opposite if n in current_assets}
+                if present:
+                    progress.sub(f'删除对端旧产物: {", ".join(present.keys())}')
+                    _delete_github_release_assets(tag, list(present.keys()))
+
+                # 触发 CI（--ref tag + -f platform=macos，避免 CI 重复构建 Windows）
+                r = subprocess.run(
+                    ["gh", "workflow", "run", "release.yml",
+                     "--ref", tag, "-f", "platform=macos"],
+                    capture_output=True, text=True, cwd=BASE_DIR)
+                if r.returncode == 0:
+                    progress.sub('[OK] macOS CI 已触发（与本地打包并行）')
+                    ci_triggered = True
+                else:
+                    progress.sub(f'[警告] macOS CI 触发失败: {r.stderr.strip()}')
+            else:
+                if changed_files:
+                    progress.sub(f'[跳过] 变更不影响对端平台')
+
+        progress.end_step()
+
+    # ---- 步骤 3（Release）或步骤 2（非 Release）：PyInstaller 打包 ----
+    # Release 模式下 CI 已在后台运行，本地打包与 CI 并行
+    build_step_idx = 2 if (args.release and not args.ci) else 1
     # 检查是否需要重新打包（避免无意义的重复构建）
     if args.force_build:
         needs_rebuild, rebuild_reason = True, "--force-build"
     else:
         needs_rebuild, rebuild_reason = _needs_local_rebuild(cmd)
     if not needs_rebuild:
-        progress.skip_step(1, reason=rebuild_reason)
+        progress.skip_step(build_step_idx, reason=rebuild_reason)
         print(f"  [跳过] PyInstaller 打包（{rebuild_reason}）")
     else:
         print(f"  [信息] 需要重新打包：{rebuild_reason}")
         clean_dist()
-        progress.start_step(1)
+        progress.start_step(build_step_idx)
         os.chdir(BASE_DIR)
 
         # 使用 Popen 实时显示进度
@@ -3503,23 +3587,11 @@ def main():
     if needs_rebuild:
         progress.end_step()
 
-    # ---- Release 模式：提交 → 打 tag → 推送 → GitHub/Gitee Release → latest.json ----
+    # ---- Release 模式：Release 发布 + latest.json ----
     if args.release and not args.ci:
 
-        # ---- 步骤 3：Git 提交和打标签 ----
-        progress.start_step(2)
-        allowed = ["gui_main.py"] if args.version else []
-        _git_commit(version, allowed_paths=allowed)
-        old_tag_commit = _git_tag(version)
-        progress.end_step()
-
-        # ---- 步骤 4：推送到远程仓库 ----
+        # ---- 步骤 4：Release 发布（GitHub + Gitee，内部并行化） ----
         progress.start_step(3)
-        _git_push(version, auto=args.auto)
-        progress.end_step()
-
-        # ---- 步骤 5：Release 发布（GitHub + Gitee） ----
-        progress.start_step(4)
         downloads_cn = _gh_release(
             version,
             release_title,
@@ -3528,14 +3600,15 @@ def main():
             enable_gitee=not args.no_gitee,
             enable_ci_sync=not args.no_ci_sync,
             old_tag_commit=old_tag_commit,
+            ci_already_triggered=ci_triggered,
         )
         # 清理 Gitee 旧版本产物（如果启用 Gitee）
         if not args.no_gitee:
             _gitee_clean_old_assets(version, apply=True)
         progress.end_step()
 
-        # ---- 步骤 6：latest.json 更新 ----
-        progress.start_step(5)
+        # ---- 步骤 5：latest.json 更新 ----
+        progress.start_step(4)
         _ensure_current_platform_github_assets_match_local(
             f"v{version}",
             [artifact_path] if artifact_path.exists() else [],
