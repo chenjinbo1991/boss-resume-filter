@@ -579,7 +579,6 @@ REQUIRED_IMPORTS = {
     "keyring": "keyring",
     "PIL": "Pillow",
     "tkcalendar": "tkcalendar",
-    "pypdf": "pypdf",
     "pdfminer": "pdfminer.six",
     "docx": "python-docx",
 }

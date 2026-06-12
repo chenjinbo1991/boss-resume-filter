@@ -21,5 +21,4 @@ tkcalendar>=1.6.0
 
 # 简历文件解析（PDF/DOCX 二次评估）
 pdfminer.six>=20231228
-pypdf>=4.0.0
 python-docx>=1.1.0

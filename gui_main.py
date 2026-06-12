@@ -7925,21 +7925,14 @@ class BossFilterGUI:
         resume_text = ""
         try:
             if ext == '.pdf':
-                # pdfminer.six 对中文 CID 字体支持远优于 pypdf，优先使用
                 try:
                     from pdfminer.high_level import extract_text as _pdfminer_extract
-                    resume_text = _pdfminer_extract(filepath) or ""
                 except ImportError:
-                    # fallback: pypdf（中文 PDF 可能乱码）
-                    try:
-                        from pypdf import PdfReader
-                    except ImportError:
-                        messagebox.showwarning("缺少依赖",
-                            "需要安装 pdfminer.six 才能解析 PDF 文件。\n\n"
-                            "安装命令：pip install pdfminer.six")
-                        return
-                    reader = PdfReader(filepath)
-                    resume_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+                    messagebox.showwarning("缺少依赖",
+                        "需要安装 pdfminer.six 才能解析 PDF 文件。\n\n"
+                        "安装命令：pip install pdfminer.six")
+                    return
+                resume_text = _pdfminer_extract(filepath) or ""
             elif ext == '.docx':
                 try:
                     import docx
