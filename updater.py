@@ -901,10 +901,10 @@ def show_update_dialog(root, result, gui=None, source="manual", on_defer=None):
     font_family = getattr(gui, 'FONT_FAMILY', _FONT_FAMILY)
     font_family_bold = getattr(gui, 'FONT_FAMILY_SEMIBOLD', _FONT_FAMILY)
     colors = getattr(gui, 'colors', None) or {
-        'bg_card': '#FFFFFF', 'bg_main': '#F7F8FA', 'bg_hover': '#EDF2F7',
-        'text_primary': '#1A202C', 'text_secondary': '#4A5568',
-        'text_muted': '#A0AEC0', 'border': '#E2E8F0',
-        'primary': '#3182CE',
+        'bg_card': '#FFFFFF', 'bg_main': '#F1F5F9', 'bg_hover': '#F1F5F9',
+        'text_primary': '#0F172A', 'text_secondary': '#64748B',
+        'text_muted': '#94A3B8', 'border': '#E2E8F0',
+        'primary': '#4F46E5',
     }
 
     dialog = tk.Toplevel(root)

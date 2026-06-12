@@ -12,11 +12,16 @@ from PIL import Image, ImageDraw, ImageTk
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
-STROKE_WIDTH = 2.0           # 基础描边宽度（缩放前）
+STROKE_WIDTH = 1.75          # 基础描边宽度（缩放前，略细更现代）
 ICON_SIZE_BUTTON = 20        # 按钮图标基础尺寸（px）
-ICON_SIZE_NAV = 22           # 侧边栏导航图标基础尺寸（px）
-ICON_SIZE_LOGO = 35          # Logo 图标基础尺寸（px）
+ICON_SIZE_NAV = 24           # 侧边栏导航图标基础尺寸（px）
+ICON_SIZE_LOGO = 36          # Logo 图标基础尺寸（px）
 ICON_SIZE_STAT = 40          # 统计卡片图标基础尺寸（px）
+
+# 品牌色（与 gui_main.py 主色保持一致）
+BRAND_PRIMARY = '#4F46E5'
+BRAND_PRIMARY_DARK = '#4338CA'
+BRAND_PRIMARY_LIGHT = '#818CF8'
 
 # 24x24 逻辑坐标系中的关键参考点
 _LO = 2.5   # left offset（左边距）
@@ -177,10 +182,10 @@ def _search_color(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     img = Image.new('RGBA', (S2, S2), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    brand = '#1E88E5'       # 品牌蓝
-    brand_dark = '#0D47A1'  # 深蓝（手柄）
-    lens = '#BBDEFB'        # 浅蓝镜片
-    highlight = '#E3F2FD'   # 高光
+    brand = BRAND_PRIMARY
+    brand_dark = BRAND_PRIMARY_DARK
+    lens = '#E0E7FF'
+    highlight = '#EEF2FF'
 
     # 镜片中心 & 半径（2x 坐标系）
     cx, cy = _s(9, S2), _s(9, S2)
@@ -319,15 +324,16 @@ def _home(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
     S = size_px
-    # 三角形屋顶
-    d.line([_s(12, S), _s(3, S), _s(2, S), _s(11, S)], fill=fill, width=sw)
-    d.line([_s(12, S), _s(3, S), _s(22, S), _s(11, S)], fill=fill, width=sw)
-    # 墙壁
-    d.rectangle([_s(4, S), _s(11, S), _s(20, S), _s(21, S)],
-                outline=fill, width=sw)
+    r = _s(1.5, S)
+    # 屋顶
+    d.line([_s(12, S), _s(2.5, S), _s(3, S), _s(11, S)], fill=fill, width=sw)
+    d.line([_s(12, S), _s(2.5, S), _s(21, S), _s(11, S)], fill=fill, width=sw)
+    # 墙体（圆角）
+    d.rounded_rectangle([_s(4, S), _s(11, S), _s(20, S), _s(21, S)],
+                        radius=r, outline=fill, width=sw)
     # 门
-    d.rectangle([_s(9, S), _s(14, S), _s(15, S), _s(21, S)],
-                outline=fill, width=max(1, int(_s(1.2, S))))
+    d.rounded_rectangle([_s(9.5, S), _s(14.5, S), _s(14.5, S), _s(21, S)],
+                        radius=_s(0.8, S), outline=fill, width=max(1, sw - 1))
     return img
 
 
@@ -543,8 +549,8 @@ def _shield_check(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     d = ImageDraw.Draw(img)
     S = size_px
     # 品牌色（硬编码，不受 fill 参数影响）
-    brand_blue = '#1E88E5'
-    brand_dark = '#1565C0'
+    brand_blue = BRAND_PRIMARY
+    brand_dark = BRAND_PRIMARY_DARK
     # 盾牌轮廓：填充品牌蓝
     shield = [
         (_s(12, S), _s(2, S)),    # 顶部中心

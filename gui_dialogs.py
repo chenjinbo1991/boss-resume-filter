@@ -257,7 +257,9 @@ def show_changelog_dialog(gui):
     _place_window_centered(dialog, dw, dh, parent=gui.root)
 
     # ---- 左侧版本列表（深色侧边栏风格）----
-    sidebar_bg = '#2D3748'
+    sidebar_bg = gui.colors['bg_sidebar']
+    sidebar_text = gui.colors['text_sidebar_active']
+    sidebar_muted = gui.colors['text_sidebar']
     left_frame = tk.Frame(dialog, bg=sidebar_bg, width=int(190 * fs))
     left_frame.pack(side="left", fill="y")
     left_frame.pack_propagate(False)
@@ -265,12 +267,12 @@ def show_changelog_dialog(gui):
     # 标题
     title_frame = tk.Frame(left_frame, bg=sidebar_bg)
     title_frame.pack(fill="x", padx=int(16 * fs), pady=(int(18 * fs), int(8 * fs)))
-    tk.Label(title_frame, text="版本历史", bg=sidebar_bg, fg='#E2E8F0',
+    tk.Label(title_frame, text="版本历史", bg=sidebar_bg, fg=sidebar_text,
              font=(FONT_FAMILY, int(14 * changelog_fs), 'bold')).pack(anchor="center")
-    tk.Label(title_frame, text=f"共 {len(versions)} 个版本", bg=sidebar_bg, fg='#A0AEC0',
+    tk.Label(title_frame, text=f"共 {len(versions)} 个版本", bg=sidebar_bg, fg=sidebar_muted,
              font=(FONT_FAMILY, int(11 * changelog_fs))).pack(anchor="center", pady=(int(2 * fs), 0))
     if len(versions) > 20:
-        tk.Label(title_frame, text="可滚动查看", bg=sidebar_bg, fg='#718096',
+        tk.Label(title_frame, text="可滚动查看", bg=sidebar_bg, fg=gui.colors['text_sidebar_subtitle'],
                  font=(FONT_FAMILY, int(9 * changelog_fs))).pack(anchor="center")
 
     # 版本列表
@@ -359,7 +361,7 @@ def show_changelog_dialog(gui):
 
     # 左侧边栏底部：关于链接
     about_label = tk.Label(left_frame, text="关于",
-                           bg=sidebar_bg, fg='#A0AEC0',
+                           bg=sidebar_bg, fg=sidebar_muted,
                            font=(FONT_FAMILY, int(12 * changelog_fs)),
                            cursor="hand2")
     about_label.pack(padx=int(12 * fs), pady=(int(8 * fs), int(12 * fs)))
