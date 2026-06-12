@@ -580,6 +580,7 @@ REQUIRED_IMPORTS = {
     "PIL": "Pillow",
     "tkcalendar": "tkcalendar",
     "pypdf": "pypdf",
+    "pdfminer": "pdfminer.six",
     "docx": "python-docx",
 }
 
@@ -3403,6 +3404,7 @@ def main():
         '--hidden-import=tkinter.filedialog',
         '--hidden-import=tkinter.messagebox',
         '--hidden-import=tkcalendar',
+        '--hidden-import=pdfminer',
         '--hidden-import=babel',
         '--hidden-import=babel.numbers',
         '--hidden-import=babel.dates',
