@@ -9,12 +9,12 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.10.3）
+├── gui_main.py           # 图形界面主程序（v2.11）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
-├── icons.py              # 图标绘制模块（Pillow 矢量图标，31个图标函数 + IconCache）
-├── doc_parser.py         # 文档解析器（简历解析）
+├── icons.py              # 图标绘制模块（Pillow 矢量图标，33个图标函数 + IconCache）
+├── doc_parser.py         # 招聘需求文档解析器（JD → 必要条件 + 职位要求）
 ├── security.py           # API Key 安全存储模块（keyring 加密，按 provider+base_url 组合存储）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── constants.py          # 共享常量（评分模型参数、阈值、学历档位、滚动参数、城市列表）
@@ -156,12 +156,14 @@ boss-resume-filter/
 - 评分输出：`score_breakdown`（各项分拆）、`score_explanation`（文本解释）、`keyword_evidence`（命中证据含原文片段）
 - 人工反馈：`feedback_status`（合适/误推/误杀/放弃）、`feedback_note`、`feedback_updated_at`；去重时保留反馈字段
 - 跟进状态：`followup_status`（未沟通/已打招呼/已回复/待约面/已约面/不合适/已归档）、`followup_note`、`followup_updated_at`；去重时保留
+- 黑名单：`blacklisted`、`blacklist_reason`、`blacklisted_at`；按 `geek_id` 跨岗位屏蔽，后续扫描、统计和 Excel 导出跳过，清空候选人时保留
 - 实现位置：`filtering.py:filter_candidate()`
 
 ### AI 辅助评估
 
 - 对 ≥55 分候选人 LLM 二次评估，按规则评分降序处理，调整分 ±10 叠加规则评分
 - 调整后重算推荐等级；默认并发 5 路 + 429 限流退避；默认不再限制 50 人；实现位置：`llm_eval.py`
+- **简历二次评估**：导入候选人简历（PDF/Word）后，基于完整简历做第二轮 LLM 评估（再调 ±10），三次评估叠加：`final = rule_score + llm_adjustment + resume_adjustment`；GUI 支持导入简历、撤回评估；Excel 新增"简历评估"和"简历评估理由"列
 
 ### 必要条件
 

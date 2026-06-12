@@ -1,5 +1,5 @@
 """
-BOSS 直聘候选人智能提取工具 v2.10.1
+BOSS 直聘候选人智能提取工具
 支持 Excel 导出
 """
 from __future__ import annotations
@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 from DrissionPage import ChromiumPage
 import os
+from pathlib import Path
 from filtering import (
     _calc_edu_bonus,
     _extract_city,
@@ -23,7 +24,20 @@ from filtering import (
     filter_candidate,
     parse_experience_years,
 )
+
+
+def _read_app_version() -> str:
+    """Read GUI version without importing gui_main and triggering Tk setup."""
+    try:
+        text = (Path(__file__).resolve().parent / "gui_main.py").read_text(encoding="utf-8")
+        match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    return "unknown"
 from storage import (
+    build_blacklist_index,
     build_greeted_index,
     get_greeted_geek_ids,
     is_already_greeted,
@@ -310,6 +324,11 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
         if ai_adj is not None and ai_adj != 0:
             sign = "+" if ai_adj > 0 else ""
             parts.append(f"AI{sign}{ai_adj}")
+        # 简历二次评估调整分
+        resume_adj = breakdown.get('resume_adjustment')
+        if resume_adj is not None and resume_adj != 0:
+            sign = "+" if resume_adj > 0 else ""
+            parts.append(f"简历{sign}{resume_adj}")
         parts.append(f"总分{breakdown.get('total', c.get('match_score', 0))}")
         return " / ".join(parts)
 
@@ -402,7 +421,8 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
 
     try:
         # 按匹配分从高到低排序
-        sorted_candidates = sorted(candidates, key=lambda x: x.get('match_score', 0), reverse=True)
+        visible_candidates = [c for c in candidates if not c.get('blacklisted')]
+        sorted_candidates = sorted(visible_candidates, key=lambda x: x.get('match_score', 0), reverse=True)
 
         data = []
         for i, c in enumerate(sorted_candidates):
@@ -455,7 +475,14 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                 '评分拆解': _format_score_breakdown(c),
                 '评分解释': _format_score_explanation(c),
                 '命中证据': _format_keyword_evidence(c),
-                # ④ 跟进
+                # ④ 简历二次评估
+                '简历评估': (
+                    f"+{c['resume_eval_adjustment']}" if c.get('resume_eval_adjustment') and c['resume_eval_adjustment'] > 0
+                    else str(c.get('resume_eval_adjustment', '')) if c.get('resume_eval_adjustment') is not None
+                    else ''
+                ),
+                '简历评估理由': c.get('resume_eval_reason', ''),
+                # ⑤ 跟进
                 '是否打招呼': '是' if c.get('greet_sent', False) else '否',
                 '跟进状态': c.get('followup_status') or ('已打招呼' if c.get('greet_sent', False) else '未沟通'),
                 '跟进备注': c.get('followup_note', ''),
@@ -472,11 +499,12 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             }
             data.append(row)
 
-        # 列顺序：身份 → 画像 → 评估 → 跟进 → 原始
+        # 列顺序：身份 → 画像 → 评估 → 简历二次评估 → 跟进 → 原始
         columns = [
             '序号', '岗位', '姓名', 'geek_id',
             '年龄', '工作年限', '学历', '学历明细', '薪资', '求职状态', '城市', '最近公司', '技能',
             '匹配分', '推荐指数', '技能匹配', '评分拆解', '评分解释', '命中证据',
+            '简历评估', '简历评估理由',
             '是否打招呼', '跟进状态', '跟进备注', '跟进时间',
             '人工反馈', '反馈备注', '反馈时间',
             '是否需人工确认', '风险提示', '自动打招呼阻断原因',
@@ -582,18 +610,20 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
                 'Q': 28,  # 评分拆解
                 'R': 55,  # 评分解释
                 'S': 55,  # 命中证据
-                'T': 12,  # 是否打招呼
-                'U': 12,  # 跟进状态
-                'V': 30,  # 跟进备注
-                'W': 16,  # 跟进时间
-                'X': 10,  # 人工反馈
-                'Y': 30,  # 反馈备注
-                'Z': 16,  # 反馈时间
-                'AA': 16, # 是否需人工确认
-                'AB': 30, # 风险提示
-                'AC': 28, # 自动打招呼阻断原因
-                'AD': 16, # 批次
-                'AE': 80, # 详细信息
+                'T': 10,  # 简历评估
+                'U': 55,  # 简历评估理由
+                'V': 12,  # 是否打招呼
+                'W': 12,  # 跟进状态
+                'X': 30,  # 跟进备注
+                'Y': 16,  # 跟进时间
+                'Z': 10,  # 人工反馈
+                'AA': 30, # 反馈备注
+                'AB': 16, # 反馈时间
+                'AC': 16, # 是否需人工确认
+                'AD': 30, # 风险提示
+                'AE': 28, # 自动打招呼阻断原因
+                'AF': 16, # 批次
+                'AG': 80, # 详细信息
             }
             for col, width in column_widths.items():
                 if col in ws.column_dimensions:
@@ -2246,6 +2276,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
     # 加载 candidates_all.json，检查已打招呼的候选人
     candidates_all = load_candidates_all()
     greeted_geek_ids = get_greeted_geek_ids(candidates_all)
+    blacklisted_geek_ids = build_blacklist_index(candidates_all)
 
     # 从 candidates_all 中获取已匹配的 ID（按岗位过滤）
     existing_ids_for_job_and_greeted = set()  # 当前岗位已匹配且打过招呼的 ID（需要过滤）
@@ -2256,11 +2287,19 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             if c.get('job_name') == job_name and c.get('greet_sent') is True:
                 existing_ids_for_job_and_greeted.add(c['geek_id'])
 
-        print(f"已加载 candidates_all.json：累计 {len(all_existing_ids)} 个候选人，{len(greeted_geek_ids)} 人已打招呼")
+        blacklist_text = f"，{len(blacklisted_geek_ids)} 人已屏蔽" if blacklisted_geek_ids else ""
+        print(f"已加载 candidates_all.json：累计 {len(all_existing_ids)} 个候选人，{len(greeted_geek_ids)} 人已打招呼{blacklist_text}")
 
     # === 阶段 1: 滚动收集所有候选人 ===
     raw_candidates = extract_candidates_by_comprehensive_analysis(page, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event, captcha_callback=captcha_callback)
     print(f"原始提取到 {len(raw_candidates)} 个唯一候选人")
+
+    if blacklisted_geek_ids:
+        before_count = len(raw_candidates)
+        raw_candidates = [c for c in raw_candidates if str(c.get('geek_id')) not in blacklisted_geek_ids]
+        skipped_count = before_count - len(raw_candidates)
+        if skipped_count:
+            print(f"过滤黑名单候选人：{before_count} -> {len(raw_candidates)} (已屏蔽 {skipped_count} 人)")
 
     # 过滤当前岗位已匹配且打过招呼的候选人
     if existing_ids_for_job_and_greeted:
@@ -2731,25 +2770,31 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         greet_text = f" + 自动打招呼 ({greet_level_display})"
     elif re_greet_mode:
         greet_text = f" + 打招呼等级 ({greet_level_text})"
-    print(f">>> BOSS 直聘候选人智能提取工具 v2.10.1 [{mode_text}{greet_text}]")
+    print(f">>> BOSS 直聘候选人智能提取工具 v{_read_app_version()} [{mode_text}{greet_text}]")
     print("="*50)
 
     # 清空 candidates_all.json（如果指定 --clear）
     if args.clear and os.path.exists(CANDIDATES_PATH):
+        candidates_all = load_candidates_all()
+        blacklisted = [c for c in candidates_all if c.get('blacklisted')]
         if args.keep_greeted:
-            # 保留已打招呼的候选人
-            candidates_all = load_candidates_all()
-            kept = [c for c in candidates_all if c.get('greet_sent')]
+            # 保留已打招呼和已屏蔽的候选人
+            kept = [c for c in candidates_all if c.get('greet_sent') or c.get('blacklisted')]
             kept_count = len(kept)
             removed = len(candidates_all) - kept_count
             if kept_count > 0:
                 save_candidates_all(kept)
             else:
                 os.remove(CANDIDATES_PATH)
-            print(f"已清空 candidates_all.json（保留 {kept_count} 条已打招呼记录，删除 {removed} 条）")
+            print(f"已清空 candidates_all.json（保留 {kept_count} 条已打招呼/黑名单记录，删除 {removed} 条）")
         else:
-            os.remove(CANDIDATES_PATH)
-            print("已清空 candidates_all.json")
+            removed = len(candidates_all) - len(blacklisted)
+            if blacklisted:
+                save_candidates_all(blacklisted)
+                print(f"已清空 candidates_all.json（保留 {len(blacklisted)} 条黑名单记录，删除 {removed} 条）")
+            else:
+                os.remove(CANDIDATES_PATH)
+                print("已清空 candidates_all.json")
 
     # 补打招呼模式：直接处理，不需要打开浏览器扫描
     if re_greet_mode:
@@ -2772,13 +2817,15 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                 # 点对点模式：只筛选指定姓名的候选人
                 to_greet = [c for c in candidates_all
                            if c.get('name') in greet_names_list
-                           and not c.get('greet_sent', False)]
+                           and not c.get('greet_sent', False)
+                           and not c.get('blacklisted')]
                 filter_text = f" (姓名匹配：{greet_names_list})"
             else:
                 # 自动模式：根据推荐等级筛选
                 to_greet = [c for c in candidates_all
                            if c.get('recommend_level') in greet_levels_allowed
                            and not c.get('greet_sent', False)
+                           and not c.get('blacklisted')
                            and not c.get('manual_review_required')]
                 blocked_count = sum(
                     1 for c in candidates_all

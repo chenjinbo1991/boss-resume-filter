@@ -345,6 +345,10 @@ def show_changelog_dialog(gui):
             widget.bind('<Button-1>', make_select_handler(idx))
             widget.bind('<Enter>', _enter)
             widget.bind('<Leave>', _leave)
+            widget.bind('<MouseWheel>', _canvas_mousewheel)
+            if sys.platform != 'win32':
+                widget.bind('<Button-4>', _cb_scroll_up)
+                widget.bind('<Button-5>', _cb_scroll_down)
 
     def select_version(idx):
         selected_row_idx[0] = idx

@@ -205,6 +205,226 @@ def test_release_asset_metadata_from_remote_assets_uses_github_digest():
     }
 
 
+def test_release_workflow_only_runs_when_explicitly_dispatched():
+    """Local release owns tag publication; CI should not race it on tag push."""
+    workflow = (build.BASE_DIR / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "tags:" not in workflow
+
+
+def test_ensure_github_release_asset_matches_local_reuploads_until_digest_matches():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "BOSS_ResumeFilter.exe"
+        path.write_bytes(b"MZlocal-exe")
+        expected_digest = build._sha256_file(path)
+        calls = {"assets": 0, "uploads": 0}
+
+        original_get_assets = build._get_github_release_assets
+        original_upload = build._upload_github_release_asset
+        original_sleep = build.time.sleep
+        try:
+            def fake_get_assets(tag):
+                calls["assets"] += 1
+                if calls["assets"] == 1:
+                    return {
+                        path.name: {
+                            "name": path.name,
+                            "size": path.stat().st_size + 1,
+                            "digest": "sha256:" + "0" * 64,
+                        }
+                    }
+                return {
+                    path.name: {
+                        "name": path.name,
+                        "size": path.stat().st_size,
+                        "digest": "sha256:" + expected_digest,
+                    }
+                }
+
+            def fake_upload(tag, local_path, report=None):
+                calls["uploads"] += 1
+                return local_path.name
+
+            build._get_github_release_assets = fake_get_assets
+            build._upload_github_release_asset = fake_upload
+            build.time.sleep = lambda _seconds: None
+
+            ok = build._ensure_github_release_asset_matches_local(
+                "v9.9.9",
+                path,
+                report=lambda _message: None,
+                max_wait=1,
+                poll_interval=0,
+            )
+        finally:
+            build._get_github_release_assets = original_get_assets
+            build._upload_github_release_asset = original_upload
+            build.time.sleep = original_sleep
+
+    assert ok is True
+    assert calls["uploads"] == 1
+    assert calls["assets"] >= 2
+
+
+def test_verify_release_assets_complete_accepts_github_and_gitee_assets():
+    github_assets = {
+        "BOSS_ResumeFilter.exe": {
+            "name": "BOSS_ResumeFilter.exe",
+            "size": 111,
+            "digest": "sha256:" + "a" * 64,
+        },
+        "BOSS_ResumeFilter_mac.zip": {
+            "name": "BOSS_ResumeFilter_mac.zip",
+            "size": 222,
+            "digest": "sha256:" + "b" * 64,
+        },
+        "BOSS_ResumeFilter.dmg": {
+            "name": "BOSS_ResumeFilter.dmg",
+            "size": 333,
+            "digest": "sha256:" + "c" * 64,
+        },
+        "README.md": {"name": "README.md", "size": 44},
+        "job_config.json": {"name": "job_config.json", "size": 55},
+    }
+    gitee_assets = {
+        "BOSS_ResumeFilter.exe": {"id": 1, "size": 111},
+        "BOSS_ResumeFilter_mac.zip": {"id": 2, "size": 222},
+        "BOSS_ResumeFilter.dmg": {"id": 3, "size": 333},
+        "README.md": {"id": 4, "size": 44},
+        "job_config.json": {"id": 5, "size": 55},
+    }
+    release_cache = {
+        "token": "token",
+        "owner": "owner",
+        "repo": "repo",
+        "tag": "v9.9.9",
+        "api_base": "https://gitee.example/api",
+        "release_id": 1,
+        "existing": {},
+    }
+    downloaded = []
+
+    original_get_assets = build._get_github_release_assets
+    original_fetch_assets = build._gitee_fetch_assets
+    original_remote_sha = build._remote_file_sha256
+    try:
+        build._get_github_release_assets = lambda tag: github_assets
+        build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: gitee_assets
+
+        def fake_remote_sha(url, token=None):
+            downloaded.append((url, token))
+            name = Path(url).name
+            return build._asset_digest_sha256(github_assets[name])
+
+        build._remote_file_sha256 = fake_remote_sha
+
+        ok = build._verify_release_assets_complete(
+            "v9.9.9",
+            release_cache=release_cache,
+            report=lambda _message: None,
+        )
+    finally:
+        build._get_github_release_assets = original_get_assets
+        build._gitee_fetch_assets = original_fetch_assets
+        build._remote_file_sha256 = original_remote_sha
+
+    assert ok is True
+    assert release_cache["existing"] == gitee_assets
+    assert sorted(Path(url).name for url, _token in downloaded) == [
+        "BOSS_ResumeFilter.dmg",
+        "BOSS_ResumeFilter.exe",
+        "BOSS_ResumeFilter_mac.zip",
+    ]
+
+
+def test_verify_release_assets_complete_rejects_missing_github_asset():
+    github_assets = {
+        "BOSS_ResumeFilter.exe": {
+            "name": "BOSS_ResumeFilter.exe",
+            "size": 111,
+            "digest": "sha256:" + "a" * 64,
+        },
+        "BOSS_ResumeFilter_mac.zip": {
+            "name": "BOSS_ResumeFilter_mac.zip",
+            "size": 222,
+            "digest": "sha256:" + "b" * 64,
+        },
+        "README.md": {"name": "README.md", "size": 44},
+        "job_config.json": {"name": "job_config.json", "size": 55},
+    }
+
+    original_get_assets = build._get_github_release_assets
+    try:
+        build._get_github_release_assets = lambda tag: github_assets
+        ok = build._verify_release_assets_complete(
+            "v9.9.9",
+            report=lambda _message: None,
+        )
+    finally:
+        build._get_github_release_assets = original_get_assets
+
+    assert ok is False
+
+
+def test_verify_release_assets_complete_rejects_gitee_sha_mismatch():
+    github_assets = {
+        "BOSS_ResumeFilter.exe": {
+            "name": "BOSS_ResumeFilter.exe",
+            "size": 111,
+            "digest": "sha256:" + "a" * 64,
+        },
+        "BOSS_ResumeFilter_mac.zip": {
+            "name": "BOSS_ResumeFilter_mac.zip",
+            "size": 222,
+            "digest": "sha256:" + "b" * 64,
+        },
+        "BOSS_ResumeFilter.dmg": {
+            "name": "BOSS_ResumeFilter.dmg",
+            "size": 333,
+            "digest": "sha256:" + "c" * 64,
+        },
+        "README.md": {"name": "README.md", "size": 44},
+        "job_config.json": {"name": "job_config.json", "size": 55},
+    }
+    gitee_assets = {
+        "BOSS_ResumeFilter.exe": {"id": 1, "size": 111},
+        "BOSS_ResumeFilter_mac.zip": {"id": 2, "size": 222},
+        "BOSS_ResumeFilter.dmg": {"id": 3, "size": 333},
+        "README.md": {"id": 4, "size": 44},
+        "job_config.json": {"id": 5, "size": 55},
+    }
+    release_cache = {
+        "token": "token",
+        "owner": "owner",
+        "repo": "repo",
+        "tag": "v9.9.9",
+        "api_base": "https://gitee.example/api",
+        "release_id": 1,
+        "existing": {},
+    }
+
+    original_get_assets = build._get_github_release_assets
+    original_fetch_assets = build._gitee_fetch_assets
+    original_remote_sha = build._remote_file_sha256
+    try:
+        build._get_github_release_assets = lambda tag: github_assets
+        build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: gitee_assets
+        build._remote_file_sha256 = lambda url, token=None: "0" * 64
+
+        ok = build._verify_release_assets_complete(
+            "v9.9.9",
+            release_cache=release_cache,
+            report=lambda _message: None,
+        )
+    finally:
+        build._get_github_release_assets = original_get_assets
+        build._gitee_fetch_assets = original_fetch_assets
+        build._remote_file_sha256 = original_remote_sha
+
+    assert ok is False
+
+
 def test_collect_github_release_asset_metadata_uses_remote_digest_before_download():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)

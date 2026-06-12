@@ -7,6 +7,7 @@ import random
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Optional
 from constants import (
     SCORE_THRESHOLD_PASS,
@@ -34,7 +35,7 @@ class LLMEvalResult:
 _SYSTEM_PROMPT = (
     "你是一个资深技术招聘助手。根据岗位需求评估候选人的匹配程度。\n"
     "返回严格的 JSON 对象（不要包含其他文字）：\n"
-    '{"adjustment": 整数(-10到+10), "reason": "50字以内评估理由"}\n'
+    '{"adjustment": 整数(-10到+10), "reason": "100字以内评估理由"}\n'
     "评分标准：\n"
     "+8~+10: 高度匹配，有明显优势\n"
     "+3~+7: 较为匹配，有加分项\n"
@@ -48,6 +49,30 @@ _USER_TEMPLATE = (
     "{hard_conditions}"
     "## 候选人信息\n{candidate_summary}\n\n"
     "请评估匹配度，返回 JSON。"
+)
+
+
+# ── 二次评估（基于完整简历） ──
+
+_RESUME_SYSTEM_PROMPT = (
+    "你是一个资深技术招聘助手。你已获得候选人的完整简历，请基于简历内容进行深度评估。\n"
+    "重点关注：项目经历的深度和技术复杂度、量化成果、技能匹配度、职业发展轨迹。\n"
+    "返回严格的 JSON 对象（不要包含其他文字）：\n"
+    '{"adjustment": 整数(-10到+10), "reason": "200字以内详细评估，含优势与顾虑"}\n'
+    "评分标准：\n"
+    "+8~+10: 简历展现出色的项目深度和成果量化\n"
+    "+3~+7: 简历有明确的加分信息\n"
+    "0: 简历未提供显著新信息\n"
+    "-1~-5: 简历暴露不匹配之处\n"
+    "-6~-10: 简历显示明显不适合"
+)
+
+_RESUME_USER_TEMPLATE = (
+    "## 岗位需求\n{job_requirement}\n\n"
+    "{hard_conditions}"
+    "## 一次评估结论\n规则分：{rule_score}，AI调整：{llm_adjustment}，理由：{llm_reason}\n\n"
+    "## 候选人完整简历\n{resume_text}\n\n"
+    "请基于简历内容做二次评估，返回 JSON。"
 )
 
 
@@ -102,37 +127,37 @@ def _build_llm_summary_from_api_profile(candidate: dict, profile: dict, max_char
     # Personal summary (from API geekDesc)
     personal = profile.get('personal_summary', '')
     if personal:
-        lines.append("基础摘要：" + _truncate_text(personal, 450))
+        lines.append("基础摘要：" + _truncate_text(personal, 600))
 
     # --- Education ---
     edus = profile.get('educations') or []
     if edus:
         edu_parts = []
-        for edu in edus[:3]:
+        for edu in edus[:5]:
             parts = [v for v in (edu.get('school'), edu.get('major'),
                                  edu.get('degree'), edu.get('start'), edu.get('end')) if v]
             edu_parts.append(" ".join(parts))
-        lines.append("教育经历：" + _truncate_text("；".join(edu_parts), 540))
+        lines.append("教育经历：" + _truncate_text("；".join(edu_parts), 700))
 
     # --- Work experience ---
     works = profile.get('works') or []
     if works:
         work_parts = []
-        for w in works[:3]:
+        for w in works[:5]:
             parts = [v for v in (w.get('company'), w.get('position'),
                                  w.get('category'), w.get('start'), w.get('end')) if v]
             work_parts.append(" ".join(parts))
-        lines.append("工作经历：" + _truncate_text("；".join(work_parts), 660))
+        lines.append("工作经历：" + _truncate_text("；".join(work_parts), 800))
 
     # --- Work responsibilities ---
     if works:
         resp_parts = []
-        for w in works[:3]:
+        for w in works[:5]:
             r = w.get('responsibility', '')
             if r:
                 resp_parts.append(r)
         if resp_parts:
-            lines.append("工作职责：" + _truncate_text("；".join(resp_parts), 960))
+            lines.append("工作职责：" + _truncate_text("；".join(resp_parts), 1600))
 
     # --- Skills from work emphasis ---
     if works:
@@ -160,7 +185,7 @@ def _build_llm_summary_from_api_profile(candidate: dict, profile: dict, max_char
     return compact[:max_chars].rstrip() + "..."
 
 
-def build_llm_candidate_summary(candidate: dict, max_chars: int = 2200) -> str:
+def build_llm_candidate_summary(candidate: dict, max_chars: int = 4000) -> str:
     """Build a deterministic compact candidate summary for LLM evaluation.
 
     The full candidate summary stays in JSON/Excel/detail views; this function only
@@ -225,18 +250,18 @@ def build_llm_candidate_summary(candidate: dict, max_chars: int = 2200) -> str:
         lines.append("风险提示：" + "；".join(str(flag) for flag in risk_flags if flag))
 
     if other_lines:
-        lines.append("基础摘要：" + _truncate_text("；".join(other_lines[:6]), 450))
+        lines.append("基础摘要：" + _truncate_text("；".join(other_lines[:6]), 600))
 
     if sections['教育经历']:
-        edu_text = "；".join(_truncate_text(item, 180) for item in sections['教育经历'][:3])
+        edu_text = "；".join(_truncate_text(item, 250) for item in sections['教育经历'][:5])
         lines.append("教育经历：" + edu_text)
 
     if sections['工作经历']:
-        work_text = "；".join(_truncate_text(item, 220) for item in sections['工作经历'][:3])
+        work_text = "；".join(_truncate_text(item, 300) for item in sections['工作经历'][:5])
         lines.append("工作经历：" + work_text)
 
     if sections['工作职责']:
-        responsibility_text = "；".join(_truncate_text(item, 320) for item in sections['工作职责'][:3])
+        responsibility_text = "；".join(_truncate_text(item, 450) for item in sections['工作职责'][:5])
         lines.append("工作职责：" + responsibility_text)
 
     if sections['技能标签']:
@@ -322,8 +347,8 @@ def _parse_response(text: str) -> dict:
 
     # Extract and validate reason
     reason = str(data.get('reason', '')).strip()
-    if len(reason) > 100:
-        reason = reason[:100]
+    if len(reason) > 200:
+        reason = reason[:200]
 
     return {'adjustment': adjustment, 'reason': reason}
 
@@ -551,3 +576,78 @@ def evaluate_batch(
                 print(f"  [错误] AI 评估异常: {e}")
 
     return candidates
+
+
+# ── 二次评估（基于完整简历） ──
+
+_RESUME_MAX_CHARS = 6000
+
+
+def _build_resume_prompt(
+    candidate: dict,
+    resume_text: str,
+    job_requirement: str,
+    hard_conditions: str = "",
+) -> list:
+    """Build chat messages for second-round resume evaluation."""
+    rule_score = candidate.get("rule_score", candidate.get("match_score", 0))
+    llm_adj = candidate.get("llm_adjustment", 0)
+    llm_reason = candidate.get("llm_reason", "无")
+
+    truncated_resume = _truncate_text(resume_text, _RESUME_MAX_CHARS)
+
+    user_content = _RESUME_USER_TEMPLATE.format(
+        job_requirement=job_requirement,
+        hard_conditions=hard_conditions,
+        rule_score=rule_score,
+        llm_adjustment=llm_adj if llm_adj else "无",
+        llm_reason=llm_reason,
+        resume_text=truncated_resume,
+    )
+    return [
+        {"role": "system", "content": _RESUME_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def evaluate_with_resume(
+    candidate: dict,
+    resume_text: str,
+    job_requirement: str,
+    api_config: dict,
+    api_key: str,
+    *,
+    hard_conditions: str = "",
+) -> LLMEvalResult:
+    """Perform second-round LLM evaluation using full resume text.
+
+    Updates candidate dict in-place with resume_eval_* fields and
+    recalculates match_score cumulatively:
+        final = clamp(rule_score + llm_adjustment + resume_adjustment, 0, 100)
+
+    Returns LLMEvalResult with the round-2 adjustment.
+    """
+    messages = _build_resume_prompt(candidate, resume_text, job_requirement, hard_conditions)
+    result = _call_llm_api(messages, api_config, api_key)
+
+    if result.success:
+        # Store round-2 metadata
+        candidate["resume_eval_adjustment"] = result.adjustment
+        candidate["resume_eval_reason"] = result.reason.replace("\n", " ").replace("\r", "").strip()
+        candidate["resume_eval_model"] = result.model
+        candidate["resume_eval_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Recalculate cumulative score
+        rule_score = candidate.get("rule_score", candidate.get("match_score", 0))
+        llm_adj = candidate.get("llm_adjustment", 0) or 0
+        new_score = max(0, min(100, rule_score + llm_adj + result.adjustment))
+        candidate["match_score"] = new_score
+        candidate["recommend_level"] = _recalc_recommend_level(new_score)
+
+        # Update score_breakdown
+        breakdown = candidate.get("score_breakdown")
+        if isinstance(breakdown, dict):
+            breakdown["resume_adjustment"] = result.adjustment
+            breakdown["total"] = new_score
+
+    return result

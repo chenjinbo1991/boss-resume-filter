@@ -579,6 +579,8 @@ REQUIRED_IMPORTS = {
     "keyring": "keyring",
     "PIL": "Pillow",
     "tkcalendar": "tkcalendar",
+    "fitz": "PyMuPDF",
+    "docx": "python-docx",
 }
 
 
@@ -1093,6 +1095,173 @@ def _upload_github_release_asset(tag, path, report=None):
                 time.sleep(wait)
             else:
                 raise
+
+
+def _ensure_github_release_asset_matches_local(tag, local_path, report=None,
+                                               max_wait=90, poll_interval=5):
+    """Ensure the GitHub Release asset for local_path matches the local file."""
+    report = report or (lambda msg: print(f"  {msg}"))
+    deadline = time.time() + max_wait
+    uploaded = False
+
+    while True:
+        remote_assets = _get_github_release_assets(tag)
+        remote_asset = remote_assets.get(local_path.name)
+        if remote_asset:
+            same, reason = _github_asset_matches_local(tag, local_path, remote_asset)
+            if same:
+                if uploaded:
+                    report(f"[OK] {local_path.name} 远端校验通过: {reason}")
+                return True
+            report(f"[修正] {local_path.name} 远端不一致: {reason}")
+        else:
+            report(f"[修正] {local_path.name} 远端缺失")
+
+        _upload_github_release_asset(tag, local_path, report=report)
+        uploaded = True
+
+        if time.time() >= deadline:
+            break
+        time.sleep(poll_interval)
+
+    remote_assets = _get_github_release_assets(tag)
+    remote_asset = remote_assets.get(local_path.name)
+    if remote_asset:
+        same, reason = _github_asset_matches_local(tag, local_path, remote_asset)
+        if same:
+            report(f"[OK] {local_path.name} 远端校验通过: {reason}")
+            return True
+        print(f"[错误] {local_path.name} 上传后仍与本地不一致: {reason}")
+    else:
+        print(f"[错误] {local_path.name} 上传后 GitHub Release 仍缺少该资产")
+    return False
+
+
+def _ensure_current_platform_github_assets_match_local(tag, artifact_paths, report=None):
+    """Verify current-platform update assets before publishing manifest metadata."""
+    required_names = _current_platform_update_artifact_names()
+    for path in artifact_paths:
+        if path.name not in required_names:
+            continue
+        if not _ensure_github_release_asset_matches_local(tag, path, report=report):
+            sys.exit(1)
+
+
+def _required_release_asset_names():
+    """Assets that must exist on a public release before the release is complete."""
+    return {
+        "BOSS_ResumeFilter.exe",
+        "BOSS_ResumeFilter_mac.zip",
+        "BOSS_ResumeFilter.dmg",
+        "README.md",
+        "job_config.json",
+    }
+
+
+def _release_integrity_asset_names():
+    """Binary update packages whose size and SHA256 must be cross-checked."""
+    return {
+        "BOSS_ResumeFilter.exe",
+        "BOSS_ResumeFilter_mac.zip",
+        "BOSS_ResumeFilter.dmg",
+    }
+
+
+def _verify_github_release_assets_complete(tag, report=None):
+    """Verify GitHub Release has every required asset and binary digests."""
+    report = report or (lambda msg: print(f"  {msg}"))
+    assets = _get_github_release_assets(tag)
+    required = _required_release_asset_names()
+    missing = sorted(required - set(assets))
+    if missing:
+        report(f"[错误] GitHub Release 缺少附件: {', '.join(missing)}")
+        return None
+
+    for name in sorted(_release_integrity_asset_names()):
+        asset = assets.get(name)
+        try:
+            size = int(asset.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        sha256 = _asset_digest_sha256(asset)
+        if size <= 0 or not sha256:
+            report(f"[错误] GitHub Release {name} 缺少 size/SHA256 元数据")
+            return None
+
+    report("[OK] GitHub Release 附件齐全，更新包 size/SHA256 可用")
+    return assets
+
+
+def _verify_gitee_release_assets_complete(tag, github_assets, release_cache, report=None):
+    """Verify Gitee Release mirrors GitHub release assets and binary digests."""
+    report = report or (lambda msg: print(f"  {msg}"))
+    token = release_cache["token"]
+    owner = release_cache["owner"]
+    repo = release_cache["repo"]
+    api_base = release_cache["api_base"]
+    release_id = release_cache["release_id"]
+
+    try:
+        gitee_assets = _gitee_fetch_assets(api_base, token, release_id)
+        release_cache["existing"] = gitee_assets
+    except requests.exceptions.RequestException as e:
+        report(f"[错误] Gitee Release 附件列表读取失败: {e}")
+        return False
+
+    required = _required_release_asset_names()
+    missing = sorted(required - set(gitee_assets))
+    if missing:
+        report(f"[错误] Gitee Release 缺少附件: {', '.join(missing)}")
+        return False
+
+    for name in sorted(_release_integrity_asset_names()):
+        github_asset = github_assets[name]
+        gitee_asset = gitee_assets[name]
+        try:
+            github_size = int(github_asset.get("size") or 0)
+            gitee_size = int(gitee_asset.get("size") or 0)
+        except (TypeError, ValueError):
+            report(f"[错误] {name} size 元数据无法解析")
+            return False
+        if gitee_size != github_size:
+            report(f"[错误] Gitee {name} 大小不一致 (GitHub {github_size} vs Gitee {gitee_size})")
+            return False
+
+        expected_sha = _asset_digest_sha256(github_asset)
+        if not expected_sha:
+            report(f"[错误] GitHub {name} 缺少 SHA256，无法校验 Gitee 镜像")
+            return False
+        try:
+            gitee_sha = _remote_file_sha256(
+                _gitee_asset_url(owner, repo, tag, name),
+                token=token,
+            )
+        except requests.exceptions.RequestException as e:
+            report(f"[错误] Gitee {name} SHA256 校验失败: {e}")
+            return False
+        if gitee_sha != expected_sha:
+            report(f"[错误] Gitee {name} SHA256 不一致")
+            return False
+
+    report("[OK] Gitee Release 附件齐全，三个更新包 size/SHA256 与 GitHub 一致")
+    return True
+
+
+def _verify_release_assets_complete(tag, release_cache=None, report=None):
+    """Verify final release asset completeness before declaring release success."""
+    report = report or (lambda msg: print(f"  {msg}"))
+    github_assets = _verify_github_release_assets_complete(tag, report=report)
+    if github_assets is None:
+        return False
+    if not release_cache:
+        report("[跳过] Gitee Release 完整性校验：未启用 Gitee 上传")
+        return True
+    return _verify_gitee_release_assets_complete(
+        tag,
+        github_assets,
+        release_cache,
+        report=report,
+    )
 
 
 def _gitee_asset_matches_local(local_path, remote_asset, owner, repo, tag, token=None):
@@ -1787,6 +1956,12 @@ def _gh_release(version, release_title, release_notes, progress=None,
         _github_upload_failure,
     )
 
+    _ensure_current_platform_github_assets_match_local(
+        tag,
+        [f for f, _label in artifacts if f.exists()],
+        report=_sub,
+    )
+
     changed_update_artifacts = uploaded_names & _current_platform_update_artifact_names()
     if not enable_ci_sync:
         _sub('跳过跨平台 CI 检查：--no-ci-sync')
@@ -1831,6 +2006,10 @@ def _gh_release(version, release_title, release_notes, progress=None,
                     downloads_cn.update(gitee_sync)
             except Exception as e:
                 _sub(f'[警告] Gitee 对端产物同步失败: {e}')
+
+    _sub('校验 Release 附件完整性...')
+    if not _verify_release_assets_complete(tag, release_cache=release_cache, report=_sub):
+        sys.exit(1)
 
     _sub('Release 发布完成')
     return downloads_cn
@@ -3357,6 +3536,11 @@ def main():
 
         # ---- 步骤 6：latest.json 更新 ----
         progress.start_step(5)
+        _ensure_current_platform_github_assets_match_local(
+            f"v{version}",
+            [artifact_path] if artifact_path.exists() else [],
+            report=progress.sub,
+        )
         asset_metadata = _collect_github_release_asset_metadata(
             version, existing_metadata=_release_asset_metadata())
         latest_changed = update_latest_json(

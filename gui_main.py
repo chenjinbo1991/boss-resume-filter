@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.10.3"
+__version__ = "2.11"
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font
@@ -736,6 +736,7 @@ class BossFilterGUI:
         self._result_tree_fingerprint = None
         self._result_last_job = None
         self._result_last_dates = None
+        self._result_last_show_blacklist = False
         self._stats_tree_fingerprint = None
         self._stats_last_job = None
         self._stats_last_time = None
@@ -2733,6 +2734,15 @@ class BossFilterGUI:
                  background=self.colors['bg_main']).pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
         self.result_search_entry.bind('<Escape>', lambda e: self.result_search_var.set(''))
 
+        # 显示已屏蔽候选人开关（搜索栏最右侧）
+        self.result_show_blacklist_var = tk.BooleanVar(value=False)
+        _cb_style = ttk.Style()
+        _cb_style.configure("Blacklist.TCheckbutton", font=self.font_label)
+        blacklist_check = ttk.Checkbutton(
+            search_frame, text="显示已屏蔽", variable=self.result_show_blacklist_var,
+            command=lambda: self.refresh_results(), style="Blacklist.TCheckbutton")
+        blacklist_check.pack(side="right", padx=int(15 * self.dpi_scale * self.zoom_factor))
+
         # 结果表格
         table_container = ttk.Frame(self.result_page, style='Card.TFrame')
         table_container.pack(fill="both", expand=True, pady=int(8 * self.dpi_scale * self.zoom_factor))
@@ -2950,6 +2960,7 @@ class BossFilterGUI:
 
             with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                 candidates = json.load(f)
+            candidates = [c for c in candidates if not c.get('blacklisted')]
 
             # 岗位过滤
             selected_job = self.stats_job_var.get()
@@ -3278,6 +3289,7 @@ class BossFilterGUI:
             if CANDIDATES_PATH.exists():
                 with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                     candidates = json.load(f)
+                candidates = [c for c in candidates if not c.get('blacklisted')]
 
                 # 岗位过滤
                 selected_job = self.home_job_var.get()
@@ -3361,6 +3373,7 @@ class BossFilterGUI:
 
             with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                 candidates = json.load(f)
+            candidates = [c for c in candidates if not c.get('blacklisted')]
 
             # 岗位过滤
             if hasattr(self, 'home_job_var'):
@@ -3477,6 +3490,7 @@ class BossFilterGUI:
                 context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
                 menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
                 icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
+                icon_blacklist = self.icons.button('close', self.colors['danger'])
                 icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
                 icon_export_menu = self.icons.button('export', self.colors['text_primary'])
 
@@ -3534,6 +3548,34 @@ class BossFilterGUI:
                     # 保持弹窗焦点
                     detail_window.lift()
 
+                def blacklist_candidate():
+                    vals = tree.item(clicked_item, 'values')
+                    name = vals[0]
+                    score = vals[4]
+                    target = None
+                    for c in filtered_ref[0]:
+                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                            target = c
+                            break
+                    if not target:
+                        return
+                    def save_blacklist(reason):
+                        updated = self._update_candidate_blacklist(target.get('geek_id'), reason)
+                        if not updated:
+                            messagebox.showerror("错误", "加入黑名单失败：未找到候选人", parent=detail_window)
+                            return
+                        filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target.get('geek_id')]
+                        tree.delete(clicked_item)
+                        new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
+                        count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
+                        self._regenerate_excel()
+                        self.refresh_home_stats()
+                        self.refresh_stats()
+                        self.refresh_results()
+                        detail_window.lift()
+
+                    self._open_blacklist_reason_dialog(target, detail_window, save_blacklist)
+
                 def export_selected():
                     selection = tree.selection()
                     if not selection:
@@ -3558,10 +3600,11 @@ class BossFilterGUI:
                         messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
 
                 menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
+                menu.add_command(label=" 加入黑名单", image=icon_blacklist, compound=tk.LEFT, command=blacklist_candidate)
                 menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=remove_candidate)
                 menu.add_separator()
                 menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=export_selected)
-                menu._icon_refs = [icon_detail, icon_trash_menu, icon_export_menu]
+                menu._icon_refs = [icon_detail, icon_blacklist, icon_trash_menu, icon_export_menu]
                 menu.tk_popup(event.x_root, event.y_root)
 
             tree.bind('<Button-3>', on_detail_right_click)
@@ -3597,9 +3640,24 @@ class BossFilterGUI:
                 level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
                 status = self._format_candidate_status(c)
                 salary, exp = self._parse_salary_exp(c.get('summary', ''), c.get('structured'))
+                # AI 评估调整值（一次 + 二次）
                 ai_adj = c.get('llm_adjustment')
+                resume_adj = c.get('resume_eval_adjustment')
+
                 if ai_adj is not None and c.get('llm_evaluated'):
-                    ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                    if resume_adj is not None:
+                        # 两次评估：显示净调整 + 明细
+                        net = ai_adj + resume_adj
+                        sign = "+" if net > 0 else ""
+                        r1_str = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                        r2_str = f"+{resume_adj}" if resume_adj > 0 else str(resume_adj)
+                        ai_text = f"{sign}{net}({r1_str}{r2_str})"
+                    else:
+                        # 只有一次评估
+                        ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                elif resume_adj is not None:
+                    # 只有二次评估（边界情况）
+                    ai_text = f"+{resume_adj}" if resume_adj > 0 else str(resume_adj)
                 else:
                     ai_text = "—"
 
@@ -3629,6 +3687,7 @@ class BossFilterGUI:
 
             with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                 candidates = json.load(f)
+            candidates = [c for c in candidates if not c.get('blacklisted')]
 
             # 岗位过滤
             if hasattr(self, 'result_job_var'):
@@ -3747,9 +3806,24 @@ class BossFilterGUI:
                 level = "强烈推荐" if score >= SCORE_THRESHOLD_STRONG else ("推荐" if score >= SCORE_THRESHOLD_RECOMMEND else "待定")
                 status = self._format_candidate_status(c)
                 salary, exp = self._parse_salary_exp(c.get('summary', ''), c.get('structured'))
+                # AI 评估调整值（一次 + 二次）
                 ai_adj = c.get('llm_adjustment')
+                resume_adj = c.get('resume_eval_adjustment')
+
                 if ai_adj is not None and c.get('llm_evaluated'):
-                    ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                    if resume_adj is not None:
+                        # 两次评估：显示净调整 + 明细
+                        net = ai_adj + resume_adj
+                        sign = "+" if net > 0 else ""
+                        r1_str = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                        r2_str = f"+{resume_adj}" if resume_adj > 0 else str(resume_adj)
+                        ai_text = f"{sign}{net}({r1_str}{r2_str})"
+                    else:
+                        # 只有一次评估
+                        ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                elif resume_adj is not None:
+                    # 只有二次评估（边界情况）
+                    ai_text = f"+{resume_adj}" if resume_adj > 0 else str(resume_adj)
                 else:
                     ai_text = "—"
 
@@ -3776,6 +3850,7 @@ class BossFilterGUI:
                 context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
                 menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
                 icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
+                icon_blacklist = self.icons.button('close', self.colors['danger'])
                 icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
                 icon_export_menu = self.icons.button('export', self.colors['text_primary'])
 
@@ -3828,6 +3903,34 @@ class BossFilterGUI:
                     # 保持弹窗焦点
                     detail_window.lift()
 
+                def blacklist_candidate():
+                    vals = tree.item(clicked_item, 'values')
+                    name = vals[0]
+                    score = vals[4]
+                    target = None
+                    for c in filtered_ref[0]:
+                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                            target = c
+                            break
+                    if not target:
+                        return
+                    def save_blacklist(reason):
+                        updated = self._update_candidate_blacklist(target.get('geek_id'), reason)
+                        if not updated:
+                            messagebox.showerror("错误", "加入黑名单失败：未找到候选人", parent=detail_window)
+                            return
+                        filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target.get('geek_id')]
+                        tree.delete(clicked_item)
+                        new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
+                        count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
+                        self._regenerate_excel()
+                        self.refresh_home_stats()
+                        self.refresh_stats()
+                        self.refresh_results()
+                        detail_window.lift()
+
+                    self._open_blacklist_reason_dialog(target, detail_window, save_blacklist)
+
                 def export_selected():
                     selection = tree.selection()
                     if not selection:
@@ -3852,10 +3955,11 @@ class BossFilterGUI:
                         messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
 
                 menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
+                menu.add_command(label=" 加入黑名单", image=icon_blacklist, compound=tk.LEFT, command=blacklist_candidate)
                 menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=remove_candidate)
                 menu.add_separator()
                 menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=export_selected)
-                menu._icon_refs = [icon_detail, icon_trash_menu, icon_export_menu]
+                menu._icon_refs = [icon_detail, icon_blacklist, icon_trash_menu, icon_export_menu]
                 menu.tk_popup(event.x_root, event.y_root)
 
             tree.bind('<Button-3>', on_result_detail_right_click)
@@ -7229,14 +7333,16 @@ class BossFilterGUI:
         # 数据未变 + 过滤条件未变 → 跳过 Treeview 重建，避免页面切换卡顿
         current_job = self.result_job_var.get() if hasattr(self, 'result_job_var') else ""
         current_dates = self._get_result_date_filter() if hasattr(self, 'result_date_start_entry') else (None, None)
+        show_blacklist = self.result_show_blacklist_var.get() if hasattr(self, 'result_show_blacklist_var') else False
         if CANDIDATES_PATH.exists():
             stat = CANDIDATES_PATH.stat()
             fingerprint = (stat.st_mtime, stat.st_size)
-            if fingerprint == self._result_tree_fingerprint and current_job == self._result_last_job and current_dates == self._result_last_dates:
+            if fingerprint == self._result_tree_fingerprint and current_job == self._result_last_job and current_dates == self._result_last_dates and show_blacklist == self._result_last_show_blacklist:
                 return
             self._result_tree_fingerprint = fingerprint
             self._result_last_job = current_job
             self._result_last_dates = current_dates
+            self._result_last_show_blacklist = show_blacklist
         elif self._result_tree_fingerprint is not None:
             self._result_tree_fingerprint = None
 
@@ -7244,6 +7350,8 @@ class BossFilterGUI:
             if CANDIDATES_PATH.exists():
                 with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                     candidates = json.load(f)
+                if not show_blacklist:
+                    candidates = [c for c in candidates if not c.get('blacklisted')]
 
                 # 岗位过滤
                 selected_job = self.result_job_var.get()
@@ -7301,6 +7409,7 @@ class BossFilterGUI:
                 self.result_tree.tag_configure('strong_recommend', background=self.colors['bg_tree_tag_high'])
                 self.result_tree.tag_configure('recommend', background=self.colors['bg_tree_tag_mid'])
                 self.result_tree.tag_configure('pending', background=self.colors['bg_tree_tag_low'])
+                self.result_tree.tag_configure('blacklisted', background='#F5F5F5', foreground='#C62828')
 
                 for c in sorted_candidates[:100]:
                     score = c.get('match_score', 0)
@@ -7310,7 +7419,9 @@ class BossFilterGUI:
                     status = self._format_candidate_status(c)
 
                     # 根据推荐等级设置颜色标记
-                    if score >= SCORE_THRESHOLD_STRONG:
+                    if c.get('blacklisted'):
+                        tag = 'blacklisted'
+                    elif score >= SCORE_THRESHOLD_STRONG:
                         tag = 'strong_recommend'
                     elif score >= SCORE_THRESHOLD_RECOMMEND:
                         tag = 'recommend'
@@ -7320,10 +7431,24 @@ class BossFilterGUI:
                     # 从 summary 中解析工作年限和薪资
                     salary, exp = self._parse_salary_exp(c.get('summary', ''), c.get('structured'))
 
-                    # AI 评估调整值
+                    # AI 评估调整值（一次 + 二次）
                     ai_adj = c.get('llm_adjustment')
+                    resume_adj = c.get('resume_eval_adjustment')
+
                     if ai_adj is not None and c.get('llm_evaluated'):
-                        ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                        if resume_adj is not None:
+                            # 两次评估：显示净调整 + 明细
+                            net = ai_adj + resume_adj
+                            sign = "+" if net > 0 else ""
+                            r1_str = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                            r2_str = f"+{resume_adj}" if resume_adj > 0 else str(resume_adj)
+                            ai_text = f"{sign}{net}({r1_str}{r2_str})"
+                        else:
+                            # 只有一次评估
+                            ai_text = f"+{ai_adj}" if ai_adj > 0 else str(ai_adj)
+                    elif resume_adj is not None:
+                        # 只有二次评估（边界情况）
+                        ai_text = f"+{resume_adj}" if resume_adj > 0 else str(resume_adj)
                     else:
                         ai_text = "—"
 
@@ -7521,23 +7646,40 @@ class BossFilterGUI:
             icon_greet = self.icons.button('play', self.colors['success'])
             icon_followup = self.icons.button('chat', self.colors['primary'])
             icon_feedback = self.icons.button('check', self.colors['primary'])
+            icon_blacklist = self.icons.button('close', self.colors['danger'])
+            icon_unblacklist = self.icons.button('check', self.colors['success'])
             icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
             icon_export_menu = self.icons.button('export', self.colors['text_primary'])
             menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=lambda: self._show_candidate_detail(item))
+            icon_document = self.icons.button('document', self.colors['primary'])
+            menu.add_command(label=" 导入简历", image=icon_document, compound=tk.LEFT, command=lambda: self._import_resume(item))
 
             # 打招呼：仅对未打招呼的候选人显示
             candidate_for_menu = self._find_candidate_by_tree_item(item)
+
+            # 撤销简历评估：仅对有简历评估数据的候选人显示
+            if candidate_for_menu and candidate_for_menu.get('resume_eval_adjustment') is not None:
+                icon_undo = self.icons.button('refresh', self.colors['text_primary'])
+                menu.add_command(label=" 撤销简历评估", image=icon_undo, compound=tk.LEFT, command=lambda: self._revert_resume_eval(item))
+
             if candidate_for_menu and not candidate_for_menu.get('greet_sent', False):
                 menu.add_command(label=" 打招呼", image=icon_greet, compound=tk.LEFT, command=lambda: self._greet_single_candidate(item))
 
             menu.add_command(label=" 更新跟进", image=icon_followup, compound=tk.LEFT, command=lambda: self._mark_candidate_followup(item))
             menu.add_command(label=" 标记反馈", image=icon_feedback, compound=tk.LEFT, command=lambda: self._mark_candidate_feedback(item))
+            # 黑名单/移出黑名单：根据候选人状态动态显示
+            if candidate_for_menu and candidate_for_menu.get('blacklisted'):
+                menu.add_command(label=" 移出黑名单", image=icon_unblacklist, compound=tk.LEFT, command=lambda: self._unblacklist_candidate(item))
+            else:
+                menu.add_command(label=" 加入黑名单", image=icon_blacklist, compound=tk.LEFT, command=lambda: self._blacklist_candidate(item))
             menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=lambda: self._remove_candidate(item))
             menu.add_separator()
             menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=lambda: self._export_selected())
 
             # 保持引用防止 GC
-            menu._icon_refs = [icon_detail, icon_greet, icon_followup, icon_feedback, icon_trash_menu, icon_export_menu]
+            menu._icon_refs = [icon_detail, icon_document, icon_greet, icon_followup, icon_feedback, icon_blacklist, icon_unblacklist, icon_trash_menu, icon_export_menu]
+            if candidate_for_menu and candidate_for_menu.get('resume_eval_adjustment') is not None:
+                menu._icon_refs.append(icon_undo)
 
             # 显示菜单
             menu.tk_popup(event.x_root, event.y_root)
@@ -7564,7 +7706,555 @@ class BossFilterGUI:
             status_parts.append("需人工确认")
         if candidate.get('feedback_status'):
             status_parts.append(candidate.get('feedback_status'))
+        if candidate.get('blacklisted'):
+            status_parts.append("已屏蔽")
         return "｜".join(status_parts)
+
+    def _open_blacklist_reason_dialog(self, candidate, parent, on_confirm):
+        """打开加入黑名单原因弹窗。"""
+        parent = parent or self.root
+        name = candidate.get('name') or "该候选人"
+        job_name = candidate.get('job_name') or "未标记岗位"
+        existing_reason = candidate.get('blacklist_reason') or ""
+        reason_placeholder = "简历造假/性格原因/信用差/其它恶劣行为"
+        dialog_scale = self.dpi_scale * self.zoom_factor
+        width = max(500, int(500 * dialog_scale))
+        height = max(320, int(320 * dialog_scale))
+        pad = int(20 * dialog_scale)
+
+        win = tk.Toplevel(parent)
+        win.title("加入黑名单")
+        win.withdraw()
+        win.transient(parent)
+        win.grab_set()
+        win.configure(bg=self.colors['bg_main'])
+        win.resizable(False, False)
+        _place_window_centered(win, width, height, parent=parent)
+
+        container = ttk.Frame(win, style='Page.TFrame', padding=pad)
+        container.pack(fill="both", expand=True)
+
+        ttk.Label(
+            container,
+            text="加入黑名单",
+            font=self.font_section,
+            foreground=self.colors['text_primary'],
+            background=self.colors['bg_main']
+        ).pack(anchor="w")
+
+        info = f"{name}｜{job_name}"
+        ttk.Label(
+            container,
+            text=info,
+            font=self.font_label,
+            foreground=self.colors['text_secondary'],
+            background=self.colors['bg_main'],
+            wraplength=width - pad * 2
+        ).pack(anchor="w", pady=(int(6 * dialog_scale), int(16 * dialog_scale)))
+
+        ttk.Label(
+            container,
+            text="屏蔽原因",
+            font=self.font_label,
+            foreground=self.colors['text_primary'],
+            background=self.colors['bg_main']
+        ).pack(anchor="w", pady=(0, int(6 * dialog_scale)))
+
+        reason_text = tk.Text(
+            container,
+            height=4,
+            wrap="word",
+            font=self.font_label,
+            bg=self.colors['bg_card'],
+            fg=self.colors['text_primary'],
+            insertbackground=self.colors['text_primary'],
+            relief="solid",
+            bd=1,
+            padx=int(10 * dialog_scale),
+            pady=int(8 * dialog_scale)
+        )
+        reason_text.pack(fill="x")
+        placeholder_active = {'value': False}
+
+        def show_placeholder():
+            placeholder_active['value'] = True
+            reason_text.config(fg=self.colors['text_muted'])
+            reason_text.delete("1.0", "end")
+            reason_text.insert("1.0", reason_placeholder)
+
+        def hide_placeholder():
+            if placeholder_active['value']:
+                placeholder_active['value'] = False
+                reason_text.config(fg=self.colors['text_primary'])
+                reason_text.delete("1.0", "end")
+
+        if existing_reason:
+            reason_text.insert("1.0", existing_reason)
+        else:
+            show_placeholder()
+
+        ttk.Label(
+            container,
+            text="后续扫描、统计和导出会跳过此候选人。",
+            font=self.font_log,
+            foreground=self.colors['text_secondary'],
+            background=self.colors['bg_main']
+        ).pack(anchor="w", pady=(int(8 * dialog_scale), 0))
+
+        button_frame = tk.Frame(container, bg=self.colors['bg_main'])
+        button_frame.pack(anchor='center', pady=(int(16 * dialog_scale), 0))
+
+        def close():
+            try:
+                win.grab_release()
+            except tk.TclError:
+                pass
+            win.destroy()
+
+        def save():
+            reason = "" if placeholder_active['value'] else reason_text.get("1.0", "end").strip()
+            close()
+            on_confirm(reason)
+
+        icon_check = self.icons.button('check', self.colors['primary'])
+        icon_close = self.icons.button('close', self.colors['text_secondary'])
+        button_pad = int(8 * dialog_scale)
+        button_width = int(108 * dialog_scale)
+        button_height = int(32 * dialog_scale)
+
+        def create_dialog_button(icon, text, command):
+            frame = tk.Frame(
+                button_frame,
+                bg=self.colors['bg_card'],
+                highlightbackground=self.colors['border'],
+                highlightthickness=1,
+                width=button_width,
+                height=button_height,
+                cursor='hand2'
+            )
+            frame.pack_propagate(False)
+            content = tk.Frame(frame, bg=self.colors['bg_card'])
+            content.pack(expand=True)
+            icon_label = tk.Label(content, image=icon, bg=self.colors['bg_card'])
+            icon_label.image = icon
+            icon_label.pack(side='left', padx=(0, 2), anchor='center')
+            text_label = tk.Label(
+                content,
+                text=text,
+                bg=self.colors['bg_card'],
+                font=self.font_label,
+                fg=self.colors['text_primary']
+            )
+            text_label.pack(side='left', padx=(2, 0), anchor='center')
+
+            children = [frame, content, icon_label, text_label]
+
+            def on_enter(_event):
+                for widget in children:
+                    widget.config(bg=self.colors['bg_hover'])
+
+            def on_leave(_event):
+                for widget in children:
+                    widget.config(bg=self.colors['bg_card'])
+
+            for widget in children:
+                widget.bind('<Enter>', on_enter)
+                widget.bind('<Leave>', on_leave)
+                widget.bind('<Button-1>', lambda _event, cmd=command: cmd())
+            return frame
+
+        create_dialog_button(icon_check, "确定", save).pack(side="left", padx=button_pad)
+        create_dialog_button(icon_close, "取消", close).pack(side="left", padx=button_pad)
+
+        win.protocol("WM_DELETE_WINDOW", close)
+        reason_text.bind("<FocusIn>", lambda _event: hide_placeholder())
+        reason_text.bind("<FocusOut>", lambda _event: show_placeholder() if not reason_text.get("1.0", "end").strip() else None)
+        win.bind("<Escape>", lambda _event: close())
+        win.bind("<Control-Return>", lambda _event: save())
+        win.deiconify()
+        win.lift(parent)
+        if existing_reason:
+            reason_text.focus_set()
+            reason_text.tag_add("sel", "1.0", "end-1c")
+        else:
+            win.focus_set()
+
+    def _update_candidate_blacklist(self, geek_id, reason):
+        """按 geek_id 标记候选人黑名单，跨岗位生效。"""
+        if not CANDIDATES_PATH.exists():
+            return 0
+        with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+            candidates = json.load(f)
+
+        updated = 0
+        blacklisted_at = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for c in candidates:
+            if str(c.get('geek_id')) == str(geek_id):
+                c['blacklisted'] = True
+                c['blacklist_reason'] = reason.strip()
+                c['blacklisted_at'] = blacklisted_at
+                if not c.get('followup_status'):
+                    c['followup_status'] = "不合适"
+                updated += 1
+
+        if updated:
+            save_candidates_all(candidates, CANDIDATES_PATH)
+        return updated
+
+    def _import_resume(self, item):
+        """导入候选人简历文件并触发二次 AI 评估。"""
+        candidate = self._find_candidate_by_tree_item(item)
+        if not candidate:
+            return
+
+        # 1. 选择文件
+        filepath = filedialog.askopenfilename(
+            title=f"导入简历 — {candidate.get('name', '')}",
+            filetypes=[
+                ("简历文件", "*.pdf *.docx"),
+                ("PDF 文件", "*.pdf"),
+                ("Word 文件", "*.docx"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        if not filepath:
+            return
+
+        # 2. 解析文件
+        ext = os.path.splitext(filepath)[1].lower()
+        resume_text = ""
+        try:
+            if ext == '.pdf':
+                try:
+                    import fitz  # PyMuPDF
+                except ImportError:
+                    messagebox.showwarning("缺少依赖",
+                        "需要安装 PyMuPDF 才能解析 PDF 文件。\n\n"
+                        "安装命令：pip install PyMuPDF")
+                    return
+                doc = fitz.open(filepath)
+                pages_text = [page.get_text() for page in doc]
+                resume_text = "\n".join(pages_text)
+                doc.close()
+            elif ext == '.docx':
+                try:
+                    import docx
+                except ImportError:
+                    messagebox.showwarning("缺少依赖",
+                        "需要安装 python-docx 才能解析 Word 文件。\n\n"
+                        "安装命令：pip install python-docx")
+                    return
+                doc = docx.Document(filepath)
+                resume_text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            else:
+                messagebox.showwarning("不支持的格式", f"仅支持 PDF 和 DOCX 格式，当前文件：{ext}")
+                return
+        except Exception as e:
+            messagebox.showerror("解析失败", f"无法解析简历文件：\n{e}")
+            return
+
+        resume_text = resume_text.strip()
+        if len(resume_text) < 50:
+            messagebox.showwarning("内容过少", "简历提取的文本内容过少，可能不是有效的简历文件。")
+            return
+
+        # 3. 拷贝文件到 resumes/ 目录
+        from paths import get_base_dir
+        resumes_dir = get_base_dir() / "resumes"
+        resumes_dir.mkdir(exist_ok=True)
+        geek_id = candidate.get('geek_id', 'unknown')
+        name = candidate.get('name', '未知')
+        # 清理姓名中的特殊字符（避免文件名问题）
+        safe_name = ''.join(c for c in name if c.isalnum() or c in '_-一-鿿') or '未知'
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        dest = resumes_dir / f"{safe_name}_{geek_id}_{ts}{ext}"
+        try:
+            shutil.copy2(filepath, dest)
+        except Exception as e:
+            messagebox.showerror("存储失败", f"无法保存简历文件：\n{e}")
+            return
+
+        # 更新候选人记录（文件路径和导入时间）
+        candidate['resume_file'] = str(dest)
+        candidate['resume_imported_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 4. 预览确认（只显示前 300 字）
+        preview = resume_text[:300]
+        if len(resume_text) > 300:
+            preview += f"\n\n... (共 {len(resume_text)} 字)"
+
+        confirm = messagebox.askyesno(
+            "简历预览",
+            f"成功提取简历文本（{len(resume_text)} 字）：\n\n{preview}\n\n是否进行 AI 二次评估？",
+        )
+
+        # 即使不评估，也保存已导入的文件路径
+        save_candidates_all(self.all_candidates, CANDIDATES_PATH)
+
+        if not confirm:
+            self.refresh_results()
+            return
+
+        # 5. 后台线程调用 LLM
+        name = candidate.get('name', '')
+
+        # 表格状态即时反馈
+        try:
+            self.result_tree.set(item, 'status', '简历评估中...')
+            self.result_tree.update_idletasks()
+        except Exception:
+            pass
+
+        def _eval_worker():
+            try:
+                from llm_eval import evaluate_with_resume
+
+                api_config = self.api_config
+                provider_key = api_config.get('api_provider', '')
+                base_url = api_config.get('base_url', '')
+                api_key = get_api_key(provider_key, base_url)
+
+                if not api_key:
+                    def _no_key():
+                        try:
+                            self.result_tree.set(item, 'status',
+                                self._format_candidate_status(candidate))
+                        except Exception:
+                            pass
+                        messagebox.showwarning("API Key 缺失",
+                            "未找到 API Key，请先在「模型配置」页配置。",
+                            parent=self.root)
+                    self.root.after(0, _no_key)
+                    return
+
+                # 读取岗位需求
+                job_config_path = get_base_dir() / "job_config.json"
+                job_requirement = ""
+                hard_conditions = ""
+                if job_config_path.exists():
+                    import json as _json
+                    with open(job_config_path, 'r', encoding='utf-8') as f:
+                        jc = _json.load(f)
+                    job_requirement = jc.get('raw_text', '') or jc.get('description', '')
+                    hc = jc.get('required_conditions') or jc.get('hard_conditions', [])
+                    if hc:
+                        hard_conditions = "## 硬性条件\n" + "\n".join(
+                            f"- {c}" if isinstance(c, str) else f"- {c.get('text','')}"
+                            for c in (hc if isinstance(hc, list) else [hc])
+                        ) + "\n\n"
+
+                self.append_log(f"[简历评估] 正在评估 {name}...")
+                result = evaluate_with_resume(
+                    candidate, resume_text, job_requirement,
+                    api_config, api_key, hard_conditions=hard_conditions,
+                )
+
+                def _on_done():
+                    save_candidates_all(self.all_candidates, CANDIDATES_PATH)
+                    self.refresh_results()
+                    self.refresh_home_stats()
+                    if result.success:
+                        sign = "+" if result.adjustment > 0 else ""
+                        self.append_log(
+                            f"[简历评估] ✅ {name}: {sign}{result.adjustment} "
+                            f"→ 总分 {candidate.get('match_score', '?')}")
+                        # 自定义对话框
+                        eval_dialog = tk.Toplevel(self.root)
+                        eval_dialog.transient(self.root)
+                        eval_dialog.grab_set()
+                        eval_dialog.title("简历二次评估完成")
+                        eval_dialog.configure(bg=self.colors['bg_main'])
+                        dialog_scale = self.dpi_scale * self.zoom_factor
+                        dialog_width = int(520 * dialog_scale)
+                        reason_text = candidate.get('resume_eval_reason', '')
+                        # 估算文本行数：每行约 25 个中文字符
+                        line_count = max(3, len(reason_text) // 25 + 1)
+                        line_count = min(line_count, 12)  # 最多 12 行
+                        # 高度 = 摘要区 + 文本区 + 按钮区，保持完成弹窗留白不过度拥挤
+                        dialog_height = int((108 + line_count * 18 + 58) * dialog_scale)
+                        self._center_window(eval_dialog, dialog_width, dialog_height)
+                        # 摘要信息（较小字体）
+                        summary_frame = ttk.Frame(eval_dialog, style='Page.TFrame')
+                        outer_pad_x = int(24 * dialog_scale)
+                        summary_frame.pack(fill="x", padx=outer_pad_x, pady=(int(18 * dialog_scale), int(8 * dialog_scale)))
+                        summary_font = (FONT_FAMILY, int(11 * self.font_scale))
+                        ttk.Label(summary_frame, text=f"候选人：{name}",
+                                  font=summary_font, background=self.colors['bg_main']).pack(anchor="w")
+                        ttk.Label(summary_frame, text=f"调整分：{sign}{result.adjustment}  最终分：{candidate.get('match_score', '?')}",
+                                  font=summary_font, background=self.colors['bg_main'],
+                                  foreground=self.colors['success']).pack(anchor="w")
+                        # 评估理由（小字体，紧凑）
+                        reason_frame = ttk.Frame(eval_dialog, style='Card.TFrame')
+                        reason_frame.pack(fill="x", padx=outer_pad_x, pady=(int(6 * dialog_scale), int(12 * dialog_scale)))
+                        reason_font = (FONT_FAMILY, int(10 * self.font_scale))
+                        reason_text_widget = tk.Text(reason_frame, wrap='char', font=reason_font,
+                                                     bg=self.colors['bg_card'], relief='flat',
+                                                     padx=int(8 * dialog_scale), pady=int(8 * dialog_scale),
+                                                     height=line_count)
+                        reason_text_widget.insert('1.0', reason_text)
+                        reason_text_widget.config(state='disabled')
+                        reason_text_widget.pack(fill="x")
+                        # 关闭按钮
+                        btn_container = ttk.Frame(eval_dialog, style='Page.TFrame')
+                        btn_container.pack(fill="x", pady=(int(8 * dialog_scale), int(6 * dialog_scale)))
+                        btn_style = ttk.Style()
+                        btn_style.configure(
+                            'ResumeEval.TButton',
+                            font=(FONT_FAMILY, int(11 * self.font_scale)),
+                            padding=(int(18 * dialog_scale), int(5 * dialog_scale)),
+                        )
+                        ok_btn = ttk.Button(btn_container, text="确定",
+                                            command=eval_dialog.destroy,
+                                            style='ResumeEval.TButton')
+                        ok_btn.pack(anchor="center")
+                    else:
+                        self.append_log(f"[简历评估] ❌ {name}: {result.reason}")
+                        messagebox.showwarning("评估失败",
+                            f"LLM 返回错误：{result.reason}",
+                            parent=self.root)
+
+                self.root.after(0, _on_done)
+
+            except Exception as e:
+                def _on_error():
+                    self.append_log(f"[简历评估] ❌ {name} 异常：{e}")
+                    try:
+                        self.result_tree.set(item, 'status',
+                            self._format_candidate_status(candidate))
+                    except Exception:
+                        pass
+                    messagebox.showerror("评估异常",
+                        f"二次评估出错：\n{e}", parent=self.root)
+                self.root.after(0, _on_error)
+
+        threading.Thread(target=_eval_worker, daemon=True).start()
+
+    def _revert_resume_eval(self, item):
+        """撤销简历评估：清空简历数据和二次评估结果，回退分数。"""
+        from llm_eval import _recalc_recommend_level
+
+        candidate = self._find_candidate_by_tree_item(item)
+        if not candidate:
+            return
+
+        name = candidate.get('name', '')
+        confirm = messagebox.askyesno(
+            "撤销简历评估",
+            f"确定要撤销 {name} 的简历评估吗？\n\n"
+            f"将清空简历文件和二次评估结果，分数回退到一次评估状态。",
+            parent=self.root,
+        )
+        if not confirm:
+            return
+
+        # 删除简历文件
+        resume_file = candidate.get('resume_file')
+        if resume_file:
+            try:
+                if os.path.exists(resume_file):
+                    os.remove(resume_file)
+            except Exception as e:
+                self.append_log(f"[撤销评估] 删除简历文件失败：{e}")
+
+        # 回退分数：match_score = rule_score + llm_adjustment
+        rule_score = candidate.get('rule_score', candidate.get('match_score', 0))
+        llm_adj = candidate.get('llm_adjustment', 0) or 0
+        reverted_score = max(0, min(100, rule_score + llm_adj))
+
+        # 清空简历相关字段
+        for field in ('resume_file', 'resume_imported_at', 'resume_eval_adjustment',
+                      'resume_eval_reason', 'resume_eval_model', 'resume_eval_at'):
+            candidate.pop(field, None)
+
+        # 回退分数和推荐等级
+        candidate['match_score'] = reverted_score
+        candidate['recommend_level'] = _recalc_recommend_level(reverted_score)
+
+        # 更新 score_breakdown
+        breakdown = candidate.get('score_breakdown')
+        if isinstance(breakdown, dict):
+            breakdown.pop('resume_adjustment', None)
+            breakdown['total'] = reverted_score
+
+        # 保存并刷新
+        save_candidates_all(self.all_candidates, CANDIDATES_PATH)
+        self.refresh_results()
+        self.refresh_home_stats()
+        self.append_log(f"[撤销评估] {name}: 分数回退到 {reverted_score}")
+
+    def _blacklist_candidate(self, item):
+        """把选中候选人加入黑名单。"""
+        candidate = self._find_candidate_by_tree_item(item)
+        if not candidate:
+            messagebox.showerror("错误", "未找到候选人")
+            return
+
+        name = candidate.get('name', '该候选人')
+
+        def save_blacklist(reason):
+            try:
+                updated = self._update_candidate_blacklist(candidate.get('geek_id'), reason)
+                if not updated:
+                    messagebox.showerror("错误", "加入黑名单失败：未找到候选人")
+                    return
+                candidate['blacklisted'] = True
+                candidate['blacklist_reason'] = reason.strip()
+                candidate['blacklisted_at'] = datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._regenerate_excel()
+                self.refresh_home_stats()
+                self.refresh_stats()
+                self.refresh_results()
+                messagebox.showinfo("成功", f"已屏蔽：{name}")
+            except Exception as exc:
+                messagebox.showerror("错误", f"加入黑名单失败：{exc}")
+
+        self._open_blacklist_reason_dialog(candidate, self.root, save_blacklist)
+
+    def _update_candidate_unblacklist(self, geek_id):
+        """按 geek_id 移除候选人黑名单，跨岗位生效。"""
+        if not CANDIDATES_PATH.exists():
+            return 0
+        with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+            candidates = json.load(f)
+
+        updated = 0
+        for c in candidates:
+            if str(c.get('geek_id')) == str(geek_id) and c.get('blacklisted'):
+                c.pop('blacklisted', None)
+                c.pop('blacklist_reason', None)
+                c.pop('blacklisted_at', None)
+                updated += 1
+
+        if updated:
+            save_candidates_all(candidates, CANDIDATES_PATH)
+        return updated
+
+    def _unblacklist_candidate(self, item):
+        """把选中候选人移出黑名单。"""
+        candidate = self._find_candidate_by_tree_item(item)
+        if not candidate:
+            messagebox.showerror("错误", "未找到候选人")
+            return
+
+        name = candidate.get('name', '该候选人')
+        if not messagebox.askyesno("移出黑名单", f"确定将 {name} 移出黑名单？"):
+            return
+
+        try:
+            updated = self._update_candidate_unblacklist(candidate.get('geek_id'))
+            if not updated:
+                messagebox.showerror("错误", "移出黑名单失败：未找到已屏蔽记录")
+                return
+            candidate.pop('blacklisted', None)
+            candidate.pop('blacklist_reason', None)
+            candidate.pop('blacklisted_at', None)
+            self._regenerate_excel()
+            self.refresh_home_stats()
+            self.refresh_stats()
+            self.refresh_results()
+            messagebox.showinfo("成功", f"已移出黑名单：{name}")
+        except Exception as exc:
+            messagebox.showerror("错误", f"移出黑名单失败：{exc}")
 
     def _update_candidate_followup(self, geek_id, job_name, status, note):
         """更新候选人的跟进状态。"""
@@ -7933,6 +8623,10 @@ class BossFilterGUI:
             if ai_adj is not None and ai_adj != 0:
                 sign = "+" if ai_adj > 0 else ""
                 parts.append(f"AI{sign}{ai_adj}")
+            resume_adj = breakdown.get('resume_adjustment')
+            if resume_adj is not None and resume_adj != 0:
+                sign = "+" if resume_adj > 0 else ""
+                parts.append(f"简历{sign}{resume_adj}")
             lines.append(f"  评分拆解：{' + '.join(parts)}")
         if c.get('greet_sent'):
             lines.append(f"  状态：已打招呼")
@@ -7940,6 +8634,8 @@ class BossFilterGUI:
             lines.append(f"  状态：未打招呼")
         if c.get('manual_review_required'):
             lines.append(f"  沟通限制：需人工确认后再打招呼")
+        if c.get('blacklisted'):
+            lines.append(f"  屏蔽状态：已加入黑名单")
 
         risk_flags = c.get('risk_flags') or []
         if risk_flags:
@@ -7974,6 +8670,17 @@ class BossFilterGUI:
                 for note_line in str(c.get('feedback_note', '')).split('\n'):
                     lines.append(f"    {note_line}")
 
+        if c.get('blacklisted'):
+            lines.append("")
+            lines.append("【黑名单】")
+            lines.append("  状态：已屏蔽")
+            if c.get('blacklisted_at'):
+                lines.append(f"  时间：{c.get('blacklisted_at')}")
+            if c.get('blacklist_reason'):
+                lines.append("  原因：")
+                for note_line in str(c.get('blacklist_reason', '')).split('\n'):
+                    lines.append(f"    {note_line}")
+
         explanation = c.get('score_explanation') or []
         if explanation:
             lines.append("")
@@ -8000,7 +8707,7 @@ class BossFilterGUI:
         # AI 评估信息
         lines.append("")
         if c.get('llm_evaluated'):
-            lines.append("【AI 评估】")
+            lines.append("【AI 一次评估】")
             lines.append(f"  原始规则分：{c.get('rule_score', '—')}")
             adj = c.get('llm_adjustment', 0)
             sign = "+" if adj > 0 else ""
@@ -8010,13 +8717,26 @@ class BossFilterGUI:
             lines.append("")
             lines.append(f"  AI评估：")
             reason = c.get('llm_reason', '无').replace('\n', ' ').replace('\r', '').strip()
-            # 自动换行
-            while len(reason) > 40:
-                lines.append(f"    {reason[:40]}")
-                reason = reason[40:]
             lines.append(f"    {reason}")
         else:
-            lines.append("【AI 评估】未启用")
+            lines.append("【AI 一次评估】未启用")
+
+        # 二次评估（基于导入简历）
+        if c.get('resume_eval_adjustment') is not None:
+            lines.append("")
+            lines.append("【AI 二次评估（简历）】")
+            r_adj = c.get('resume_eval_adjustment', 0)
+            r_sign = "+" if r_adj > 0 else ""
+            lines.append(f"  调整值：{r_sign}{r_adj}")
+            lines.append(f"  评估时间：{c.get('resume_eval_at', '—')}")
+            lines.append(f"  评估模型：{c.get('resume_eval_model', '未知')}")
+            r_reason = c.get('resume_eval_reason', '无').replace('\n', ' ').replace('\r', '').strip()
+            lines.append(f"  评估理由：")
+            lines.append(f"    {r_reason}")
+            if c.get('resume_file'):
+                lines.append(f"  简历文件：{os.path.basename(c.get('resume_file', ''))}")
+            if c.get('resume_imported_at'):
+                lines.append(f"  导入时间：{c.get('resume_imported_at')}")
 
         # 技能匹配详情
         skill_matches = c.get('skill_matches', [])
@@ -8120,7 +8840,7 @@ class BossFilterGUI:
             ttk.Label(detail_window, text=title, font=(FONT_FAMILY, 16), foreground=self.colors['primary']).pack(pady=15)
 
             # 详情文本
-            text_widget = tk.Text(detail_window, wrap='word', font=(FONT_FAMILY, 14))
+            text_widget = tk.Text(detail_window, wrap='char', font=(FONT_FAMILY, 14))
             text_widget.pack(fill='both', expand=True, padx=20, pady=10)
             self.bind_text_context_menu(text_widget, editable=False)
 
@@ -8400,6 +9120,7 @@ class BossFilterGUI:
             if CANDIDATES_PATH.exists():
                 with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                     candidates = json.load(f)
+                candidates = [c for c in candidates if not c.get('blacklisted')]
 
                 # 弹出文件保存对话框
                 file_path = filedialog.asksaveasfilename(
@@ -8518,7 +9239,7 @@ class BossFilterGUI:
             keep_greeted_var.set(False)
 
         # 提示
-        ttk.Label(dialog, text="操作前会自动备份数据文件，清空后不可恢复",
+        ttk.Label(dialog, text="操作前会自动备份；已屏蔽候选人会保留为黑名单",
                   font=(FONT_FAMILY, int(13 * dialog_fs)),
                   foreground=self.colors['text_muted'],
                   style='ClearDialog.TLabel').pack(pady=(int(12 * _s), 0))
@@ -8548,6 +9269,7 @@ class BossFilterGUI:
                     candidates = json.load(f)
 
                 kept_count = 0
+                blacklist_kept_count = 0
 
                 if choice == "current":
                     # 清空当前岗位
@@ -8556,13 +9278,16 @@ class BossFilterGUI:
                     current_job = [c for c in candidates if c.get('job_name', '') == job_name]
 
                     if keep_greeted:
-                        kept = [c for c in current_job if c.get('greet_sent')]
-                        removed_list = [c for c in current_job if not c.get('greet_sent')]
+                        kept = [c for c in current_job if c.get('greet_sent') or c.get('blacklisted')]
+                        removed_list = [c for c in current_job if not c.get('greet_sent') and not c.get('blacklisted')]
                         candidates = other_jobs + kept
-                        kept_count = len(kept)
+                        kept_count = sum(1 for c in kept if c.get('greet_sent'))
+                        blacklist_kept_count = sum(1 for c in kept if c.get('blacklisted'))
                     else:
-                        candidates = other_jobs
-                        removed_list = current_job
+                        kept = [c for c in current_job if c.get('blacklisted')]
+                        removed_list = [c for c in current_job if not c.get('blacklisted')]
+                        candidates = other_jobs + kept
+                        blacklist_kept_count = len(kept)
 
                     removed = len(removed_list)
 
@@ -8573,18 +9298,24 @@ class BossFilterGUI:
                     if kept_count > 0:
                         log_msg += f"，保留 {kept_count} 条已打招呼记录"
                         info_msg += f"，保留 {kept_count} 条已打招呼记录"
+                    if blacklist_kept_count > 0:
+                        log_msg += f"，保留 {blacklist_kept_count} 条黑名单记录"
+                        info_msg += f"，保留 {blacklist_kept_count} 条黑名单记录"
                     self.append_log(log_msg)
                     messagebox.showinfo("完成", info_msg)
                 else:
                     # 清空全部
                     if keep_greeted:
-                        kept = [c for c in candidates if c.get('greet_sent')]
+                        kept = [c for c in candidates if c.get('greet_sent') or c.get('blacklisted')]
+                        removed = len([c for c in candidates if not c.get('greet_sent') and not c.get('blacklisted')])
+                        candidates = kept
+                        kept_count = sum(1 for c in kept if c.get('greet_sent'))
+                        blacklist_kept_count = sum(1 for c in kept if c.get('blacklisted'))
+                    else:
+                        kept = [c for c in candidates if c.get('blacklisted')]
                         removed = len(candidates) - len(kept)
                         candidates = kept
-                        kept_count = len(kept)
-                    else:
-                        removed = len(candidates)
-                        candidates = []
+                        blacklist_kept_count = len(kept)
 
                     save_candidates_all(candidates, CANDIDATES_PATH)
 
@@ -8593,6 +9324,9 @@ class BossFilterGUI:
                     if kept_count > 0:
                         log_msg += f"，保留 {kept_count} 条已打招呼记录"
                         info_msg += f"，保留 {kept_count} 条已打招呼记录"
+                    if blacklist_kept_count > 0:
+                        log_msg += f"，保留 {blacklist_kept_count} 条黑名单记录"
+                        info_msg += f"，保留 {blacklist_kept_count} 条黑名单记录"
                     self.append_log(log_msg)
                     messagebox.showinfo("完成", info_msg)
 

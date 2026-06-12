@@ -1,5 +1,5 @@
 """storage 模块单元测试 — 覆盖去重、打招呼状态合并、原子写入、备份恢复、
-get_greeted_geek_ids、is_already_greeted、build_greeted_index。"""
+get_greeted_geek_ids、is_already_greeted、build_greeted_index、build_blacklist_index。"""
 
 import contextlib
 import io
@@ -9,6 +9,7 @@ import tempfile
 
 from storage import (
     _dedupe_candidates,
+    build_blacklist_index,
     build_greeted_index,
     get_greeted_geek_ids,
     is_already_greeted,
@@ -121,6 +122,44 @@ def test_dedupe_preserves_followup_from_new_to_old():
     assert result[0]["match_score"] == 80
     assert result[0]["followup_status"] == "待约面"
     assert result[0]["followup_note"] == "周三沟通"
+
+
+def test_dedupe_preserves_blacklist_from_old_to_new():
+    """高分新记录替换旧记录时，保留旧记录上的黑名单状态。"""
+    result = _dedupe_candidates([
+        {
+            "geek_id": "g1",
+            "job_name": "Java",
+            "match_score": 70,
+            "blacklisted": True,
+            "blacklist_reason": "面试未通过",
+            "blacklisted_at": "20260612_100000",
+        },
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+    ])
+    assert len(result) == 1
+    assert result[0]["match_score"] == 80
+    assert result[0]["blacklisted"] is True
+    assert result[0]["blacklist_reason"] == "面试未通过"
+
+
+def test_dedupe_preserves_blacklist_from_new_to_old():
+    """低分新记录不替换旧记录时，也要把黑名单状态合并回旧记录。"""
+    result = _dedupe_candidates([
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+        {
+            "geek_id": "g1",
+            "job_name": "Java",
+            "match_score": 70,
+            "blacklisted": True,
+            "blacklist_reason": "性格不匹配",
+            "blacklisted_at": "20260612_110000",
+        },
+    ])
+    assert len(result) == 1
+    assert result[0]["match_score"] == 80
+    assert result[0]["blacklisted"] is True
+    assert result[0]["blacklist_reason"] == "性格不匹配"
 
 
 def test_dedupe_merges_greet_sent_from_new_to_old():
@@ -255,6 +294,18 @@ def test_build_greeted_index_skips_no_geek_id():
     index = build_greeted_index(candidates)
     assert len(index) == 1
     assert ("g1", "Java") in index
+
+
+# ========== build_blacklist_index ==========
+
+def test_build_blacklist_index_is_cross_job_by_geek_id():
+    candidates = [
+        {"geek_id": "g1", "job_name": "Java", "blacklisted": True},
+        {"geek_id": "g1", "job_name": "Python"},
+        {"geek_id": "g2", "job_name": "Java", "blacklisted": False},
+        {"geek_id": "g3", "job_name": "Go", "blacklisted": True},
+    ]
+    assert build_blacklist_index(candidates) == {"g1", "g3"}
 
 
 # ========== save_candidates_all 原子写入 ==========

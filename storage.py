@@ -19,9 +19,18 @@ _FEEDBACK_FIELDS = (
     'followup_status',
     'followup_note',
     'followup_updated_at',
+    'blacklisted',
+    'blacklist_reason',
+    'blacklisted_at',
     'risk_flags',
     'manual_review_required',
     'auto_greet_blocked_reason',
+    'resume_file',
+    'resume_imported_at',
+    'resume_eval_adjustment',
+    'resume_eval_reason',
+    'resume_eval_model',
+    'resume_eval_at',
 )
 
 
@@ -74,11 +83,7 @@ def save_candidates_all(candidates_all: list[dict[str, Any]], path: Optional[str
     unique_candidates = _dedupe_candidates(candidates_all)
 
     # 过滤低于通过分的候选人（淘汰候选人不保留）
-    before_count = len(unique_candidates)
     unique_candidates = [c for c in unique_candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS]
-    filtered_count = before_count - len(unique_candidates)
-    if filtered_count > 0:
-        print(f"已过滤 {filtered_count} 个低于 {SCORE_THRESHOLD_PASS} 分的淘汰候选人")
 
     if candidate_path.exists():
         try:
@@ -90,7 +95,6 @@ def save_candidates_all(candidates_all: list[dict[str, Any]], path: Optional[str
     with open(tmp_file, 'w', encoding='utf-8') as f:
         json.dump(unique_candidates, f, ensure_ascii=False, indent=2)
     os.replace(tmp_file, candidate_path)
-    print(f"已更新 {candidate_path} (共 {len(unique_candidates)} 个唯一候选人)")
 
 
 def _dedupe_candidates(candidates_all: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -163,4 +167,13 @@ def build_greeted_index(candidates_all: list[dict[str, Any]]) -> set[tuple[str, 
         (c.get('geek_id'), c.get('job_name', ''))
         for c in candidates_all
         if c.get('geek_id') and c.get('greet_sent') is True
+    )
+
+
+def build_blacklist_index(candidates_all: list[dict[str, Any]]) -> set[str]:
+    """构建候选人黑名单索引，按 geek_id 跨岗位生效。"""
+    return set(
+        str(c.get('geek_id'))
+        for c in candidates_all
+        if c.get('geek_id') and c.get('blacklisted') is True
     )

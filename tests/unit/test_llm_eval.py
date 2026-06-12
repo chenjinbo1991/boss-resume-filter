@@ -87,9 +87,9 @@ def test_parse_response_unparseable_raises():
 
 
 def test_parse_response_reason_truncated():
-    long_reason = "A" * 200
+    long_reason = "A" * 300
     result = _parse_response(json.dumps({"adjustment": 0, "reason": long_reason}))
-    assert len(result['reason']) == 100
+    assert len(result['reason']) == 200
 
 
 # === _build_prompt ===
@@ -123,9 +123,9 @@ def test_build_llm_candidate_summary_compacts_api_resume_sections():
         "score_explanation": ["技能分：30/50", "学历：本科等级通过，学历形式待人工确认"],
     }
 
-    compact = build_llm_candidate_summary(candidate, max_chars=1200)
+    compact = build_llm_candidate_summary(candidate, max_chars=1350)
 
-    assert len(compact) <= 1203
+    assert len(compact) <= 1353
     assert "规则评分：68" in compact
     assert "风险提示：学历形式待确认：疑似非统招本科" in compact
     assert "教育经历：南京大学 计算机科学 本科 2008 2012" in compact

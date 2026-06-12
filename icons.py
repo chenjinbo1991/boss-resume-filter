@@ -370,6 +370,32 @@ def _trophy(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _arrow_up(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """↑ 上升箭头图标 — 24×24"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    # 箭头三角形（顶部）
+    triangle = [(_s(12, S), _s(3, S)), (_s(5, S), _s(11, S)), (_s(19, S), _s(11, S))]
+    d.polygon(triangle, outline=fill, fill=fill, width=sw)
+    # 箭杆
+    d.rectangle([_s(10, S), _s(10, S), _s(14, S), _s(21, S)], fill=fill)
+    return img
+
+
+def _arrow_down(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """↓ 下降箭头图标 — 24×24"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+    # 箭头三角形（底部）
+    triangle = [(_s(12, S), _s(21, S)), (_s(5, S), _s(13, S)), (_s(19, S), _s(13, S))]
+    d.polygon(triangle, outline=fill, fill=fill, width=sw)
+    # 箭杆
+    d.rectangle([_s(10, S), _s(3, S), _s(14, S), _s(14, S)], fill=fill)
+    return img
+
+
 def _thumbs_up(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     """👍 Lucide 图标 — 24×24 轮廓 + 拇指分割线"""
     img = Image.new('RGBA', (size_px, size_px), bg)
@@ -624,6 +650,8 @@ ICON_REGISTRY: Dict[str, Callable] = {
     'people':       _people,
     'trophy':       _trophy,
     'thumbs_up':    _thumbs_up,
+    'arrow_up':     _arrow_up,
+    'arrow_down':   _arrow_down,
     'mail':         _mail,
     'play':         _play,
     'stop':         _stop,
