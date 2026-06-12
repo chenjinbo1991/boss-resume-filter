@@ -2022,25 +2022,42 @@ def _gh_release(version, release_title, release_notes, progress=None,
     if ci_already_triggered:
         need_ci = True
 
-    # --- 等待 CI 完成 + 同步对端产物到 Gitee ---
+    # --- 等待 CI 完成 + 同步对端产物到 Gitee ‖ GitHub 校验 ---
     if enable_ci_sync and release_cache:
         if need_ci:
             _sub('等待 CI 完成并同步对端产物到 Gitee...')
         else:
             _sub('同步对端产物到 Gitee...')
 
-        try:
-            gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
-                                                  need_wait=need_ci, release_cache=release_cache)
-            if gitee_sync:
-                downloads_cn = downloads_cn or {}
-                downloads_cn.update(gitee_sync)
-        except Exception as e:
-            _sub(f'[警告] Gitee 对端产物同步失败: {e}')
+        # GitHub 校验只检查 GitHub 产物，不依赖 Gitee sync → 可并行
+        from concurrent.futures import ThreadPoolExecutor as _Pool
+        with _Pool(max_workers=2) as pool:
+            gh_verify_future = pool.submit(
+                _verify_release_assets_complete, tag,
+                release_cache=None, report=_sub)  # release_cache=None → 只校验 GitHub
+            gitee_sync = None
+            try:
+                gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
+                                                      need_wait=need_ci, release_cache=release_cache)
+                if gitee_sync:
+                    downloads_cn = downloads_cn or {}
+                    downloads_cn.update(gitee_sync)
+            except Exception as e:
+                _sub(f'[警告] Gitee 对端产物同步失败: {e}')
 
-    _sub('校验 Release 附件完整性...')
-    if not _verify_release_assets_complete(tag, release_cache=release_cache, report=_sub):
-        sys.exit(1)
+            gh_ok = gh_verify_future.result()
+            if not gh_ok:
+                _sub('[错误] GitHub Release 附件校验失败')
+                sys.exit(1)
+
+        # Gitee 校验（sync 已完成，可以安全校验）
+        _sub('校验 Gitee Release 附件完整性...')
+        if not _verify_release_assets_complete(tag, release_cache=release_cache, report=_sub):
+            sys.exit(1)
+    else:
+        _sub('校验 Release 附件完整性...')
+        if not _verify_release_assets_complete(tag, release_cache=release_cache, report=_sub):
+            sys.exit(1)
 
     _sub('Release 发布完成')
     return downloads_cn
@@ -2995,85 +3012,62 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         print("  [跳过] 无需下载对端产物")
         return downloads_cn if downloads_cn else None
 
-    # 下载对端产物：小文件优先并发，ZIP/DMG/EXE 等大文件随后串行。
+    # 流水线：每个文件 download→upload 独立执行，文件间并行
     download_dir = DIST_DIR / "_gh_download"
     download_dir.mkdir(exist_ok=True)
 
-    downloaded = []
+    import threading
+    downloads_cn_lock = threading.Lock()
+    failed = []
 
-    def _download_success(name, path):
+    def _sync_one_asset(name):
+        """下载一个产物并立刻上传到 Gitee（流水线：下完即传）"""
+        # 1. 从 GitHub 下载
+        path = _download_from_github_release(tag, name, download_dir)
         print(f"  [OK] 已下载: {name}")
-        downloaded.append(path)
 
-    def _download_failure(name, error):
-        print(f"  [失败] 下载失败: {name} ({error})")
+        # 2. 检查 Gitee 是否已有且一致
+        if name in existing:
+            remote = existing[name]
+            same, reason = _gitee_asset_matches_local(path, remote, owner, repo, tag, token=token)
+            if same:
+                url = _gitee_asset_url(owner, repo, tag, name)
+                with downloads_cn_lock:
+                    downloads_cn[_downloads_cn_key(name)] = url
+                print(f"  [跳过] Gitee 已有且一致: {name} ({reason})")
+                return
 
-    _run_transfer_batch(
-        to_download,
-        "下载对端产物",
-        lambda name: _download_from_github_release(tag, name, download_dir),
-        _download_success,
-        _download_failure,
-        remote_assets=github_assets,
-    )
+        # 3. 删除旧附件（如有）
+        if name in existing:
+            remote = existing[name]
+            print(f"  [更新] Gitee {name}")
+            _gitee_delete_asset(api_base, token, release_id, remote["id"], name)
 
-    if not downloaded:
-        print(f"\n  [!!]  未成功下载任何对端产物")
-        return None
+        # 4. 上传到 Gitee（下载完立刻上传，不等其他文件）
+        _name, asset = _gitee_upload_single(path, api_base, token, release_id)
+        url = asset.get("browser_download_url",
+                        _gitee_asset_url(owner, repo, tag, name))
+        with downloads_cn_lock:
+            downloads_cn[_downloads_cn_key(name)] = url
+        print(f"  [OK] Gitee 已上传: {name}")
 
-    # 分批：非 DMG 先上传（并行），DMG 放最后
-    batch1 = [f for f in downloaded if not f.name.endswith(".dmg")]
-    batch2 = [f for f in downloaded if f.name.endswith(".dmg")]
-
-    # 上传到 Gitee（使用缓存的 release_id 和 existing）
+    # 文件间并行下载+上传（macOS: ZIP + DMG 两线程，Windows: EXE 单线程）
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    workers = min(len(to_download), 2)
     try:
-        failed = []
-
-        def _upload_batch(files, label):
-            """增量上传：文件内容一致则跳过，其余删旧后上传。"""
-            if not files:
-                return
-            to_upload = []
-            for f in files:
-                if f.name in existing:
-                    remote = existing[f.name]
-                    same, reason = _gitee_asset_matches_local(f, remote, owner, repo, tag, token=token)
-                    if same:
-                        url = _gitee_asset_url(owner, repo, tag, f.name)
-                        downloads_cn[_downloads_cn_key(f.name)] = url
-                        print(f"  [跳过] Gitee 已有且一致: {f.name} ({reason})")
-                        continue
-                    print(f"  [更新] Gitee {reason}: {f.name}")
-                    _gitee_delete_asset(api_base, token, release_id, remote["id"], f.name)
-                to_upload.append(f)
-            if not to_upload:
-                return
-
-            def _upload_success(f, result):
-                name, asset = result
-                url = asset.get("browser_download_url",
-                                _gitee_asset_url(owner, repo, tag, name))
-                downloads_cn[_downloads_cn_key(name)] = url
-                print(f"  [OK] Gitee 已上传: {name}")
-
-            def _upload_failure(f, error):
-                print(f"  [失败] Gitee 上传失败: {f.name} ({error})")
-                failed.append(f.name)
-
-            _run_transfer_batch(
-                to_upload,
-                label,
-                lambda f: _gitee_upload_single(f, api_base, token, release_id),
-                _upload_success,
-                _upload_failure,
-            )
-
-        _upload_batch(batch1, f"上传 {len(batch1)} 个对端产物")
-        _upload_batch(batch2, "上传 DMG")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_sync_one_asset, name): name for name in to_download}
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"  [失败] {name}: {e}")
+                    failed.append(name)
 
         if failed:
             print(f"\n{'!'*60}")
-            print(f"  [!!]  Gitee 上传部分失败: {', '.join(failed)}")
+            print(f"  [!!]  Gitee 同步部分失败: {', '.join(failed)}")
             print(f"  手动补传: python build.py --gitee-upload {version}")
             print(f"{'!'*60}\n")
 
@@ -3472,13 +3466,14 @@ def main():
                     progress.sub(f'删除对端旧产物: {", ".join(present.keys())}')
                     _delete_github_release_assets(tag, list(present.keys()))
 
-                # 触发 CI（--ref tag + -f platform=macos，避免 CI 重复构建 Windows）
+                # 触发对端 CI（--ref tag + -f platform=<对端>，避免 CI 重复构建本地平台）
+                opposite_platform = "windows" if IS_MAC else "macos"
                 r = subprocess.run(
                     ["gh", "workflow", "run", "release.yml",
-                     "--ref", tag, "-f", "platform=macos"],
+                     "--ref", tag, "-f", f"platform={opposite_platform}"],
                     capture_output=True, text=True, cwd=BASE_DIR)
                 if r.returncode == 0:
-                    progress.sub('[OK] macOS CI 已触发（与本地打包并行）')
+                    progress.sub(f'[OK] {opposite_platform} CI 已触发（与本地打包并行）')
                     ci_triggered = True
                 else:
                     progress.sub(f'[警告] macOS CI 触发失败: {r.stderr.strip()}')
