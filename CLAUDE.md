@@ -70,7 +70,8 @@ boss-resume-filter/
 
 #### 发布命令
 
-- `python build.py --check`：仅发布前检查，不打包不提交不推送；覆盖 README/CHANGELOG 当前版本、历史版本和发布分类校验
+- `python build.py --check`：仅发布前检查，不打包不提交不推送；覆盖 README/CHANGELOG 当前版本、历史版本、发布分类校验和条目质量审查
+- `python build.py --sync-release-notes`：修正 CHANGELOG 后同步 GitHub + Gitee Release 说明，不重新打包
 - `python build.py`：自动打包（Windows EXE / macOS .app+ZIP+DMG），`IS_MAC`/`IS_WIN` 自动检测
 - `python build.py --release [--auto] [--version X.Y]`：打包→提交→tag→推送确认→GitHub Release 上传→Gitee 同步
 - **发布前必须先执行 `/neat-freak` skill**，完成文档与代码的洁癖级审查同步，再进入 `build.py --release`
@@ -236,6 +237,8 @@ boss-resume-filter/
 ### CHANGELOG 分类原则
 
 三类：新增功能 / 体验优化 / 问题修复。问题修复仅指旧版本已存在且影响用户的 bug，不含当前版本新功能引入的问题。
+
+CHANGELOG 只包含用户可感知的变更，以下内容不应出现：新功能开发过程中的中间 UI 调整（属于新功能本身）、打包脚本/CI/发布流程优化（用户无感知）、当前版本新功能引入的 bug 修复（不算「问题修复」）。`build.py --check` 会自动审查条目质量。
 
 ### Windows DPI 缩放（System DPI Aware 方案）
 

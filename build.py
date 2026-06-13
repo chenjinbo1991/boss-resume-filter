@@ -760,6 +760,91 @@ def _check_changelog_updated():
     print("  [OK] CHANGELOG 已同步更新")
 
 
+def _check_changelog_entry_quality():
+    """检查 CHANGELOG 当前版本段落的条目质量。
+
+    CHANGELOG 只包含用户可感知的变更。以下内容不应出现：
+    - 新功能开发过程中的中间步骤（UI 微调等属于新功能本身）
+    - 打包脚本、CI、发布流程优化（用户无感知）
+    - 当前版本新功能引入的 bug 修复（不算「问题修复」）
+    """
+    version = _read_version()
+    try:
+        _title, body = _extract_changelog_release(version)
+    except SystemExit:
+        return  # _extract_changelog_release 已报错
+
+    # 解析各分类下的条目（每个 "- **标题**：描述" 为一条）
+    sections = {}
+    current_section = None
+    for line in body.splitlines():
+        m_section = re.match(r"^###\s+(.+?)\s*$", line)
+        if m_section:
+            current_section = m_section.group(1)
+            sections[current_section] = []
+            continue
+        if current_section and line.startswith("- "):
+            sections[current_section].append(line.strip())
+
+    warnings = []
+
+    # 规则 1: 非用户感知关键词（出现在条目正文中）
+    INTERNAL_PATTERNS = [
+        "过程中", "中间步骤", "开发过程",
+        "build.py", "发布流程", "CI ", "workflow",
+        "requirements.txt", "依赖管理",
+    ]
+    for section_name, entries in sections.items():
+        for entry in entries:
+            for pat in INTERNAL_PATTERNS:
+                if pat in entry:
+                    title_match = re.match(r"-\s+\*\*(.+?)\*\*", entry)
+                    title_text = title_match.group(1) if title_match else entry[:40]
+                    warnings.append(
+                        f"  [{section_name}] {title_text} — 含内部变更关键词「{pat}」"
+                    )
+                    break
+
+    # 规则 2+3: 体验优化/问题修复 与 新增功能 关键词重叠
+    new_features = sections.get("新增功能", [])
+    # 从新增功能条目中提取核心关键词（**标题** 中的中文词）
+    feature_keywords = set()
+    for entry in new_features:
+        title_match = re.match(r"-\s+\*\*(.+?)\*\*", entry)
+        if title_match:
+            title_text = title_match.group(1)
+            # 提取 2 字以上的中文词组
+            cn_words = re.findall(r"[一-鿿]{2,}", title_text)
+            feature_keywords.update(cn_words)
+
+    if feature_keywords:
+        for section_name in ("体验优化", "问题修复"):
+            for entry in sections.get(section_name, []):
+                title_match = re.match(r"-\s+\*\*(.+?)\*\*", entry)
+                if not title_match:
+                    continue
+                title_text = title_match.group(1)
+                # 检查该条目是否包含新增功能的关键词
+                overlap = [kw for kw in feature_keywords if kw in title_text and len(kw) >= 3]
+                if overlap:
+                    warnings.append(
+                        f"  [{section_name}] {title_text} — 与新增功能「{'」「'.join(overlap)}」重叠，"
+                        f"可能属于新功能开发附属变更"
+                    )
+
+    if warnings:
+        print("[错误] CHANGELOG 中发现可能不属于用户感知变更的条目：\n")
+        for w in warnings:
+            print(w)
+        print("\nCHANGELOG 应只包含用户可感知的变更。以下内容建议移除：")
+        print("  - 新功能开发过程中的中间 UI 调整（属于新功能本身）")
+        print("  - 打包脚本、CI、发布流程优化（用户无感知）")
+        print("  - 当前版本新功能引入的 bug（不算「问题修复」）")
+        sys.exit(1)
+
+    print("  [OK] CHANGELOG 条目质量检查通过")
+
+
 def _check_todo_not_stale():
     """检测 TODO.md 是否还保留已完成的发布事项。"""
     todo_path = BASE_DIR / "TODO.md"
@@ -811,6 +896,7 @@ def _preflight_checks(require_clean=True):
     _check_api_config_has_no_plaintext_key()
     _check_source_compiles()
     _check_changelog_updated()
+    _check_changelog_entry_quality()
     _check_todo_not_stale()
     _check_claude_md_size()
     _run_unit_checks()
@@ -1492,6 +1578,84 @@ def _extract_changelog_release(version):
     print(f"  [OK] Release 标题来自 CHANGELOG.md：{title}")
     print("  [OK] Release 说明来自 CHANGELOG.md 当前版本段落")
     return title, body
+
+
+def _sync_release_notes():
+    """从 CHANGELOG.md 同步 Release 说明到 GitHub 和 Gitee，不重新打包。"""
+    version = _read_version()
+    tag = f"v{version}"
+    release_title, release_notes = _extract_changelog_release(version)
+
+    print(f"\n>>> 同步 Release 说明到 {tag}")
+    print(f"  标题: {release_title}")
+    print(f"  正文: {len(release_notes)} 字符\n")
+
+    # 写入临时文件（避免 Windows GBK 编码问题）
+    _notes_file = BASE_DIR / "_release_notes_tmp.txt"
+    _notes_file.write_text(release_notes, encoding="utf-8")
+
+    # 1. GitHub Release
+    try:
+        r = subprocess.run(
+            ["gh", "release", "view", tag],
+            capture_output=True, cwd=BASE_DIR,
+        )
+        if r.returncode != 0:
+            print(f"[错误] GitHub Release {tag} 不存在，请先运行 --release")
+            sys.exit(1)
+
+        subprocess.run(
+            ["gh", "release", "edit", tag,
+             "--title", release_title,
+             "--notes-file", str(_notes_file)],
+            cwd=BASE_DIR, check=True,
+        )
+        print(f"  [OK] GitHub Release {tag} 说明已更新")
+    except subprocess.CalledProcessError as e:
+        print(f"  [错误] GitHub Release 更新失败: {e}")
+        sys.exit(1)
+    finally:
+        _notes_file.unlink(missing_ok=True)
+
+    # 2. Gitee Release
+    token = os.environ.get("GITEE_TOKEN", "")
+    if not token:
+        print("  [跳过] Gitee Release 更新：未设置 GITEE_TOKEN")
+        return
+
+    owner = "yaoyouzhong"
+    repo = "boss-resume-filter"
+    api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+    try:
+        resp = requests.get(
+            f"{api_base}/releases/tags/{tag}",
+            params={"access_token": token},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            print(f"  [跳过] Gitee Release {tag} 不存在或查询失败 ({resp.status_code})")
+            return
+
+        release_id = resp.json()["id"]
+        resp = requests.patch(
+            f"{api_base}/releases/{release_id}",
+            params={"access_token": token},
+            json={
+                "tag_name": tag,
+                "name": release_title,
+                "body": release_notes,
+            },
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            print(f"  [OK] Gitee Release {tag} 说明已更新")
+        else:
+            print(f"  [错误] Gitee Release 更新失败: {resp.status_code} {resp.text[:200]}")
+    except requests.exceptions.RequestException as e:
+        print(f"  [错误] Gitee API 请求失败: {e}")
+
+    print(f"\n>>> Release 说明同步完成")
 
 
 def _check_readme_release(version):
@@ -3127,6 +3291,8 @@ def main():
                         help="发布时跳过 Gitee Release 上传和 downloads_cn 更新")
     parser.add_argument("--no-ci-sync", action="store_true",
                         help="发布时跳过跨平台 CI 重建和对端产物同步")
+    parser.add_argument("--sync-release-notes", action="store_true",
+                        help="修正 CHANGELOG 后同步 GitHub + Gitee Release 说明，不重新打包")
     args = parser.parse_args()
 
     version_changed = False
@@ -3147,6 +3313,10 @@ def main():
 
     if not args.ci:
         run_in_venv()
+
+    if args.sync_release_notes:
+        _sync_release_notes()
+        return
 
     if args.check:
         _preflight_checks(require_clean=True)
