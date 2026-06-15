@@ -1,15 +1,15 @@
 {
-  "version": "2.11.1",
+  "version": "2.11.2",
   "release_date": "2026-06-15",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.dmg"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.2/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.2/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.2/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
-      "size": 38185692,
-      "sha256": "543ac2599324614daf447eb19027cfb178750dd943a0dfdbbe4c2a0bb6e0e18b"
+      "size": 38192585,
+      "sha256": "dfde2427bdec20c8183e9251b9399877e287776206717fbd78c1699b82d4a28f"
     },
     "macos_dmg": {
       "size": 33030958,
@@ -20,10 +20,10 @@
       "sha256": "60d0ca248d3f420516b1c1f37e3de6cfb28b57610c5ed006601a6e9876db793d"
     }
   },
-  "release_notes": "### 新增功能\n\n- **简历导入格式扩展**：简历二次评估新增 TXT、Markdown、RTF、HTML 格式支持，纯文本和 HTML 无需额外依赖，RTF 需安装 striprtf（仅 22KB）\n\n### 体验优化\n\n- **启动和切页更顺畅**：启动后只创建首页，运行控制、筛选结果、统计和模型配置页按需创建并错峰预热，减少首次进入重页面的卡顿\n- **筛选结果页体验优化**：筛选结果页后台预热，真实点击时优先复用已创建页面；日期筛选控件保留下拉日历，不再退化成普通文本输入\n- **模型配置页减少等待**：启动和首次打开模型配置页时不再同步等待系统钥匙串，API Key 改为后台读取后回填\n- **窗口布局可配置**：新增 `ui_config.json`，用于统一管理窗口尺寸、页面间距、表格行高和部分控件宽度，方便不同屏幕下微调界面\n\n### 问题修复\n\n- **退出保存更稳**：异常退出、中断或停止流程时统一兜底保存候选人进度，降低中途关闭导致结果丢失的风险\n- **筛选边界修复**：修正薪资文本中其他字段出现“面议”时误跳过薪资判断的问题；岗位年龄未填写时按不限处理\n- **简历评估停止修复**：AI 批量评估和简历二次评估响应停止请求，避免停止后仍继续等待接口返回\n- **数据恢复更稳**：候选人主数据缺失或损坏时优先从备份恢复，并保留黑名单、反馈、跟进等人工字段\n- **更新流程稳定性修复**：Windows 更新脚本转义更稳，版本比较逻辑复用统一解析，减少特殊路径或字符导致的更新失败",
+  "release_notes": "### 新增功能\n\n- **验证码智能识别**：打招呼时自动检测验证码弹窗，暂停操作并提示手动完成验证，完成后自动继续\n- **API 熔断保护**：连续多次接口调用失败时自动暂停，避免触发平台风控，等待一段时间后自动恢复\n- **打招呼限速**：控制打招呼节奏，模拟人工操作速度，降低被平台识别为自动化操作的风险\n\n### 问题修复\n\n- **AI 评估状态显示修复**：运行控制页首次打开时 AI 评估状态显示不准确，现在正确反映 API Key 配置状态",
   "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.exe",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.dmg",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter_mac.zip"
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.2/BOSS_ResumeFilter.exe",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.2/BOSS_ResumeFilter.dmg",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.2/BOSS_ResumeFilter_mac.zip"
   }
 }
