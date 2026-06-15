@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -10,8 +11,9 @@ from typing import Any, Optional
 from constants import SCORE_THRESHOLD_PASS
 
 
+logger = logging.getLogger(__name__)
+
 CANDIDATES_FILE = "candidates_all.json"
-BACKUP_FILE = CANDIDATES_FILE + ".bak"
 _FEEDBACK_FIELDS = (
     'feedback_status',
     'feedback_note',
@@ -33,6 +35,17 @@ _FEEDBACK_FIELDS = (
     'resume_eval_at',
 )
 
+# 有时间戳的字段组：(时间戳字段, (关联数据字段...))
+# 合并时比较时间戳，取更新的一组值
+_TIMESTAMP_FIELD_GROUPS = (
+    ('feedback_updated_at', ('feedback_status', 'feedback_note')),
+    ('followup_updated_at', ('followup_status', 'followup_note')),
+    ('blacklisted_at', ('blacklisted', 'blacklist_reason')),
+)
+_TIMESTAMPED_FIELDS = frozenset(
+    f for ts_f, related in _TIMESTAMP_FIELD_GROUPS for f in (ts_f, *related)
+)
+
 
 def _candidate_paths(path: Optional[str] = None) -> tuple[Path, Path]:
     candidate_path = Path(path) if path is not None else Path(CANDIDATES_FILE)
@@ -40,7 +53,7 @@ def _candidate_paths(path: Optional[str] = None) -> tuple[Path, Path]:
 
 
 def load_candidates_all(path: Optional[str] = None) -> list[dict[str, Any]]:
-    """加载候选人数据；主文件损坏时自动尝试从 .bak 恢复。"""
+    """加载候选人数据；主文件损坏时自动尝试从 .bak 恢复。恢复失败时抛出异常，避免静默丢失数据。"""
     candidate_path, backup_path = _candidate_paths(path)
     if candidate_path.exists():
         try:
@@ -54,8 +67,23 @@ def load_candidates_all(path: Optional[str] = None) -> list[dict[str, Any]]:
                     shutil.copy2(backup_path, candidate_path)
                     print(f"已从 {backup_path} 恢复候选人数据")
                 except OSError as restore_error:
-                    print(f"恢复候选人备份失败：{restore_error}")
+                    error_msg = f"候选人数据文件损坏且备份恢复失败：{restore_error}"
+                    print(error_msg)
+                    raise RuntimeError(error_msg) from restore_error
                 return restored
+            error_msg = f"候选人数据文件损坏且备份不存在或损坏，数据可能已丢失"
+            print(error_msg)
+            raise RuntimeError(error_msg)
+    restored = _load_candidates_backup(path)
+    if restored is not None:
+        try:
+            shutil.copy2(backup_path, candidate_path)
+            print(f"主文件缺失，已从 {backup_path} 恢复候选人数据")
+        except OSError as restore_error:
+            error_msg = f"主文件缺失且备份恢复失败：{restore_error}"
+            print(error_msg)
+            raise RuntimeError(error_msg) from restore_error
+        return restored
     return []
 
 
@@ -82,8 +110,13 @@ def save_candidates_all(candidates_all: list[dict[str, Any]], path: Optional[str
     candidate_path, backup_path = _candidate_paths(path)
     unique_candidates = _dedupe_candidates(candidates_all)
 
-    # 过滤低于通过分的候选人（淘汰候选人不保留）
-    unique_candidates = [c for c in unique_candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS]
+    # 过滤低于通过分的候选人（有人工反馈或黑名单记录的低分候选人保留）
+    unique_candidates = [
+        c for c in unique_candidates
+        if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS
+        or c.get('feedback_status')
+        or c.get('blacklisted')
+    ]
 
     if candidate_path.exists():
         try:
@@ -97,14 +130,31 @@ def save_candidates_all(candidates_all: list[dict[str, Any]], path: Optional[str
     os.replace(tmp_file, candidate_path)
 
 
+def _merge_manual_fields(target: dict[str, Any], source: dict[str, Any]) -> None:
+    """合并人工反馈/跟进/黑名单字段，有时间戳的组取更新的一方。"""
+    for ts_field, related in _TIMESTAMP_FIELD_GROUPS:
+        t_ts = target.get(ts_field) or ''
+        s_ts = source.get(ts_field) or ''
+        if s_ts and s_ts > t_ts:
+            target[ts_field] = source[ts_field]
+            for f in related:
+                if source.get(f):
+                    target[f] = source[f]
+        elif not t_ts:
+            # 两边都没有时间戳，回退到 source 有值 target 没值时复制
+            for f in related:
+                if source.get(f) and not target.get(f):
+                    target[f] = source[f]
+    # 不在时间戳组内的字段：source 有值 target 没值时复制
+    for field in _FEEDBACK_FIELDS:
+        if field not in _TIMESTAMPED_FIELDS:
+            if source.get(field) and not target.get(field):
+                target[field] = source[field]
+
+
 def _dedupe_candidates(candidates_all: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """按 (geek_id, job_name) 去重，并合并打招呼状态。"""
     seen: dict[tuple[str, str], dict[str, Any]] = {}
-
-    def _merge_manual_fields(target: dict[str, Any], source: dict[str, Any]) -> None:
-        for field in _FEEDBACK_FIELDS:
-            if source.get(field) and not target.get(field):
-                target[field] = source[field]
 
     for c in candidates_all:
         geek_id = c.get('geek_id')
@@ -112,7 +162,7 @@ def _dedupe_candidates(candidates_all: list[dict[str, Any]]) -> list[dict[str, A
         if geek_id:
             key = (geek_id, job_name)
             if key not in seen:
-                seen[key] = c
+                seen[key] = dict(c)  # 浅拷贝，避免修改调用方的输入数据
             else:
                 old_c = seen[key]
                 if c.get('match_score', 0) > old_c.get('match_score', 0) or c.get('greet_sent', False):

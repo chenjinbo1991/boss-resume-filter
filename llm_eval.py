@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
 """LLM-based candidate evaluation for BOSS resume screening."""
 import json
-import re
-import time
+import logging
 import random
+import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +21,14 @@ from constants import (
 )
 
 import requests
+
+logger = logging.getLogger(__name__)
+
+# 429 限流退避延迟（秒），无 Retry-After header 时按此阶梯退避
+_BACKOFF_DELAYS = (5, 15, 30)
+
+# resume prompt 构建时的额外字符缓冲（JSON 结构、format() 占位符等）
+_RESUME_PROMPT_OVERHEAD_BUFFER = 200
 
 
 @dataclass
@@ -321,8 +329,8 @@ def _parse_response(text: str) -> dict:
         if m:
             data = json.loads(m.group(1))
         else:
-            # Try extracting first JSON object
-            m = re.search(r'\{[^{}]*"adjustment"[^{}]*\}', cleaned, re.DOTALL)
+            # Try extracting first JSON object (greedy match + json.loads validation)
+            m = re.search(r'\{.*"adjustment".*\}', cleaned, re.DOTALL)
             if m:
                 # Normalize Chinese punctuation in JSON
                 raw = m.group(0)
@@ -353,7 +361,8 @@ def _parse_response(text: str) -> dict:
     return {'adjustment': adjustment, 'reason': reason}
 
 
-def _call_llm_api(messages: list, api_config: dict, api_key: str) -> LLMEvalResult:
+def _call_llm_api(messages: list, api_config: dict, api_key: str,
+                    stop_event=None) -> LLMEvalResult:
     """Call LLM API and return evaluation result.
 
     Uses the OpenAI-compatible /chat/completions endpoint.
@@ -389,57 +398,66 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str) -> LLMEvalResu
     max_retries = LLM_MAX_RETRIES
     last_error = None
 
-    for attempt in range(max_retries):
-        try:
-            session = requests.Session()
+    session = requests.Session()
+    try:
+        for attempt in range(max_retries):
             try:
                 response = session.post(
                     url, json=body, headers=headers,
                     timeout=timeout, verify=verify_path,
                 )
-            finally:
-                session.close()
 
-            if response.status_code == 200:
-                resp_data = response.json()
-                content = (resp_data.get('choices', [{}])[0]
-                           .get('message', {})
-                           .get('content', ''))
-                parsed = _parse_response(content)
-                return LLMEvalResult(
-                    success=True,
-                    adjustment=parsed['adjustment'],
-                    reason=parsed['reason'],
-                    model=model,
-                )
-            elif response.status_code == 429:
-                # Rate limited — exponential backoff
-                delay = (2 ** attempt) + random.uniform(0, 0.5)
-                print(f"  ⚠️ API 限流 (429)，{delay:.1f}s 后重试 ({attempt+1}/{max_retries})")
-                time.sleep(delay)
-                last_error = "Rate limited (429)"
-                continue
-            elif 500 <= response.status_code < 600:
-                # Server error — retry with delay
+                # stop_event 触发后，响应返回时直接丢弃，不再处理
+                if stop_event and stop_event.is_set():
+                    return LLMEvalResult(success=False, reason="Stopped")
+
+                if response.status_code == 200:
+                    resp_data = response.json()
+                    content = (resp_data.get('choices', [{}])[0]
+                               .get('message', {})
+                               .get('content', ''))
+                    parsed = _parse_response(content)
+                    return LLMEvalResult(
+                        success=True,
+                        adjustment=parsed['adjustment'],
+                        reason=parsed['reason'],
+                        model=model,
+                    )
+                elif response.status_code == 429:
+                    # Rate limited — respect Retry-After header, fallback to 5/15/30s
+                    retry_after = response.headers.get('Retry-After')
+                    if retry_after and retry_after.isdigit():
+                        delay = int(retry_after) + random.uniform(0, 1)
+                    else:
+                        delay = _BACKOFF_DELAYS[min(attempt, len(_BACKOFF_DELAYS) - 1)] + random.uniform(0, 2)
+                    print(f"  ⚠️ API 限流 (429)，{delay:.1f}s 后重试 ({attempt+1}/{max_retries})")
+                    time.sleep(delay)
+                    last_error = "Rate limited (429)"
+                    continue
+                elif 500 <= response.status_code < 600:
+                    # Server error — retry with delay
+                    delay = 1 + random.uniform(0, 0.5)
+                    print(f"  ⚠️ API 服务端错误 ({response.status_code})，{delay:.1f}s 后重试 ({attempt+1}/{max_retries})")
+                    time.sleep(delay)
+                    last_error = f"Server error ({response.status_code})"
+                    continue
+                else:
+                    # Client error — don't retry
+                    print(f"  ❌ API 请求失败 ({response.status_code}): {response.text[:200]}")
+                    return LLMEvalResult(success=False, reason=f"HTTP {response.status_code}")
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 delay = 1 + random.uniform(0, 0.5)
-                print(f"  ⚠️ API 服务端错误 ({response.status_code})，{delay:.1f}s 后重试 ({attempt+1}/{max_retries})")
+                print(f"  ⚠️ 网络异常：{type(e).__name__}，{delay:.1f}s 后重试 ({attempt+1}/{max_retries})")
                 time.sleep(delay)
-                last_error = f"Server error ({response.status_code})"
+                last_error = str(e)
                 continue
-            else:
-                # Client error — don't retry
-                print(f"  ❌ API 请求失败 ({response.status_code}): {response.text[:200]}")
-                return LLMEvalResult(success=False, reason=f"HTTP {response.status_code}")
+            except Exception as e:
+                print(f"  ❌ LLM 调用异常：{type(e).__name__}: {e}")
+                return LLMEvalResult(success=False, reason=str(e)[:50])
 
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            delay = 1 + random.uniform(0, 0.5)
-            print(f"  ⚠️ 网络异常：{type(e).__name__}，{delay:.1f}s 后重试 ({attempt+1}/{max_retries})")
-            time.sleep(delay)
-            last_error = str(e)
-            continue
-        except Exception as e:
-            print(f"  ❌ LLM 调用异常：{type(e).__name__}: {e}")
-            return LLMEvalResult(success=False, reason=str(e)[:50])
+    finally:
+        session.close()
 
     return LLMEvalResult(success=False, reason=f"Max retries: {last_error}")
 
@@ -454,10 +472,11 @@ def _recalc_recommend_level(score: int) -> str:
 
 
 def _evaluate_single(index: int, candidate: dict, job_requirement: str,
-                     api_config: dict, api_key: str, hard_conditions: str = "") -> tuple:
+                     api_config: dict, api_key: str, hard_conditions: str = "",
+                     stop_event=None) -> tuple:
     """Evaluate a single candidate with LLM. Returns (index, result, candidate_ref)."""
     messages = _build_prompt(job_requirement, build_llm_candidate_summary(candidate), hard_conditions)
-    result = _call_llm_api(messages, api_config, api_key)
+    result = _call_llm_api(messages, api_config, api_key, stop_event=stop_event)
     return index, result, candidate
 
 
@@ -509,7 +528,7 @@ def evaluate_batch(
                 print("  [停止] 用户请求停止，跳过剩余 AI 评估")
                 break
             future = executor.submit(
-                _evaluate_single, i, candidate, job_requirement, api_config, api_key, hard_conditions
+                _evaluate_single, i, candidate, job_requirement, api_config, api_key, hard_conditions, stop_event
             )
             future_to_index[future] = i
 
@@ -581,6 +600,7 @@ def evaluate_batch(
 # ── 二次评估（基于完整简历） ──
 
 _RESUME_MAX_CHARS = 6000
+_RESUME_TOTAL_MAX_CHARS = 12000  # ~4K tokens，防止小模型 context window 溢出
 
 
 def _build_resume_prompt(
@@ -595,6 +615,16 @@ def _build_resume_prompt(
     llm_reason = candidate.get("llm_reason", "无")
 
     truncated_resume = _truncate_text(resume_text, _RESUME_MAX_CHARS)
+
+    # 总长超限时截断 job_requirement 和 hard_conditions，优先保留简历和评估理由
+    overhead = len(_RESUME_SYSTEM_PROMPT) + len(_RESUME_USER_TEMPLATE) + len(truncated_resume) + _RESUME_PROMPT_OVERHEAD_BUFFER
+    available = max(200, _RESUME_TOTAL_MAX_CHARS - overhead)
+    if len(job_requirement) + len(hard_conditions) > available:
+        if len(job_requirement) > available:
+            job_requirement = _truncate_text(job_requirement, available)
+            hard_conditions = ""
+        else:
+            hard_conditions = _truncate_text(hard_conditions, available - len(job_requirement))
 
     user_content = _RESUME_USER_TEMPLATE.format(
         job_requirement=job_requirement,
@@ -618,6 +648,7 @@ def evaluate_with_resume(
     api_key: str,
     *,
     hard_conditions: str = "",
+    stop_event=None,
 ) -> LLMEvalResult:
     """Perform second-round LLM evaluation using full resume text.
 
@@ -628,7 +659,7 @@ def evaluate_with_resume(
     Returns LLMEvalResult with the round-2 adjustment.
     """
     messages = _build_resume_prompt(candidate, resume_text, job_requirement, hard_conditions)
-    result = _call_llm_api(messages, api_config, api_key)
+    result = _call_llm_api(messages, api_config, api_key, stop_event=stop_event)
 
     if result.success:
         # Store round-2 metadata

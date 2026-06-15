@@ -357,11 +357,27 @@ def test_save_no_backup_when_no_existing_file():
 # ========== load_candidates_all ==========
 
 def test_load_returns_empty_when_no_file():
+    """首次运行没有候选人文件时应视为空数据，而不是数据损坏。"""
     with tempfile.TemporaryDirectory() as tmpdir:
         target = os.path.join(tmpdir, "candidates_all.json")
         with contextlib.redirect_stdout(io.StringIO()):
             result = load_candidates_all(target)
     assert result == []
+
+
+def test_load_restores_when_main_file_missing_but_backup_exists():
+    """主文件被误删但备份仍在时，应从备份恢复。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = os.path.join(tmpdir, "candidates_all.json")
+        backup_data = [{"geek_id": "g1", "job_name": "Java"}]
+        with open(target + ".bak", "w", encoding="utf-8") as f:
+            json.dump(backup_data, f)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = load_candidates_all(target)
+
+        assert result == backup_data
+        assert os.path.exists(target)
 
 
 def test_load_returns_empty_when_both_files_corrupt():
@@ -372,8 +388,11 @@ def test_load_returns_empty_when_both_files_corrupt():
         with open(target + ".bak", "w") as f:
             f.write("also{broken")
         with contextlib.redirect_stdout(io.StringIO()):
-            result = load_candidates_all(target)
-    assert result == []
+            try:
+                load_candidates_all(target)
+                assert False, "Expected RuntimeError"
+            except RuntimeError:
+                pass
 
 
 def test_load_restores_backup_and_copies_to_main():
@@ -427,7 +446,7 @@ def test_load_happy_path_from_valid_file():
 
 
 def test_load_backup_corrupted_returns_empty():
-    """主文件损坏且备份也损坏时应返回空列表。"""
+    """主文件损坏且备份也损坏时应抛出异常。"""
     with tempfile.TemporaryDirectory() as tmpdir:
         target = os.path.join(tmpdir, "candidates_all.json")
         with open(target, "w") as f:
@@ -435,8 +454,11 @@ def test_load_backup_corrupted_returns_empty():
         with open(target + ".bak", "w") as f:
             f.write("also{broken")
         with contextlib.redirect_stdout(io.StringIO()):
-            result = load_candidates_all(target)
-    assert result == []
+            try:
+                load_candidates_all(target)
+                assert False, "Expected RuntimeError"
+            except RuntimeError:
+                pass
 
 
 # ========== save_candidates_all 边界场景 ==========

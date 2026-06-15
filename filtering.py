@@ -145,9 +145,11 @@ def parse_experience_years(text: str) -> Optional[int]:
     text = text.replace(' ', '')
 
     # [^\S\n]* 匹配空白但不含换行，防止跨行匹配（如 "性别：0\n年龄" 中的 0+\n+年）
-    arabic_match = re.search(r'(\d+)[^\S\n]*年', text)
-    if arabic_match:
-        return int(arabic_match.group(1))
+    # 跳过 >50 的数值（毕业年份如 "2015年"），继续搜索后续匹配
+    for m in re.finditer(r'(\d+)[^\S\n]*年', text):
+        val = int(m.group(1))
+        if val <= 50:
+            return val
 
     chinese_match = re.search(r'([零一二三四五六七八九十两]+(?:十[一二三四五六七八九两]?)?)[^\S\n]*年', text)
     if chinese_match:
@@ -180,29 +182,41 @@ def parse_experience_years(text: str) -> Optional[int]:
 
 
 def _parse_candidate_salary_range(text: str) -> tuple[Optional[int], Optional[int]]:
-    """从候选人 summary 第一行提取期望薪资范围，单位 K。"""
+    """从候选人 summary 提取期望薪资范围，单位 K。支持多行文本扫描。"""
     if not text:
         return None, None
-    first_line = text.split('\n')[0].strip()
-    if '面议' in first_line:
-        return None, None
-    m = re.search(r'(\d+(?:\.\d+)?)\s*[kK]?\s*[-~～\-]\s*(\d+(?:\.\d+)?)\s*[kK]?', first_line)
-    if m:
-        return int(float(m.group(1))), int(float(m.group(2)))
-    m = re.search(r'^(\d+(?:\.\d+)?)\s*[kK薪千]', first_line)
-    if m:
-        val = int(float(m.group(1)))
-        return val, val
-    # API 格式："期望薪资：15K以上" 或 "期望薪资：15K" 或 "期望薪资：15"
-    m = re.search(r'(\d+(?:\.\d+)?)\s*[kK薪千]', first_line)
-    if m:
-        val = int(float(m.group(1)))
-        return val, val
-    # 裸数字（"期望薪资：15"）
-    m = re.search(r'^(\d+(?:\.\d+)?)$', first_line.strip())
-    if m:
-        val = int(float(m.group(1)))
-        return val, val
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        if '面议' in line:
+            continue
+
+        m = re.search(r'(\d+(?:\.\d+)?)\s*[kK]?\s*[-~～\-]\s*(\d+(?:\.\d+)?)\s*[kK万]?', line)
+        if m:
+            lo, hi = float(m.group(1)), float(m.group(2))
+            # "万" 单位转 K：1-2万 → 10-20K
+            if '万' in line[m.start():m.end() + 2]:
+                lo, hi = lo * 10, hi * 10
+            return int(lo), int(hi)
+
+        m = re.search(r'^(\d+(?:\.\d+)?)\s*[kK薪千]', line)
+        if m:
+            val = int(float(m.group(1)))
+            return val, val
+
+        # API 格式："期望薪资：15K以上" 或 "期望薪资：15K" 或 "期望薪资：15"
+        m = re.search(r'(\d+(?:\.\d+)?)\s*[kK薪千]', line)
+        if m:
+            val = int(float(m.group(1)))
+            return val, val
+
+        # 裸数字（"期望薪资：15"）
+        m = re.search(r'^(\d+(?:\.\d+)?)$', line.strip())
+        if m:
+            val = int(float(m.group(1)))
+            return val, val
+
     return None, None
 
 
@@ -286,7 +300,12 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
 
             if rule.get("edu") == "本科":
                 if candidate_edu_level >= 5:
-                    pass
+                    # 硕士/博士直接通过学历等级，但仍需检查非统招风险
+                    if has_non_regular_risk:
+                        _add_risk_flag(details, "学历形式待确认：疑似非统招硕士/博士")
+                        hard_checks.append("学历：硕士/博士等级通过，学历形式待人工确认")
+                    else:
+                        hard_checks.append(f"学历：通过，要求{rule.get('edu')}")
                 elif candidate_edu_level == 4:
                     if has_non_regular_risk:
                         if re.search(r'(统招|全日制)\s*本科', candidate_text):
@@ -416,7 +435,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
 
         tech_keywords_or = rule.get("tech_conditions", [])
         if tech_keywords_or:
-            tech_found = any(tech.lower() in candidate_text.lower() for tech in tech_keywords_or)
+            tech_found = any(_keyword_found(candidate_text, tech) for tech in tech_keywords_or)
             if not tech_found:
                 return False, 0, {"reason": f"技术不匹配：需要{tech_keywords_or}中至少一项"}
             hard_checks.append(f"技术条件：通过，{tech_keywords_or} 至少一项")
@@ -495,7 +514,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
         details['score_explanation'] = [
             "【评分构成】",
             f"基础分：{SCORE_BASE}",
-            f"技能分：{skill_score_normalized}/{SCORE_SKILL_MAX}，命中 {len(matched_skills)} 个关键词，权重 {skill_score}/{total_possible_weight or 0}",
+            f"技能分：{skill_score_normalized}/{SCORE_SKILL_MAX}，命中 {len(matched_skills)} 个关键词，权重 {skill_score}/{total_possible_weight}",
             f"经验加分：{details['exp_bonus']}/{SCORE_EXP_MAX}",
             f"学历加分：{details['edu_bonus']}",
             f"优先项加分：{preferred_bonus}/{_PREFERRED_BONUS_MAX}",
@@ -506,7 +525,10 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
         return True, score, details
 
     except Exception as e:
-        return False, 0, {"reason": f"筛选异常: {str(e)[:50]}"}
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("筛选异常: %s", e)
+        return False, 0, {"reason": f"筛选异常 ({type(e).__name__}): {str(e)[:50]}"}
 
 
 def check_required_condition(candidate_text: str, condition: str | dict[str, Any]) -> dict[str, Any]:

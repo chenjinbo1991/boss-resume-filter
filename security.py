@@ -30,8 +30,9 @@ def get_storage_key(provider: str, base_url: str | None = None) -> str:
         存储键名
     """
     if base_url:
-        # 用 base_url 的短 hash 区分不同接入方式
-        url_hash = hashlib.md5(base_url.encode()).hexdigest()[:8]
+        # 用 base_url 的短 hash 区分不同接入方式；strip 尾部斜杠防止同一 URL 两种写法产生不同 key
+        normalized = base_url.rstrip('/')
+        url_hash = hashlib.sha256(normalized.encode()).hexdigest()[:16]
         return f"api_key:{provider}:{url_hash}"
     return f"api_key:{provider}"
 
@@ -85,7 +86,7 @@ def get_api_key(provider: str, base_url: str | None = None) -> str | None:
 
 def delete_api_key(provider: str, base_url: str | None = None) -> bool:
     """
-    从系统钥匙串删除 API Key
+    从系统钥匙串删除 API Key（同时清理新旧两种格式，防止残留）
 
     Args:
         provider: 服务商名称
@@ -97,10 +98,20 @@ def delete_api_key(provider: str, base_url: str | None = None) -> bool:
     try:
         key = get_storage_key(provider, base_url)
         keyring.delete_password(SERVICE_NAME, key)
-        return True
     except Exception as e:
         logger.warning("删除 API Key 失败：%s", e)
         return False
+    # 同时清理另一种格式，防止孤儿 key 残留
+    try:
+        alt_key = get_storage_key(provider, None) if base_url else None
+        if alt_key and alt_key != key:
+            try:
+                keyring.delete_password(SERVICE_NAME, alt_key)
+            except Exception:
+                pass  # 旧格式不存在，忽略
+    except Exception:
+        pass
+    return True
 
 
 def list_all_providers() -> list[str]:

@@ -3,29 +3,29 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.11"
+__version__ = "2.11.1"
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, font
-try:
-    from tkcalendar import DateEntry
-except ImportError:
-    DateEntry = None  # tkcalendar 未安装时回退到文本输入
 import json
-import sys
+import logging
+import math
 import os
 import re
 import shutil
-import math
-import icons
-import time
+import sys
 import threading
+import time
+import tkinter as tk
 import queue
 import socket
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
+from tkinter import filedialog, font, messagebox, ttk
 from urllib.parse import urlparse
+
+import icons
+
+logger = logging.getLogger(__name__)
 from security import save_api_key, get_api_key, delete_api_key
 import updater
 from constants import SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG, USER_AGENT
@@ -68,11 +68,6 @@ class TextDateEntry(ttk.Entry):
 
     def get_date(self):
         return datetime.strptime(self._date_var.get().strip(), "%Y-%m-%d").date()
-
-
-if DateEntry is None:
-    DateEntry = TextDateEntry
-
 
 def _optional_int_to_entry(value):
     """Format optional integer config values for editable entry/spinbox fields."""
@@ -121,8 +116,8 @@ FONT_FAMILY = get_font_family()
 FONT_FAMILY_SEMIBOLD = get_font_family_semibold()
 
 
-# UI 配置常量（续）
-UI_CONFIG = {
+# UI 配置常量（支持从 ui_config.json 覆盖）
+_DEFAULT_UI_CONFIG = {
     'zoom_factor': 1.0,              # 额外放大系数（默认，Windows/Linux）；普通 1080P 保持原生比例
     'mac_zoom_factor': 0.9,          # macOS Retina 下 Tk 已有 DPI 缩放，避免界面过大
     'high_dpi_reduction': 0.50,      # 高 DPI（>130%）等比例缩减系数，避免 UI 整体过大
@@ -131,6 +126,7 @@ UI_CONFIG = {
     'window_min_width': 1300,        # 最小窗口宽度
     'window_min_height': 750,        # 最小窗口高度
     'sidebar_width': 230,            # 侧边栏宽度
+    'content_max_width': 1480,       # 普通功能页最大内容宽度，避免全屏后横向失衡
     'page_padding_x': 35,            # 页面左右边距
     'page_padding_y': 25,            # 页面上下边距
     'card_padding': 20,              # 卡片内边距
@@ -169,6 +165,23 @@ UI_CONFIG = {
     'font_size_status': 11,          # 状态提示字体大小
     'font_size_model_label': 14,     # 模型标签字体大小
 }
+
+
+def _load_ui_config() -> dict:
+    """加载 UI 配置，支持从 ui_config.json 覆盖默认值。"""
+    config_path = BASE_DIR / "ui_config.json"
+    try:
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                return {**_DEFAULT_UI_CONFIG, **loaded}
+    except (json.JSONDecodeError, OSError) as e:
+        logging.warning("加载 ui_config.json 失败：%s，使用默认 UI 配置", e)
+    return _DEFAULT_UI_CONFIG.copy()
+
+
+UI_CONFIG = _load_ui_config()
 
 
 def _clamp(value, min_value, max_value):
@@ -727,7 +740,9 @@ class BossFilterGUI:
         self.job_rules = {}
         self.load_config()
         self.api_config = {}
-        self.load_api_config()
+        # 首屏启动只读 api_config.json，不同步查询 keyring。
+        # keyring 初始化在 Windows 上可能耗时明显，等用户进入模型配置或真正运行时再按需读取。
+        self.load_api_config(resolve_keys=False)
 
         # 缓存：job_config 读取（mtime 未变则跳过磁盘 IO）
         self._job_rules_cache = None
@@ -740,6 +755,15 @@ class BossFilterGUI:
         self._stats_tree_fingerprint = None
         self._stats_last_job = None
         self._stats_last_time = None
+        self._home_stats_fingerprint = None
+        self._home_stats_last_job = None
+        self._skills_tree_fingerprint = None
+        self._required_list_fingerprint = None
+        self._api_ui_config_mtime = None
+        self._api_key_resolve_thread = None
+        self._page_prewarm_after_ids = []
+        self._pending_idle_tasks = set()
+        self._page_width_policy_after_id = None
 
         # 设置样式
         self.setup_styles()
@@ -757,8 +781,7 @@ class BossFilterGUI:
         # 启动 UI 更新队列处理（线程安全）
         self._process_ui_queue()
 
-        # 初始加载结果
-        self.refresh_results()
+        # 结果页数据等用户进入结果页时再加载，避免启动时导入自动化链路。
 
         # 注册窗口关闭处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -1064,23 +1087,188 @@ class BossFilterGUI:
     def create_main_content(self):
         """创建主内容区域"""
         # 主容器
-        main_frame = ttk.Frame(self.root, style='Page.TFrame')
-        main_frame.pack(side="left", fill="both", expand=True)
+        self.main_frame = ttk.Frame(self.root, style='Page.TFrame')
+        self.main_frame.pack(side="left", fill="both", expand=True)
+        self._last_page_pack_padx = None
 
         # 创建页面容器
-        self.pages_frame = ttk.Frame(main_frame, style='Page.TFrame')
-        self.pages_frame.pack(fill="both", expand=True, padx=int(UI_CONFIG['page_padding_x'] * self.dpi_scale * self.zoom_factor), pady=int(UI_CONFIG['page_padding_y'] * self.dpi_scale * self.zoom_factor))
+        self.pages_frame = ttk.Frame(self.main_frame, style='Page.TFrame')
+        self.pages_frame.pack(
+            fill="both",
+            expand=True,
+            padx=int(UI_CONFIG['page_padding_x'] * self.dpi_scale * self.zoom_factor),
+            pady=int(UI_CONFIG['page_padding_y'] * self.dpi_scale * self.zoom_factor),
+        )
+        self.main_frame.bind("<Configure>", lambda _e: self._schedule_page_width_policy(), add="+")
 
-        # 创建各个页面
+        self.home_page = None
+        self.config_page = None
+        self.api_config_page = None
+        self.run_page = None
+        self.result_page = None
+        self.stats_page = None
+
+        # 首屏只创建首页，其他页面首次点击时再构建并缓存。
         self.create_home_page()
-        self.create_config_page()
-        self.create_api_config_page()
-        self.create_run_page()
-        self.create_result_page()
-        self.create_stats_page()
 
         # 默认显示首页（current_page_index 在 show_page_home 中已设置为 0）
         self.show_page_home()
+        self._schedule_page_prewarm()
+
+    def _defer_ui_work(self, key, callback):
+        """Run non-urgent UI work after the current redraw, coalescing duplicates."""
+        if key in self._pending_idle_tasks:
+            return
+        self._pending_idle_tasks.add(key)
+
+        def _run():
+            self._pending_idle_tasks.discard(key)
+            try:
+                callback()
+            except tk.TclError:
+                return
+
+        self.root.after_idle(_run)
+
+    def _schedule_page_prewarm(self):
+        """首屏显示后分批创建隐藏页面，降低首次点击重页面的卡顿。"""
+        prewarm_steps = [
+            (900, self._prewarm_config_page),
+            (1500, self._prewarm_run_page),
+            (2300, self._prewarm_result_page),
+            (3200, self._prewarm_stats_page),
+            (3700, self._prewarm_api_page),
+        ]
+        for delay_ms, callback in prewarm_steps:
+            try:
+                after_id = self.root.after(delay_ms, callback)
+                self._page_prewarm_after_ids.append(after_id)
+            except tk.TclError:
+                return
+
+    def _prewarm_config_page(self):
+        if self.config_page is None:
+            self.create_config_page()
+
+    def _prewarm_run_page(self):
+        if self.run_page is None:
+            self.create_run_page()
+
+    def _prewarm_result_page(self):
+        if self.result_page is None:
+            self.create_result_page()
+
+    def _prewarm_stats_page(self):
+        if self.stats_page is None:
+            self.create_stats_page()
+
+    def _prewarm_api_page(self):
+        if self.api_config_page is None:
+            self.create_api_config_page()
+
+    def _cancel_page_prewarm(self):
+        for after_id in self._page_prewarm_after_ids:
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        self._page_prewarm_after_ids.clear()
+
+    def _create_result_date_entry(self, parent, **kwargs):
+        """创建结果页日期控件；只在结果页构建时加载 tkcalendar。"""
+        try:
+            from tkcalendar import DateEntry
+        except ImportError:
+            DateEntry = TextDateEntry
+
+        try:
+            return DateEntry(parent, locale='zh_CN', **kwargs)
+        except Exception:
+            return DateEntry(parent, **kwargs)
+
+    def _schedule_page_width_policy(self):
+        """Debounce width policy recalculation during resize/layout churn."""
+        if self._page_width_policy_after_id is not None:
+            try:
+                self.root.after_cancel(self._page_width_policy_after_id)
+            except tk.TclError:
+                pass
+
+        def _run():
+            self._page_width_policy_after_id = None
+            self._apply_page_width_policy()
+
+        self._page_width_policy_after_id = self.root.after(60, _run)
+
+    def _apply_page_width_policy(self):
+        """Limit form-like pages on wide screens while keeping data tables wide."""
+        if not hasattr(self, 'pages_frame') or not hasattr(self, 'main_frame'):
+            return
+
+        scale = self.dpi_scale * self.zoom_factor
+        base_pad_x = int(UI_CONFIG['page_padding_x'] * scale)
+        base_pad_y = int(UI_CONFIG['page_padding_y'] * scale)
+        current_page = getattr(self, 'current_page_index', 0)
+
+        # Result and stats pages are table-first surfaces; they should use the
+        # available width. Other pages read better when the content stays bounded.
+        full_width_pages = {3, 4}
+        if current_page in full_width_pages:
+            target_pad_x = base_pad_x
+        else:
+            try:
+                available_width = max(0, self.main_frame.winfo_width())
+            except tk.TclError:
+                available_width = 0
+            max_content_width = int(UI_CONFIG['content_max_width'] * scale)
+            extra_pad = max(0, (available_width - max_content_width) // 2)
+            target_pad_x = max(base_pad_x, extra_pad)
+
+        if self._last_page_pack_padx != target_pad_x:
+            self._last_page_pack_padx = target_pad_x
+            self.pages_frame.pack_configure(
+                padx=target_pad_x,
+                pady=base_pad_y,
+            )
+
+        if current_page == 5:
+            self._update_model_list_height()
+        elif current_page == 1:
+            self._update_config_page_dynamic_heights()
+
+    def _is_tall_window(self) -> bool:
+        """Return True if the window height exceeds 85% of screen height (min 1000px)."""
+        try:
+            window_height = int(self.root.winfo_height())
+            screen_height = int(self.root.winfo_screenheight())
+        except (tk.TclError, ValueError):
+            return False
+        return window_height >= max(1000, int(screen_height * 0.85))
+
+    def _get_tall_window_extra_rows(self):
+        """Return extra visible rows for pages that can use fullscreen height."""
+        if not self._is_tall_window():
+            return 0
+        try:
+            window_height = int(self.root.winfo_height())
+        except (tk.TclError, ValueError):
+            return 0
+        return max(2, (window_height - UI_CONFIG['window_base_height']) // 70)
+
+    def _update_config_page_dynamic_heights(self):
+        """Increase job-config text/list heights only for tall or fullscreen windows."""
+        extra_rows = self._get_tall_window_extra_rows()
+        requirement_extra_rows = 0 if extra_rows == 0 else max(1, extra_rows // 2)
+        requirement_rows = min(24, UI_CONFIG['text_height_large'] + requirement_extra_rows)
+        skills_rows = min(18, UI_CONFIG['treeview_height'] + extra_rows * 2)
+
+        try:
+            if hasattr(self, 'requirement_text'):
+                self.requirement_text.configure(height=requirement_rows)
+            if hasattr(self, 'skills_tree'):
+                self.skills_tree.configure(height=skills_rows)
+        except tk.TclError:
+            return
 
     def _create_page_header(self, parent, title, subtitle=None):
         """创建页面标题区域：白色背景 + 左侧蓝色竖线，无灰色底色"""
@@ -1348,7 +1536,7 @@ class BossFilterGUI:
         self._req_header_frame = ttk.Frame(parse_frame, style='TFrame')
         req_header = self._req_header_frame
         req_header.pack(fill="x", pady=(0, int(10 * self.dpi_scale * self.zoom_factor)))
-        ttk.Label(req_header, text="粘贴招聘需求文档:", font=self.font_label,
+        ttk.Label(req_header, text="粘贴招聘需求内容:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
         icon_clipboard = self.icons.button('clipboard', self.colors['text_primary'])
         self.requirement_template_btn = ttk.Button(req_header, image=icon_clipboard, text=" 招聘需求示例", compound=tk.LEFT, command=self._insert_requirement_template)
@@ -1380,7 +1568,7 @@ class BossFilterGUI:
         self.requirement_text.config(yscrollcommand=req_scroll.set)
 
         # 占位提示文字
-        self._req_placeholder_text = "在此粘贴招聘需求文档..."
+        self._req_placeholder_text = "在此粘贴招聘需求内容..."
         _placeholder_color = self.colors['text_muted']
         self.requirement_text.tag_configure("placeholder", foreground=_placeholder_color)
         self.requirement_text.insert("1.0", self._req_placeholder_text, "placeholder")
@@ -1532,7 +1720,7 @@ class BossFilterGUI:
                  foreground=self.colors['text_secondary'], background=self.colors['bg_card']).pack(side="left", padx=(int(10 * self.dpi_scale * self.zoom_factor), 0))
 
         # 技能关键词区域（带权重显示）- 左右分栏布局
-        skills_frame = self._create_card(self.result_detail_frame, "技能关键词（可编辑权重）",
+        skills_frame = self._create_card(self.result_detail_frame, "技能关键词（可增删技能、可编辑权重）",
             fill="both", side="top", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 左右分栏容器
@@ -1649,6 +1837,16 @@ class BossFilterGUI:
         # 必要条件区域
         required_frame = self._create_card(self.result_detail_frame, "必要条件（硬性约束）",
             fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+
+        # 使用说明
+        required_help = ttk.Label(required_frame,
+            text="简单匹配：输入关键词，简历中包含即可通过\n"
+                 "OR（满足任一）：多个关键词用逗号分隔，满足任意一个即通过\n"
+                 "AND（全部满足）：多个关键词用逗号分隔，必须全部满足才通过\n"
+                 "示例：统招本科  |  微服务,分布式（OR）  |  Spring Boot,MySQL（AND）",
+            font=self.font_log, foreground=self.colors['text_secondary'],
+            background=self.colors['bg_card'], justify='left')
+        required_help.pack(anchor='w', pady=(0, int(6 * self.dpi_scale * self.zoom_factor)))
 
         # 必要条件列表显示
         self.required_listbox = tk.Listbox(required_frame, height=UI_CONFIG['listbox_height'],
@@ -2066,6 +2264,12 @@ class BossFilterGUI:
                 return
 
         if target_canvas is None:
+            target_canvas = {
+                1: getattr(self, 'config_canvas', None),
+                2: getattr(self, 'run_canvas', None),
+            }.get(getattr(self, 'current_page_index', -1))
+
+        if target_canvas is None:
             return
 
         target_canvas.yview_scroll(units, "units")
@@ -2277,7 +2481,7 @@ class BossFilterGUI:
         # 初始化模型列表
         self.saved_models = []
 
-    def load_api_config_to_ui(self):
+    def load_api_config_to_ui(self, resolve_key=True):
         """加载 API 配置到 UI 控件"""
         if not hasattr(self, 'api_config') or not self.api_config:
             return
@@ -2290,10 +2494,14 @@ class BossFilterGUI:
         provider_key = self.api_config.get("api_provider", "qwen")
         provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
         self.api_provider_var.set(provider_display)
-        # API Key 从 keyring 读取（api_config.json 不含明文）
-        _base_url = self.api_config.get("base_url", "")
-        saved_key = get_api_key(provider_key, _base_url)
-        self.api_key_var.set(saved_key if saved_key else "")
+        # API Key 从 keyring 读取（api_config.json 不含明文）。首次打开设置页时不阻塞 UI，
+        # 后台线程会在读取完成后回填。
+        if resolve_key:
+            _base_url = self.api_config.get("base_url", "")
+            saved_key = get_api_key(provider_key, _base_url)
+            self.api_key_var.set(saved_key if saved_key else "")
+        else:
+            self.api_key_var.set(self.api_config.get("api_key", ""))
         self.api_base_url_var.set(self.api_config.get("base_url", ""))
         self.api_model_var.set(self.api_config.get("model", ""))
 
@@ -2302,6 +2510,77 @@ class BossFilterGUI:
 
         # 加载已保存的模型列表
         self.load_saved_models_to_tree()
+
+    def _api_config_file_mtime(self):
+        """Return a stable file fingerprint for api_config.json."""
+        try:
+            return API_CONFIG_PATH.stat().st_mtime_ns if API_CONFIG_PATH.exists() else 0
+        except OSError:
+            return 0
+
+    def _load_api_config_to_ui_if_needed(self):
+        """Load API config into widgets only when the config file changed."""
+        if not hasattr(self, 'api_provider_var'):
+            return
+
+        mtime = self._api_config_file_mtime()
+        if self._api_ui_config_mtime == mtime:
+            return
+
+        if mtime:
+            self.load_api_config(resolve_keys=False)
+        self.load_api_config_to_ui(resolve_key=False)
+        self._api_ui_config_mtime = mtime
+        self._resolve_api_keys_async()
+
+    def _resolve_api_keys_async(self):
+        """后台读取 keyring，避免首次打开 API 页阻塞主线程。"""
+        if self._api_key_resolve_thread and self._api_key_resolve_thread.is_alive():
+            return
+        if not getattr(self, 'api_config', None):
+            return
+
+        provider = self.api_config.get("api_provider", "")
+        base_url = self.api_config.get("base_url", "")
+        saved_models = list(self.api_config.get("saved_models", []))
+
+        def _worker():
+            current_key = ""
+            missing_saved_key = False
+            try:
+                if provider:
+                    current_key = get_api_key(provider, base_url) or ""
+                for model_config in saved_models:
+                    model_provider = model_config.get("api_provider", "")
+                    if model_provider and not get_api_key(model_provider, model_config.get("base_url", "")):
+                        missing_saved_key = True
+                        break
+            except Exception:
+                current_key = ""
+
+            def _apply():
+                if not getattr(self, 'api_config', None):
+                    return
+                if (self.api_config.get("api_provider", ""), self.api_config.get("base_url", "")) != (provider, base_url):
+                    return
+                self.api_config["api_key"] = current_key
+                if missing_saved_key:
+                    self.api_config["needs_reconfigure"] = True
+                if hasattr(self, 'api_key_var'):
+                    self.api_key_var.set(current_key)
+                self._update_ai_eval_status()
+
+            try:
+                self.root.after(0, _apply)
+            except tk.TclError:
+                return
+
+        self._api_key_resolve_thread = threading.Thread(target=_worker, daemon=True)
+        self._api_key_resolve_thread.start()
+
+    def _mark_api_config_ui_current(self):
+        """Mark API config widgets as current after this instance writes the file."""
+        self._api_ui_config_mtime = self._api_config_file_mtime()
 
     def update_current_model_display(self):
         """更新当前使用模型显示"""
@@ -2350,15 +2629,37 @@ class BossFilterGUI:
         # 设置使用中标记的样式
         self.model_list_tree.tag_configure('current', foreground=self.colors['success'])
 
-        # 动态调整高度：根据行数自适应，最少1行，最多6行
-        row_count = len(saved_models)
-        self.model_list_tree['height'] = max(1, min(row_count, 6))
+        # 动态调整高度：普通窗口保持原来的最多6行，全屏/高窗口显示更多行。
+        self._update_model_list_height()
 
         # 绑定双击事件 - 双击切换模型
         self.model_list_tree.bind("<Double-1>", lambda e: self.use_selected_model())
 
         # 在所有控件创建完毕后绑定滚轮事件
         self._bind_mousewheel(self.api_canvas, self.api_scrollable_frame)
+
+    def _get_model_list_max_rows(self):
+        """Return saved-model list max rows for the current window height."""
+        base_rows = 6
+        if not self._is_tall_window():
+            return base_rows
+        try:
+            window_height = int(self.root.winfo_height())
+        except (tk.TclError, ValueError):
+            return base_rows
+        extra_rows = max(0, (window_height - UI_CONFIG['window_base_height']) // 42)
+        return min(18, max(10, base_rows + extra_rows))
+
+    def _update_model_list_height(self):
+        """Resize saved-model Treeview height without changing normal-window layout."""
+        if not hasattr(self, 'model_list_tree'):
+            return
+        try:
+            row_count = len(self.model_list_tree.get_children())
+            max_rows = self._get_model_list_max_rows()
+            self.model_list_tree['height'] = max(1, min(row_count, max_rows))
+        except tk.TclError:
+            return
 
     def create_run_page(self):
         """创建运行控制页面 - 增强版：浏览器状态检测 + 进度条 + 滚动支持"""
@@ -2569,10 +2870,10 @@ class BossFilterGUI:
 
         # 日志区域 — 与浏览器状态卡片一致的卡片式设计
         log_card = self._create_card(content, "运行日志",
-            fill="x", padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
+            fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         log_container = ttk.Frame(log_card, style='TFrame')
-        log_container.pack(fill="x")
+        log_container.pack(fill="both", expand=True)
 
         # 日志文本框 - 等宽字体
         self.log_text = tk.Text(log_container, wrap="word", state="disabled",
@@ -2622,18 +2923,13 @@ class BossFilterGUI:
         self.result_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.result_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_results())
 
-        # 日期过滤（日历控件）
+        # 日期过滤（日历控件）。结果页会在首屏后后台预加载，避免用户点击时卡顿。
         ttk.Label(filter_frame, text="日期:", font=self.font_label,
                  background=self.colors['bg_main']).pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
         _cal_font = (FONT_FAMILY, int(11 * self.font_scale))
         _cal_kw = dict(width=12, font=_cal_font, date_pattern='yyyy-mm-dd',
                        showweeknumbers=False)
-        try:
-            _cal_kw['locale'] = 'zh_CN'
-            self.result_date_start_entry = DateEntry(filter_frame, **_cal_kw)
-        except Exception:
-            _cal_kw.pop('locale', None)
-            self.result_date_start_entry = DateEntry(filter_frame, **_cal_kw)
+        self.result_date_start_entry = self._create_result_date_entry(filter_frame, **_cal_kw)
         self.result_date_start_entry.pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
         self.result_date_start_entry.bind("<<DateEntrySelected>>",
                                           lambda e: self._validate_date_range('start'))
@@ -2643,7 +2939,7 @@ class BossFilterGUI:
         ttk.Label(filter_frame, text="~", font=self.font_label,
                  background=self.colors['bg_main']).pack(side="left", padx=int(2 * self.dpi_scale * self.zoom_factor))
 
-        self.result_date_end_entry = DateEntry(filter_frame, **_cal_kw)
+        self.result_date_end_entry = self._create_result_date_entry(filter_frame, **_cal_kw)
         self.result_date_end_entry.pack(side="left", padx=int(4 * self.dpi_scale * self.zoom_factor))
         self.result_date_end_entry.bind("<<DateEntrySelected>>",
                                         lambda e: self._validate_date_range('end'))
@@ -2655,7 +2951,7 @@ class BossFilterGUI:
         self.result_date_start_entry.set_date(_today - timedelta(days=7))
         self.result_date_end_entry.set_date(_today)
 
-        # 互斥关闭：包装 drop_down，展开自己前先收起对方的下拉日历
+        # 互斥关闭：展开一个日历前收起另一个，避免两个弹层同时存在。
         self._wrap_date_dropdown_mutex(self.result_date_start_entry, self.result_date_end_entry)
         self._wrap_date_dropdown_mutex(self.result_date_end_entry, self.result_date_start_entry)
 
@@ -2831,7 +3127,7 @@ class BossFilterGUI:
                  background=self.colors['bg_main']).pack(side="left", padx=int(30 * self.dpi_scale * self.zoom_factor))
         self.stats_time_var = tk.StringVar(value="全部")
         time_combo = ttk.Combobox(filter_frame, textvariable=self.stats_time_var,
-                                   values=["今天", "本周", "全部"], width=12, state="readonly",
+                                   values=["今天", "本周", "本月", "全部"], width=12, state="readonly",
                                    font=self.font_label)
         time_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         time_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_stats())
@@ -2976,6 +3272,8 @@ class BossFilterGUI:
                 elif time_range == "本周":
                     days_since_monday = now.weekday()
                     cutoff = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+                elif time_range == "本月":
+                    cutoff = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
                 else:
                     cutoff = None
 
@@ -3078,9 +3376,12 @@ class BossFilterGUI:
 
     def show_page_home(self):
         """显示首页"""
+        if self.home_page is None:
+            self.create_home_page()
         self.hide_all_pages()
         self.home_page.pack(fill="both", expand=True)
         self.current_page_index = 0
+        self._schedule_page_width_policy()
         self.update_nav_highlight()
         # 刷新岗位过滤列表
         try:
@@ -3089,28 +3390,33 @@ class BossFilterGUI:
             self.home_job_combo['values'] = jobs
         except Exception:
             pass
-        self.refresh_home_stats()
+        self._defer_ui_work("home_stats", self.refresh_home_stats)
 
     def show_page_config(self):
         """显示配置页面"""
+        if self.config_page is None:
+            self.create_config_page()
         self.hide_all_pages()
         self.config_page.pack(fill="both", expand=True)
+        self.current_page_index = 1
+        self._schedule_page_width_policy()
         # 刷新技能树和必要条件列表
         if self.job_rules:
-            self.refresh_skills_tree()
-            self.refresh_required_listbox()
+            self._defer_ui_work("config_lists", self._refresh_config_lists_if_needed)
         # 始终显示详细结果区域（基本信息、技能关键词、必要条件、话术模板）
         self.result_detail_frame.pack(fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
-        self.current_page_index = 1
         self.update_nav_highlight()
         # 重新绑定滚轮事件（覆盖动态创建的控件）
         self._bind_mousewheel(self.config_canvas, self.config_scrollable_frame)
 
     def show_page_run(self):
         """显示运行页面"""
+        if self.run_page is None:
+            self.create_run_page()
         self.hide_all_pages()
         self.run_page.pack(fill="both", expand=True)
         self.current_page_index = 2
+        self._schedule_page_width_policy()
         self.update_nav_highlight()
         # 恢复浏览器自动检测（仅检测连接，不启动浏览器）
         self._start_browser_auto_check()
@@ -3126,9 +3432,12 @@ class BossFilterGUI:
 
     def show_page_result(self):
         """显示结果页面"""
+        if self.result_page is None:
+            self.create_result_page()
         self.hide_all_pages()
         self.result_page.pack(fill="both", expand=True)
         self.current_page_index = 3
+        self._schedule_page_width_policy()
         self.update_nav_highlight()
         # 刷新岗位过滤列表
         try:
@@ -3137,13 +3446,16 @@ class BossFilterGUI:
             self.result_job_combo['values'] = jobs
         except Exception:
             pass
-        self.refresh_results()
+        self._defer_ui_work("results_refresh", self.refresh_results)
 
     def show_page_stats(self):
         """显示数据统计页面"""
+        if self.stats_page is None:
+            self.create_stats_page()
         self.hide_all_pages()
         self.stats_page.pack(fill="both", expand=True)
         self.current_page_index = 4
+        self._schedule_page_width_policy()
         self.update_nav_highlight()
         # 刷新岗位过滤列表
         try:
@@ -3152,19 +3464,22 @@ class BossFilterGUI:
             self.stats_job_combo['values'] = jobs
         except Exception:
             pass
-        self.refresh_stats()
+        self._defer_ui_work("stats_refresh", self.refresh_stats)
 
     def show_page_api(self):
         """显示 API 配置页面（系统设置）"""
+        if self.api_config_page is None:
+            self.create_api_config_page()
         self.hide_all_pages()
         self.api_config_page.pack(fill="both", expand=True)
         self.current_page_index = 5
+        self._schedule_page_width_policy()
         self.update_nav_highlight()
         # 重置滚动条位置到顶部
         if hasattr(self, 'api_canvas'):
             self.api_canvas.yview_moveto(0.0)
-        # 显示时加载配置到 UI
-        self.load_api_config_to_ui()
+        # 显示时按需加载配置到 UI，避免每次切页都同步查询 keyring。
+        self._defer_ui_work("api_config_to_ui", self._load_api_config_to_ui_if_needed)
         # 重新绑定滚轮事件（覆盖动态创建的控件）
         self._bind_mousewheel(self.api_canvas, self.api_scrollable_frame)
 
@@ -3172,7 +3487,8 @@ class BossFilterGUI:
         """隐藏所有页面"""
         self._stop_browser_auto_check()
         for page in [self.home_page, self.config_page, self.api_config_page, self.run_page, self.result_page, self.stats_page]:
-            page.pack_forget()
+            if page is not None:
+                page.pack_forget()
 
     def update_nav_highlight(self):
         """更新导航高亮 - 当前页面使用选中颜色，其他使用默认颜色"""
@@ -3285,6 +3601,24 @@ class BossFilterGUI:
 
     def refresh_home_stats(self):
         """刷新首页统计"""
+        selected_job = self.home_job_var.get() if hasattr(self, 'home_job_var') else ""
+        if CANDIDATES_PATH.exists():
+            stat = CANDIDATES_PATH.stat()
+            fingerprint = (stat.st_mtime, stat.st_size)
+            if (fingerprint == self._home_stats_fingerprint
+                    and selected_job == self._home_stats_last_job):
+                return
+            self._home_stats_fingerprint = fingerprint
+            self._home_stats_last_job = selected_job
+        else:
+            if self._home_stats_fingerprint is None and self._home_stats_last_job == selected_job:
+                return
+            self._home_stats_fingerprint = None
+            self._home_stats_last_job = selected_job
+            for var in self.home_stats_vars.values():
+                var.set("0")
+            return
+
         try:
             if CANDIDATES_PATH.exists():
                 with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
@@ -3292,7 +3626,6 @@ class BossFilterGUI:
                 candidates = [c for c in candidates if not c.get('blacklisted')]
 
                 # 岗位过滤
-                selected_job = self.home_job_var.get()
                 if selected_job != "全部岗位":
                     candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
 
@@ -3999,13 +4332,25 @@ class BossFilterGUI:
         """
         mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else 0
         if mtime != self._job_rules_mtime:
-            try:
-                from bossmaster import load_job_config
-                self._job_rules_cache, _ = load_job_config()
-            except Exception:
-                pass
+            self._job_rules_cache = self._read_job_rules_from_file()
             self._job_rules_mtime = mtime
         return self._job_rules_cache or {}
+
+    def _read_job_rules_from_file(self):
+        """轻量读取岗位规则，避免 GUI 首屏 import 自动化主程序。"""
+        if not CONFIG_PATH.exists():
+            return {}
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+        if "job_requirements" in config and isinstance(config["job_requirements"], dict):
+            return config["job_requirements"]
+        if "jobs" in config and isinstance(config["jobs"], dict):
+            return config["jobs"]
+        return {}
 
     def load_config(self):
         """加载岗位配置"""
@@ -4037,7 +4382,7 @@ class BossFilterGUI:
                 else:
                     self.job_rules = {}
 
-    def load_api_config(self):
+    def load_api_config(self, resolve_keys=True):
         """加载 API 配置 - 从系统钥匙串读取加密的 API Key（按服务商管理）"""
         if API_CONFIG_PATH.exists():
             try:
@@ -4054,18 +4399,21 @@ class BossFilterGUI:
                         "fetched_models": config.get("fetched_models", {})
                     }
 
+                    # 从 keyring 读取所有 saved_models 的 API Key（按服务商）
+                    # 同时清理文件中可能已泄露的明文 Key（防御性清理）
+                    for model_config in self.api_config["saved_models"]:
+                        model_config.pop("api_key", None)
+                        model_config.pop("api_key_ref", None)
+
+                    if not resolve_keys:
+                        return
+
                     # 从 keyring 读取当前服务商的 API Key
                     current_provider = self.api_config.get("api_provider", "")
                     if current_provider:
                         encrypted_key = get_api_key(current_provider, self.api_config.get("base_url", ""))
                         if encrypted_key:
                             self.api_config["api_key"] = encrypted_key
-
-                    # 从 keyring 读取所有 saved_models 的 API Key（按服务商）
-                    # 同时清理文件中可能已泄露的明文 Key（防御性清理）
-                    for model_config in self.api_config["saved_models"]:
-                        model_config.pop("api_key", None)
-                        model_config.pop("api_key_ref", None)
 
                     # 检测是否有 saved_models 但 keyring 中无对应 API Key（新电脑场景）
                     if self.api_config["saved_models"]:
@@ -4147,6 +4495,7 @@ class BossFilterGUI:
                 save_config = self._sanitize_config_for_save(self.api_config)
                 with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
                     json.dump(save_config, f, ensure_ascii=False, indent=4)
+                self._mark_api_config_ui_current()
             except Exception as e:
                 print(f"保存配置失败：{e}")
 
@@ -4236,6 +4585,7 @@ class BossFilterGUI:
                 save_config = self._sanitize_config_for_save(self.api_config)
                 with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
                     json.dump(save_config, f, ensure_ascii=False, indent=4)
+                self._mark_api_config_ui_current()
             except Exception as e:
                 print(f"保存配置失败：{e}")
 
@@ -4401,6 +4751,7 @@ class BossFilterGUI:
 
             with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
                 json.dump(self._sanitize_config_for_save(self.api_config), f, ensure_ascii=False, indent=4)
+            self._mark_api_config_ui_current()
 
             # 更新内存中的模型列表
             self.saved_models = self.api_config["saved_models"]
@@ -4604,6 +4955,7 @@ class BossFilterGUI:
                         try:
                             with open(API_CONFIG_PATH, 'w', encoding='utf-8') as _f:
                                 json.dump(self._sanitize_config_for_save(self.api_config), _f, ensure_ascii=False, indent=4)
+                            self._mark_api_config_ui_current()
                         except Exception:
                             pass  # 持久化失败不影响主流程
 
@@ -5562,6 +5914,7 @@ class BossFilterGUI:
             else:
                 tag = 'low_weight'   # 灰色
             self.skills_tree.insert("", "end", values=(skill["name"], weight, skill["source"]), tags=(tag,))
+        self._skills_tree_fingerprint = self._skills_data_fingerprint()
 
     def refresh_required_listbox(self):
         """刷新必要条件列表显示"""
@@ -5573,6 +5926,39 @@ class BossFilterGUI:
                 self.required_listbox.insert(tk.END, f"{cond_type}: {items}")
             else:
                 self.required_listbox.insert(tk.END, str(cond))
+        self._required_list_fingerprint = self._required_conditions_fingerprint()
+
+    def _skills_data_fingerprint(self):
+        """Return a stable fingerprint for the visible skills list."""
+        return tuple(
+            (
+                skill.get("name", ""),
+                skill.get("weight", 1),
+                skill.get("source", ""),
+            )
+            for skill in getattr(self, 'skills_data', [])
+        )
+
+    def _required_conditions_fingerprint(self):
+        """Return a stable fingerprint for the visible hard-condition list."""
+        return tuple(
+            json.dumps(cond, ensure_ascii=False, sort_keys=True)
+            if isinstance(cond, dict) else str(cond)
+            for cond in getattr(self, 'required_conditions_data', [])
+        )
+
+    def _refresh_config_lists_if_needed(self):
+        """Refresh config page lists only when the backing data changed."""
+        if not hasattr(self, 'skills_tree') or not hasattr(self, 'required_listbox'):
+            return
+
+        skills_fp = self._skills_data_fingerprint()
+        if skills_fp != self._skills_tree_fingerprint:
+            self.refresh_skills_tree()
+
+        required_fp = self._required_conditions_fingerprint()
+        if required_fp != self._required_list_fingerprint:
+            self.refresh_required_listbox()
 
     def add_skill(self):
         """添加技能"""
@@ -7045,7 +7431,7 @@ class BossFilterGUI:
 
     @staticmethod
     def _parse_salary_exp(summary, structured=None):
-        """从候选人摘要中解析薪资和工作年限（复用 extract_summary_info，保持单一解析源）
+        """从候选人摘要中轻量解析薪资和工作年限。
 
         Args:
             summary: 候选人摘要文本
@@ -7071,13 +7457,19 @@ class BossFilterGUI:
 
         # 未解析到的字段用文本解析兜底
         if not salary or not exp:
-            from bossmaster import extract_summary_info
-            info = extract_summary_info(summary or '')
+            from filtering import _parse_candidate_salary_range, parse_experience_years
             if not salary:
-                salary = info.get('salary', '')
+                salary_min, salary_max = _parse_candidate_salary_range(summary or '')
+                if salary_min is not None:
+                    if salary_max is not None and salary_max != salary_min:
+                        salary = f"{salary_min}-{salary_max}K"
+                    else:
+                        salary = f"{salary_min}K"
+                elif '面议' in (summary or ''):
+                    salary = '面议'
             if not exp:
-                exp_raw = info.get('exp_years', '')
-                exp = f"{exp_raw}年" if exp_raw else ''
+                exp_raw = parse_experience_years(summary or '')
+                exp = f"{exp_raw}年" if exp_raw is not None else ''
 
         return salary, exp
 
@@ -7308,6 +7700,7 @@ class BossFilterGUI:
 
     def on_closing(self):
         """窗口关闭处理 - 安全等待工作线程结束"""
+        self._cancel_page_prewarm()
         if self.is_running:
             if messagebox.askokcancel("退出", "程序正在运行，确定要强行退出吗？\n未保存的进度可能会丢失。"):
                 self.is_running = False

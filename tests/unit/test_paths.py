@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for paths.py — 路径工具模块"""
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 import paths
@@ -24,6 +25,24 @@ def test_get_base_dir_source_mode():
         result = paths.get_base_dir()
         assert isinstance(result, Path)
         assert result.exists()
+
+
+def test_get_base_dir_macos_app_path_does_not_crash():
+    """macOS .app frozen 分支应能正常计算基础目录。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        app_dir = root / "BOSS_ResumeFilter.app"
+        macos_dir = app_dir / "Contents" / "MacOS"
+        macos_dir.mkdir(parents=True)
+        exe_path = macos_dir / "BOSS_ResumeFilter"
+        exe_path.write_text("", encoding="utf-8")
+
+        with patch.object(sys, 'frozen', True, create=True), \
+                patch.object(sys, 'platform', 'darwin'), \
+                patch.object(sys, 'executable', str(exe_path)):
+            result = paths.get_base_dir()
+
+        assert result.resolve() == root.resolve()
 
 
 def test_ensure_config_files_noop_in_source():

@@ -4,16 +4,31 @@ BOSS 直聘候选人智能提取工具
 """
 from __future__ import annotations
 
-import time
 import json
-import re
-import random
-import threading
-from datetime import datetime
-from typing import Any
-from DrissionPage import ChromiumPage
+import logging
 import os
+import random
+import re
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+from DrissionPage import ChromiumPage
+
+from constants import (
+    SCORE_THRESHOLD_PASS,
+    SCORE_THRESHOLD_RECOMMEND,
+    SCORE_THRESHOLD_STRONG,
+    SCROLL_PX,
+    MAX_SCROLL_SEARCH,
+    MAX_ROUNDS_DEFAULT,
+    EMPTY_ROUNDS_LIMIT,
+    GREET_FAIL_LIMIT,
+    CAPTCHA_MAX_WAIT,
+    CAPTCHA_CHECK_INTERVAL,
+)
 from filtering import (
     _calc_edu_bonus,
     _extract_city,
@@ -24,18 +39,7 @@ from filtering import (
     filter_candidate,
     parse_experience_years,
 )
-
-
-def _read_app_version() -> str:
-    """Read GUI version without importing gui_main and triggering Tk setup."""
-    try:
-        text = (Path(__file__).resolve().parent / "gui_main.py").read_text(encoding="utf-8")
-        match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
-        if match:
-            return match.group(1)
-    except Exception:
-        pass
-    return "unknown"
+from paths import BASE_DIR, SELECTORS_PATH, CONFIG_PATH, CANDIDATES_PATH, CANDIDATES_XLSX_PATH
 from storage import (
     build_blacklist_index,
     build_greeted_index,
@@ -44,17 +48,30 @@ from storage import (
     load_candidates_all,
     save_candidates_all,
 )
-from constants import (
-    SCORE_THRESHOLD_PASS, SCORE_THRESHOLD_RECOMMEND, SCORE_THRESHOLD_STRONG,
-    SCROLL_PX, MAX_SCROLL_SEARCH, MAX_ROUNDS_DEFAULT, EMPTY_ROUNDS_LIMIT,
-    GREET_FAIL_LIMIT, CAPTCHA_MAX_WAIT, CAPTCHA_CHECK_INTERVAL,
-)
-from paths import BASE_DIR, SELECTORS_PATH, CONFIG_PATH, CANDIDATES_PATH, CANDIDATES_XLSX_PATH
+
+logger = logging.getLogger(__name__)
+
+
+def _read_app_version() -> str:
+    """Read GUI version directly from gui_main module."""
+    try:
+        import gui_main
+        return getattr(gui_main, '__version__', 'unknown')
+    except Exception:
+        return "unknown"
 
 
 class StopRequested(Exception):
     """停止请求异常 — 用于立即终止扫描流程"""
     pass
+
+
+def _save_progress_on_exit() -> None:
+    """加载磁盘数据并导出 Excel，供异常/中断 handler 统一调用。"""
+    existing_all = load_candidates_all()
+    if export_to_excel(existing_all, CANDIDATES_XLSX_PATH):
+        print(f"[SAVE] Excel 文件：{CANDIDATES_XLSX_PATH.name}")
+    print(f"已保存 {len(existing_all)} 个候选人的状态")
 
 
 def _human_delay(center: float, spread: float = 0.3) -> float:
@@ -82,7 +99,7 @@ def load_selectors() -> dict[str, Any]:
         with open(SELECTORS_PATH, "r", encoding="utf-8") as f:
             _SELECTORS_CACHE = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"⚠️  加载 selectors.json 失败：{e}，使用内置默认值")
+        logger.warning("加载 selectors.json 失败：%s，使用内置默认值", e)
         _SELECTORS_CACHE = {}
     return _SELECTORS_CACHE
 
@@ -295,7 +312,7 @@ def extract_summary_info(text: str) -> dict[str, Any]:
     return info
 
 
-def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
+def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> bool:
     """将候选人数据导出为 Excel - 增强版
 
     功能：
@@ -417,7 +434,6 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> None:
             if tags:
                 return "、".join(tags)
         return summary_info_skills
-        return ""
 
     try:
         # 按匹配分从高到低排序
@@ -679,7 +695,7 @@ def get_iframe(page: ChromiumPage):
         if frames:
             return frames[0]
     except Exception as e:
-        print(f"获取 iframe 失败：{e}")
+        logger.error("获取 iframe 失败：%s", e)
     return None
 
 
@@ -738,7 +754,7 @@ def scroll_in_frame(frame: Any, scroll_amount: int = SCROLL_PX) -> None:
         frame.run_js(f'window.scrollBy(0, {scroll_amount})')
         return True
     except Exception as e:
-        print(f"iframe 滚动失败：{e}")
+        logger.error("iframe 滚动失败：%s", e)
         return False
 
 
@@ -755,7 +771,7 @@ def get_frame_scroll_info(frame: Any) -> dict[str, Any]:
             'atBottom': scroll_top + client_height >= scroll_height - 50
         }
     except Exception as e:
-        print(f"获取滚动信息失败：{e}")
+        logger.error("获取滚动信息失败：%s", e)
         return None
 
 
@@ -1306,7 +1322,7 @@ def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.0
         try:
             packet = listener.wait(timeout=timeout, fit_count=False)
         except Exception as e:
-            print(f"读取 API 监听数据失败：{e}")
+            logger.error("读取 API 监听数据失败：%s", e)
             break
         if not packet:
             break
@@ -1321,7 +1337,7 @@ def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.0
                 payload = p.response.body
                 candidates.extend(_extract_candidates_from_api_payload(payload))
             except Exception as e:
-                print(f"解析 API 监听数据失败：{e}")
+                logger.error("解析 API 监听数据失败：%s", e)
                 continue
 
         timeout = 0.01
@@ -1493,13 +1509,13 @@ def _fetch_api_page_result(page: Any, pagination: dict[str, Any], page_num: int)
         import json as _json
         payload = _json.loads(result)
         if isinstance(payload, dict) and 'error' in payload:
-            print(f"  API 分页直调失败 (page={page_num}): {payload['error']}")
+            logger.error("  API 分页直调失败 (page=%d): %s", page_num, payload['error'])
             return [], None
         zp_data = payload.get('zpData') if isinstance(payload, dict) else {}
         has_more = zp_data.get('hasMore') if isinstance(zp_data, dict) else None
         return _extract_candidates_from_api_payload(payload), has_more
     except Exception as e:
-        print(f"  API 分页直调异常 (page={page_num}): {e}")
+        logger.error("  API 分页直调异常 (page=%d): %s", page_num, e)
         return [], None
 
 
@@ -1640,7 +1656,8 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         api_pagination = None
                         api_candidates = []
                     elif has_more is False and not api_candidates:
-                        break
+                        api_pagination = None  # API 分页结束，后续轮次 fallback 到 DOM
+                        continue  # 本轮 API已确认无更多数据，跳过 DOM 直接进入下一轮
                 else:
                     api_candidates, _api_url = _consume_recommend_api_candidates(api_listener)
 
@@ -1682,7 +1699,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 )
 
             except Exception as e:
-                print(f"提取候选人元素失败(轮次{scroll_round + 1}): {e}")
+                logger.error("提取候选人元素失败(轮次%d): %s", scroll_round + 1, e)
 
             new_count = len(candidates_in_round)
             total_count = len(all_candidates)
@@ -2863,6 +2880,9 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
                 try:
                     for i, c in enumerate(to_greet):
+                        if stop_event and stop_event.is_set():
+                            print(f"\n⏹ 用户停止，已跳过剩余 {len(to_greet) - i} 人")
+                            break
                         geek_id = c.get('geek_id')
                         name = c.get('name', '未知')
                         print(f"[{i+1}/{len(to_greet)}] 正在向 {name} 打招呼...", end=" ")
@@ -2928,6 +2948,10 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         model_name = ai_api_config.get('model', 'unknown') if ai_api_config else 'unknown'
         print(f"AI 辅助评估已启用（模型：{model_name}）")
 
+    # 统计累计（提前初始化，防止异常路径上 NameError）
+    job_stats = {}
+    total_raw = total_passed = total_greeted = total_ai_evaluated = total_ai_downgraded = 0
+
     try:
         if existing_page:
             page = existing_page
@@ -2958,14 +2982,6 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         if default_rule:
             print(f"(另有 default 默认规则，不作为岗位运行)")
         print("="*50)
-
-        # 统计累计
-        job_stats = {}
-        total_raw = 0
-        total_passed = 0
-        total_greeted = 0
-        total_ai_evaluated = 0
-        total_ai_downgraded = 0
 
         # 逐个岗位处理
         for idx, job_name in enumerate(jobs_to_run, 1):
@@ -3025,11 +3041,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
     except StopRequested:
         print(f"\n\n⏹ 用户停止，保存当前进度...")
-        existing_all = load_candidates_all()
-        excel_file = CANDIDATES_XLSX_PATH
-        if export_to_excel(existing_all, excel_file):
-            print(f"[SAVE] Excel 文件：{excel_file.name}")
-        print(f"已保存 {len(existing_all)} 个候选人的状态")
+        _save_progress_on_exit()
         if progress_callback:
             stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
             if total_ai_evaluated > 0 and total_ai_downgraded > 0:
@@ -3040,12 +3052,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
     except KeyboardInterrupt:
         print(f"\n\n检测到中断，保存当前进度...")
-        # 生成 Excel 文件
-        existing_all = load_candidates_all()
-        excel_file = CANDIDATES_XLSX_PATH
-        if export_to_excel(existing_all, excel_file):
-            print(f"[SAVE] Excel 文件：{excel_file.name}")
-        print(f"已保存 {len(existing_all)} 个候选人的状态")
+        _save_progress_on_exit()
         if progress_callback:
             stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
             if total_ai_evaluated > 0 and total_ai_downgraded > 0:
@@ -3059,6 +3066,10 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         print(f"程序执行出错：{e}")
         import traceback
         print(traceback.format_exc())
+        try:
+            _save_progress_on_exit()
+        except Exception as save_err:
+            print(f"保存进度时出错：{save_err}")
         if progress_callback:
             progress_callback(100, f"[出错] {str(e)[:30]}")
 

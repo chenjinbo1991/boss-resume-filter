@@ -137,12 +137,17 @@ def test_delete_api_key_success(mock_keyring):
 
 @patch("security.keyring")
 def test_delete_api_key_with_base_url(mock_keyring):
-    """带 base_url 删除"""
+    """带 base_url 删除，同时清理新格式和旧格式 key"""
     mock_keyring.delete_password = MagicMock()
     result = security.delete_api_key("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     assert result is True
-    call_args = mock_keyring.delete_password.call_args[0]
-    assert call_args[1].startswith("api_key:qwen:")
+    # 第一次调用：删除新格式（带 hash）
+    first_call = mock_keyring.delete_password.call_args_list[0]
+    assert first_call[0][1].startswith("api_key:qwen:")
+    # 第二次调用：清理旧格式（仅 provider）
+    assert mock_keyring.delete_password.call_count == 2
+    second_call = mock_keyring.delete_password.call_args_list[1]
+    assert second_call[0][1] == "api_key:qwen"
 
 
 @patch("security.keyring")

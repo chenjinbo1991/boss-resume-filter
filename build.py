@@ -1892,6 +1892,7 @@ def update_latest_json(version, release_notes, downloads_cn=None, quiet=False,
             "macos": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter_mac.zip",
             "macos_dmg": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.dmg",
             "job_config": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/job_config.json",
+            "ui_config": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/ui_config.json",
             "readme": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/README.md"
         },
         "assets": asset_metadata or _release_asset_metadata(),
@@ -2012,6 +2013,7 @@ def _gh_release(version, release_title, release_notes, progress=None,
     import time
     tag = f"v{version}"
     cfg = DIST_DIR / "job_config.json"
+    ui_cfg = DIST_DIR / "ui_config.json"
     readme = DIST_DIR / "README.md"
 
     def _sub(msg):
@@ -2024,10 +2026,10 @@ def _gh_release(version, release_title, release_notes, progress=None,
     if IS_MAC:
         dmg = DIST_DIR / "BOSS_ResumeFilter.dmg"
         mac_zip = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
-        artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (readme, "README")]
+        artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
     else:
         exe = DIST_DIR / "BOSS_ResumeFilter.exe"
-        artifacts = [(exe, "EXE"), (cfg, "Config"), (readme, "README")]
+        artifacts = [(exe, "EXE"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
 
     # 检查 gh CLI
     r = subprocess.run(["gh", "--version"], capture_output=True, cwd=BASE_DIR)
@@ -2295,7 +2297,7 @@ def _needs_cross_platform_rebuild(changed_files):
         'gui_main.py', 'bossmaster.py', 'filtering.py', 'llm_eval.py',
         'job_ai_parser.py', 'storage.py', 'doc_parser.py', 'security.py', 'constants.py',
         'paths.py', 'icons.py', 'updater.py', 'selectors.json',
-        'job_config.json', 'api_config.json', 'requirements.txt',
+        'job_config.json', 'api_config.json', 'ui_config.json', 'requirements.txt',
         'build.py',  # 打包脚本本身的变化影响产物内容
     }
 
@@ -2362,7 +2364,7 @@ def _build_input_files():
     # 配置文件（影响打包内容）
     config_files = [
         "requirements.txt", "job_config.json",
-        "api_config.json", "selectors.json", "CHANGELOG.md",
+        "api_config.json", "selectors.json", "ui_config.json", "CHANGELOG.md",
     ]
 
     # PyInstaller hooks（控制模块收集范围）
@@ -2908,6 +2910,7 @@ def _gitee_upload_local(version, release_title, release_notes, release_cache=Non
         batch1 = [
             DIST_DIR / "BOSS_ResumeFilter_mac.zip",
             DIST_DIR / "job_config.json",
+            DIST_DIR / "ui_config.json",
             DIST_DIR / "README.md",
         ]
         # 第二批：安装包 DMG（放最后）
@@ -2916,6 +2919,7 @@ def _gitee_upload_local(version, release_title, release_notes, release_cache=Non
         batch1 = [
             DIST_DIR / "BOSS_ResumeFilter.exe",
             DIST_DIR / "job_config.json",
+            DIST_DIR / "ui_config.json",
             DIST_DIR / "README.md",
         ]
         batch2 = []
@@ -2996,6 +3000,8 @@ def _downloads_cn_key(filename):
         return "macos_dmg"
     if filename == "job_config.json":
         return "job_config"
+    if filename == "ui_config.json":
+        return "ui_config"
     if filename == "README.md":
         return "readme"
     return filename
@@ -3409,14 +3415,15 @@ def main():
 
         # 上传缺失的产物
         cfg = DIST_DIR / "job_config.json"
+        ui_cfg = DIST_DIR / "ui_config.json"
         readme = DIST_DIR / "README.md"
         if IS_MAC:
             dmg = DIST_DIR / "BOSS_ResumeFilter.dmg"
             mac_zip = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
-            artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (readme, "README")]
+            artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
         else:
             exe = DIST_DIR / "BOSS_ResumeFilter.exe"
-            artifacts = [(exe, "EXE"), (cfg, "Config"), (readme, "README")]
+            artifacts = [(exe, "EXE"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
 
         print(f"  准备上传 {len(artifacts)} 个文件")
 
@@ -3538,6 +3545,7 @@ def main():
         '--add-data', f'{BASE_DIR / "job_config.json"}{SEP}.',
         '--add-data', f'{clean_api_config}{SEP}.',
         '--add-data', f'{BASE_DIR / "selectors.json"}{SEP}.',
+        '--add-data', f'{BASE_DIR / "ui_config.json"}{SEP}.',
         '--add-data', f'{BASE_DIR / "CHANGELOG.md"}{SEP}.',
     ]
 
@@ -3741,7 +3749,7 @@ def main():
         print(f"\r{' ' * 60}\r", end='')
 
     print("  更新辅助文件...")
-    for file in ["README.md", "job_config.json"]:
+    for file in ["README.md", "job_config.json", "ui_config.json"]:
         src = BASE_DIR / file
         dst = DIST_DIR / file
         if src.exists():

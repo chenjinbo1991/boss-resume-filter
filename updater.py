@@ -3,28 +3,32 @@
 支持 Windows EXE 和 macOS 的自动更新
 """
 
-import os
-import sys
+import hashlib
 import json
+import logging
+import os
+import shlex
 import subprocess
+import sys
+import tempfile
 import threading
 import time
-import requests
-import shlex
-import tempfile
-import plistlib
-import hashlib
 from pathlib import Path
 from tkinter import messagebox
+
+import requests
 import tkinter as tk
-from paths import get_base_dir
+
 from constants import (
+    UPDATE_TIMEOUT_CHANGELOG,
+    UPDATE_TIMEOUT_DOWNLOAD,
     UPDATE_TIMEOUT_GITEE,
     UPDATE_TIMEOUT_GITHUB,
-    UPDATE_TIMEOUT_DOWNLOAD,
-    UPDATE_TIMEOUT_CHANGELOG,
     UPDATE_TIMEOUT_GIT_PULL,
 )
+from paths import get_base_dir
+
+logger = logging.getLogger(__name__)
 
 
 def _get_font_family():
@@ -116,16 +120,36 @@ def _get_parent_titlebar_center_offset(parent):
     return titlebar_height // 2
 
 
-def get_current_version():
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def get_current_version() -> str:
     """获取当前版本号"""
     try:
         # gui_main 是程序入口，updater 被调用时已在 sys.modules 中
         # 直接读取模块属性，无需解析源文件，兼容所有打包模式
         import gui_main
         return gui_main.__version__
-    except Exception as e:
-        print(f"[更新] 获取当前版本失败: {e}")
-    return "0.0.0"
+    except Exception:
+        logger.warning("获取当前版本失败，返回默认值", exc_info=True)
+        return "0.0.0"
+
+
+def _parse_version(v: str) -> tuple:
+    """Parse a version string into a comparable tuple.
+
+    Supports 'v' prefix and pads to 3 components for correct comparison.
+    e.g., '2.11' -> (2, 11, 0), '2.11.1' -> (2, 11, 1)
+    """
+    try:
+        parts = [int(x) for x in v.lstrip('vV').split('.')]
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts)
+    except Exception:
+        return (0, 0, 0)
 
 
 def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
@@ -169,16 +193,8 @@ def check_github_release(repo="yaoyouzhong/boss-resume-filter"):
         result['latest'] = latest_version
 
         # 比较版本号
-        def parse_version(v):
-            """将版本号字符串转换为可比较的元组"""
-            try:
-                parts = [int(x) for x in v.split('.')]
-                return tuple(parts)
-            except Exception:
-                return (0, 0, 0)
-
-        current_tuple = parse_version(result['current'])
-        latest_tuple = parse_version(latest_version)
+        current_tuple = _parse_version(result['current'])
+        latest_tuple = _parse_version(latest_version)
 
         result['has_update'] = latest_tuple > current_tuple
 
@@ -237,15 +253,8 @@ def check_gitee_latest(latest_json_url="https://gitee.com/yaoyouzhong/boss-resum
         result['latest'] = latest_version
 
         # 比较版本号
-        def parse_version(v):
-            try:
-                parts = [int(x) for x in v.split('.')]
-                return tuple(parts)
-            except Exception:
-                return (0, 0, 0)
-
-        current_tuple = parse_version(result['current'])
-        latest_tuple = parse_version(latest_version)
+        current_tuple = _parse_version(result['current'])
+        latest_tuple = _parse_version(latest_version)
         result['has_update'] = latest_tuple > current_tuple
 
         # 构造 release_info（兼容 GitHub 格式）
@@ -372,6 +381,11 @@ def download_file(url, dest_path, progress_callback=None):
 
         return True, None
     except Exception as e:
+        # 清理残缺文件，防止调用方拿到不完整的下载
+        try:
+            Path(dest_path).unlink(missing_ok=True)
+        except OSError:
+            pass
         return False, str(e)
 
 
@@ -435,6 +449,18 @@ def notify_previous_update_failure(root):
         pass
 
 
+def _escape_batch_string(s: str) -> str:
+    """Escape special characters in a string for Windows batch scripts.
+
+    Escapes: ^ < > & | " to prevent command injection.
+    """
+    # First escape ^ to avoid double-escaping
+    s = s.replace('^', '^^')
+    for char in '<>&|"':
+        s = s.replace(char, '^' + char)
+    return s
+
+
 def update_windows(new_exe_path, current_exe_path, source="manual"):
     """
     Windows EXE 更新逻辑
@@ -456,12 +482,19 @@ def update_windows(new_exe_path, current_exe_path, source="manual"):
         current_pid = os.getpid()
         update_source = str(source or "manual")
 
+        # Escape paths for batch script to prevent command injection
+        safe_current_exe = _escape_batch_string(str(current_exe_path))
+        safe_new_exe = _escape_batch_string(str(new_exe_path))
+        safe_temp_dir = _escape_batch_string(str(temp_dir))
+        safe_marker_path = _escape_batch_string(str(marker_path))
+
         bat_content = f"""@echo off
-setlocal
-set "OLD_EXE={current_exe_path}"
-set "NEW_EXE={new_exe_path}"
-set "TEMP_DIR={temp_dir}"
-set "MARKER_FILE={marker_path}"
+chcp 65001 >nul
+setlocal enabledelayedexpansion
+set "OLD_EXE={safe_current_exe}"
+set "NEW_EXE={safe_new_exe}"
+set "TEMP_DIR={safe_temp_dir}"
+set "MARKER_FILE={safe_marker_path}"
 set "OLD_PID={current_pid}"
 set "UPDATE_SOURCE={update_source}"
 set "LOG_FILE=%TEMP%\\boss_resume_filter_update.log"
@@ -549,10 +582,15 @@ echo 失败时间: %date% %time%>> "%FAILED_FILE%"
 echo 详细日志: %LOG_FILE%>> "%FAILED_FILE%"
 if defined NEW_PID taskkill /f /pid %NEW_PID% >> "%LOG_FILE%" 2>&1
 timeout /t 2 /nobreak >nul
-if exist "%OLD_EXE%" del /f /q "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
-if exist "%OLD_EXE%.old" move /y "%OLD_EXE%.old" "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
+if exist "%OLD_EXE%.old" (
+    move /y "%OLD_EXE%.old" "%OLD_EXE%" >> "%LOG_FILE%" 2>&1
+    if not errorlevel 1 (
+        echo [%date% %time%] Rolled back to old executable >> "%LOG_FILE%"
+    ) else (
+        echo [%date% %time%] CRITICAL: Rollback move failed, both files may be present >> "%LOG_FILE%"
+    )
+)
 if exist "%TEMP_DIR%" rmdir /s /q "%TEMP_DIR%" >> "%LOG_FILE%" 2>&1
-echo [%date% %time%] Rolled back to old executable >> "%LOG_FILE%"
 exit /b 1
 
 :update_confirmed
@@ -801,8 +839,8 @@ def exit_for_update(root):
     os._exit(0)
 
 
-def check_and_update_gui(root, silent=False, on_complete=None, gui=None,
-                         source="manual", on_defer=None):
+def check_and_update_gui(root: tk.Tk, silent: bool = False, on_complete=None, gui=None,
+                         source: str = "manual", on_defer=None) -> None:
     """
     GUI 版本的更新检查和执行
 

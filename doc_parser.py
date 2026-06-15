@@ -6,12 +6,14 @@
 2. 职位要求（软性要求）- 用于评分，匹配越多得分越高
 """
 import json
-import re
+import logging
 import os
+import re
 import unicodedata
 from typing import Dict
 from constants import MAJOR_CITIES, CHINESE_NUMERALS
 
+logger = logging.getLogger(__name__)
 
 _major_cities_set = set(MAJOR_CITIES)
 
@@ -331,48 +333,31 @@ def _chinese_or_int(value: str) -> int:
         return 0
 
 
+# 预构建字符转换表，避免每次调用时重复创建
+_FULLWIDTH_TRANS_TABLE = str.maketrans({
+    **{chr(i): chr(i - 0xFF10 + ord('0')) for i in range(0xFF10, 0xFF1A)},  # 全角数字 0-9
+    **{chr(i): chr(i - 0xFF21 + ord('A')) for i in range(0xFF21, 0xFF3B)},  # 全角大写字母 A-Z
+    **{chr(i): chr(i - 0xFF41 + ord('a')) for i in range(0xFF41, 0xFF5B)},  # 全角小写字母 a-z
+    '　': ' ',  # 全角空格
+    '－': '-', '：': ':', '～': '~',  # 全角标点
+    '（': '(', '）': ')', '，': ',',
+})
+
+
 def _preprocess_text(text: str) -> str:
     """文本预处理：全角转半角、去零宽字符、去 emoji、统一空白"""
     if not text:
         return text
-    # 1. 全角数字/英文 → 半角（不转全角标点，保留中文语境）
-    result = []
-    for ch in text:
-        code = ord(ch)
-        # 全角数字 0-9 (0xFF10-0xFF19)
-        if 0xFF10 <= code <= 0xFF19:
-            result.append(chr(code - 0xFF10 + ord('0')))
-        # 全角大写字母 A-Z (0xFF21-0xFF3A)
-        elif 0xFF21 <= code <= 0xFF3A:
-            result.append(chr(code - 0xFF21 + ord('A')))
-        # 全角小写字母 a-z (0xFF41-0xFF5A)
-        elif 0xFF41 <= code <= 0xFF5A:
-            result.append(chr(code - 0xFF41 + ord('a')))
-        # 全角空格
-        elif code == 0x3000:
-            result.append(' ')
-        else:
-            result.append(ch)
-    text = ''.join(result)
+    # 1. 全角数字/字母/空格/标点 → 半角
+    text = text.translate(_FULLWIDTH_TRANS_TABLE)
 
-    # 2. 全角标点 → 半角（减号、冒号、波浪号等常见于薪资/经验模式）
-    _punct_map = {
-        0xFF0D: '-',   # － → -
-        0xFF1A: ':',   # ： → :（保留中文冒号用于显示，但正则已兼容两种）
-        0xFF5E: '~',   # ～ → ~
-        0xFF08: '(',   # （ → (
-        0xFF09: ')',   # ） → )
-        0xFF0C: ',',   # ， → ,
-    }
-    text = ''.join(_punct_map[ord(ch)] if ord(ch) in _punct_map else ch for ch in text)
-
-    # 3. 去零宽字符（从网页/微信复制时常见）
+    # 2. 去零宽字符（从网页/微信复制时常见）
     text = re.sub(r'[​‌‍﻿⁠]', '', text)
 
-    # 4. 去 emoji（Unicode Category 以 So 为主，排除常用符号）
+    # 3. 去 emoji（Unicode Category 以 So 为主，排除常用符号）
     text = ''.join(ch for ch in text if unicodedata.category(ch) not in ('So', 'Sk') or ch in '°±×÷')
 
-    # 5. 连续空白压缩（保留换行，压缩行内空格和 tab）
+    # 4. 连续空白压缩（保留换行，压缩行内空格和 tab）
     text = re.sub(r'[^\S\n]+', ' ', text)
 
     return text
@@ -1143,7 +1128,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
         "work_location": parsed.get("work_location", ""),
         "salary_min": parsed.get("salary_min"),
         "salary_max": parsed.get("salary_max"),
-        "max_age": parsed["max_age"] if parsed["max_age"] is not None else 35,
+        "max_age": parsed.get("max_age"),
         "keywords": weighted_keywords,  # 带权重的技能列表
         "preferred_keywords": preferred_keywords,  # 优先项：额外加分，不参与关键词分母
         "required_conditions": all_required,
@@ -1170,7 +1155,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
     # 更新或新增岗位配置
     job_title = parsed["job_title"]
     if job_title == "default":
-        print("警告：'default' 是保留字，不能作为岗位名称")
+        logger.warning("'default' 是保留字，不能作为岗位名称")
         job_title = "Java 工程师"  # 使用默认名称
 
     # 规范化岗位名称：去除多余空格，统一格式
@@ -1185,7 +1170,7 @@ def generate_config_from_text(requirements_text: str, merge_existing: bool = Tru
             break
 
     if existing_key_to_delete:
-        print(f"检测到重复岗位：'{existing_key_to_delete}'，将进行覆盖更新")
+        logger.info("检测到重复岗位：'%s'，将进行覆盖更新", existing_key_to_delete)
         del existing_config["job_requirements"][existing_key_to_delete]
 
     existing_config["job_requirements"][normalized_job_title] = new_job_config

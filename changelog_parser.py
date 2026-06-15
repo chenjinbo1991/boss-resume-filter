@@ -39,7 +39,7 @@ def parse_changelog_versions(content: str) -> list[tuple[str, str, str]]:
             current_lines.append(line)
 
     if current_version:
-        versions.append((current_version, current_lines[0], "\n".join(current_lines)))
+        versions.append((current_version, current_lines[0], "\n".join(current_lines).rstrip()))
 
     return versions
 

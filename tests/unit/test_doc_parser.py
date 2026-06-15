@@ -493,11 +493,11 @@ def test_age_no_false_positive_experience():
     assert result["max_age"] is None
 
 
-def test_generated_config_defaults_max_age_to_35_when_missing():
-    """岗位解析未明确年龄上限时，配置默认最大年龄 35。"""
+def test_generated_config_defaults_max_age_to_none_when_missing():
+    """岗位解析未明确年龄上限时，配置不限制年龄（None）。"""
     config = generate_config_from_text("职位要求\n本科\n3年以上Java经验", merge_existing=False)
     job = list(config["job_requirements"].values())[0]
-    assert job["max_age"] == 35
+    assert job["max_age"] is None
 
 
 def test_generated_config_keeps_explicit_max_age():

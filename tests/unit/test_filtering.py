@@ -291,6 +291,16 @@ def test_filter_candidate_salary_too_high_rejected():
     assert "薪资不匹配" in details["reason"]
 
 
+def test_filter_candidate_salary_ignores_negotiable_on_other_lines():
+    """其他字段出现“面议”不应覆盖明确的期望薪资。"""
+    passed, _, details = filter_candidate(
+        "期望薪资：18-22K\n当前薪资：面议\n南京，统招本科，6 年 Java 经验",
+        _java_rule(),
+    )
+    assert passed is False
+    assert "薪资不匹配" in details["reason"]
+
+
 def test_filter_candidate_wrong_city_rejected():
     passed, _, details = filter_candidate(
         "15-16K\n上海，统招本科，6 年 Java 经验",
