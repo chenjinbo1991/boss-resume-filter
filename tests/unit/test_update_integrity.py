@@ -284,15 +284,11 @@ def test_verify_release_assets_complete_accepts_github_and_gitee_assets():
             "size": 333,
             "digest": "sha256:" + "c" * 64,
         },
-        "README.md": {"name": "README.md", "size": 44},
-        "job_config.json": {"name": "job_config.json", "size": 55},
     }
     gitee_assets = {
         "BOSS_ResumeFilter.exe": {"id": 1, "size": 111},
         "BOSS_ResumeFilter_mac.zip": {"id": 2, "size": 222},
         "BOSS_ResumeFilter.dmg": {"id": 3, "size": 333},
-        "README.md": {"id": 4, "size": 44},
-        "job_config.json": {"id": 5, "size": 55},
     }
     release_cache = {
         "token": "token",
@@ -350,8 +346,6 @@ def test_verify_release_assets_complete_rejects_missing_github_asset():
             "size": 222,
             "digest": "sha256:" + "b" * 64,
         },
-        "README.md": {"name": "README.md", "size": 44},
-        "job_config.json": {"name": "job_config.json", "size": 55},
     }
 
     original_get_assets = build._get_github_release_assets
@@ -384,15 +378,11 @@ def test_verify_release_assets_complete_rejects_gitee_sha_mismatch():
             "size": 333,
             "digest": "sha256:" + "c" * 64,
         },
-        "README.md": {"name": "README.md", "size": 44},
-        "job_config.json": {"name": "job_config.json", "size": 55},
     }
     gitee_assets = {
         "BOSS_ResumeFilter.exe": {"id": 1, "size": 111},
         "BOSS_ResumeFilter_mac.zip": {"id": 2, "size": 222},
         "BOSS_ResumeFilter.dmg": {"id": 3, "size": 333},
-        "README.md": {"id": 4, "size": 44},
-        "job_config.json": {"id": 5, "size": 55},
     }
     release_cache = {
         "token": "token",

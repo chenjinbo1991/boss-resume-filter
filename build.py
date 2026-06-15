@@ -1239,8 +1239,6 @@ def _required_release_asset_names():
         "BOSS_ResumeFilter.exe",
         "BOSS_ResumeFilter_mac.zip",
         "BOSS_ResumeFilter.dmg",
-        "README.md",
-        "job_config.json",
     }
 
 
@@ -1890,10 +1888,7 @@ def update_latest_json(version, release_notes, downloads_cn=None, quiet=False,
         "downloads": {
             "windows": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.exe",
             "macos": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter_mac.zip",
-            "macos_dmg": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.dmg",
-            "job_config": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/job_config.json",
-            "ui_config": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/ui_config.json",
-            "readme": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/README.md"
+            "macos_dmg": f"https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v{version}/BOSS_ResumeFilter.dmg"
         },
         "assets": asset_metadata or _release_asset_metadata(),
         "release_notes": release_notes
@@ -2012,9 +2007,6 @@ def _gh_release(version, release_title, release_notes, progress=None,
     """
     import time
     tag = f"v{version}"
-    cfg = DIST_DIR / "job_config.json"
-    ui_cfg = DIST_DIR / "ui_config.json"
-    readme = DIST_DIR / "README.md"
 
     def _sub(msg):
         """子步骤报告：同时打印和更新进度表"""
@@ -2026,10 +2018,10 @@ def _gh_release(version, release_title, release_notes, progress=None,
     if IS_MAC:
         dmg = DIST_DIR / "BOSS_ResumeFilter.dmg"
         mac_zip = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
-        artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
+        artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP")]
     else:
         exe = DIST_DIR / "BOSS_ResumeFilter.exe"
-        artifacts = [(exe, "EXE"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
+        artifacts = [(exe, "EXE")]
 
     # 检查 gh CLI
     r = subprocess.run(["gh", "--version"], capture_output=True, cwd=BASE_DIR)
@@ -2885,8 +2877,8 @@ def _gitee_get_release_cache(version, release_title, release_notes):
 def _gitee_upload_local(version, release_title, release_notes, release_cache=None):
     """上传本地平台的产物到 Gitee Release。
 
-    Windows: EXE + job_config.json + README.md
-    macOS:   DMG + ZIP + job_config.json + README.md
+    Windows: EXE
+    macOS:   DMG + ZIP
 
     返回 downloads_cn 字典。需要环境变量 GITEE_TOKEN，未设置时返回 None。
     release_cache: 可选的缓存信息（来自 _gitee_get_release_cache），避免重复 API 调用。
@@ -2909,18 +2901,12 @@ def _gitee_upload_local(version, release_title, release_notes, release_cache=Non
         # 第一批：自动更新用 ZIP + 配置（优先）
         batch1 = [
             DIST_DIR / "BOSS_ResumeFilter_mac.zip",
-            DIST_DIR / "job_config.json",
-            DIST_DIR / "ui_config.json",
-            DIST_DIR / "README.md",
         ]
         # 第二批：安装包 DMG（放最后）
         batch2 = [DIST_DIR / "BOSS_ResumeFilter.dmg"]
     else:
         batch1 = [
             DIST_DIR / "BOSS_ResumeFilter.exe",
-            DIST_DIR / "job_config.json",
-            DIST_DIR / "ui_config.json",
-            DIST_DIR / "README.md",
         ]
         batch2 = []
 
@@ -2998,12 +2984,6 @@ def _downloads_cn_key(filename):
         return "macos"
     if filename.endswith(".dmg"):
         return "macos_dmg"
-    if filename == "job_config.json":
-        return "job_config"
-    if filename == "ui_config.json":
-        return "ui_config"
-    if filename == "README.md":
-        return "readme"
     return filename
 
 
@@ -3414,16 +3394,13 @@ def main():
             pass
 
         # 上传缺失的产物
-        cfg = DIST_DIR / "job_config.json"
-        ui_cfg = DIST_DIR / "ui_config.json"
-        readme = DIST_DIR / "README.md"
         if IS_MAC:
             dmg = DIST_DIR / "BOSS_ResumeFilter.dmg"
             mac_zip = DIST_DIR / "BOSS_ResumeFilter_mac.zip"
-            artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
+            artifacts = [(dmg, "DMG"), (mac_zip, "Mac-ZIP")]
         else:
             exe = DIST_DIR / "BOSS_ResumeFilter.exe"
-            artifacts = [(exe, "EXE"), (cfg, "Config"), (ui_cfg, "UI Config"), (readme, "README")]
+            artifacts = [(exe, "EXE")]
 
         print(f"  准备上传 {len(artifacts)} 个文件")
 

@@ -4,10 +4,7 @@
   "downloads": {
     "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.exe",
     "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.dmg",
-    "job_config": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/job_config.json",
-    "ui_config": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/ui_config.json",
-    "readme": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/README.md"
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
@@ -25,9 +22,6 @@
   },
   "release_notes": "### 体验优化\n\n- **启动和切页更顺畅**：启动后只创建首页，运行控制、筛选结果、统计和模型配置页按需创建并错峰预热，减少首次进入重页面的卡顿\n- **筛选结果页体验优化**：筛选结果页后台预热，真实点击时优先复用已创建页面；日期筛选控件保留下拉日历，不再退化成普通文本输入\n- **模型配置页减少等待**：启动和首次打开模型配置页时不再同步等待系统钥匙串，API Key 改为后台读取后回填\n- **窗口布局可配置**：新增 `ui_config.json`，用于统一管理窗口尺寸、页面间距、表格行高和部分控件宽度，方便不同屏幕下微调界面\n\n### 问题修复\n\n- **退出保存更稳**：异常退出、中断或停止流程时统一兜底保存候选人进度，降低中途关闭导致结果丢失的风险\n- **筛选边界修复**：修正薪资文本中其他字段出现“面议”时误跳过薪资判断的问题；岗位年龄未填写时按不限处理\n- **简历评估停止修复**：AI 批量评估和简历二次评估响应停止请求，避免停止后仍继续等待接口返回\n- **数据恢复更稳**：候选人主数据缺失或损坏时优先从备份恢复，并保留黑名单、反馈、跟进等人工字段\n- **更新流程稳定性修复**：Windows 更新脚本转义更稳，版本比较逻辑复用统一解析，减少特殊路径或字符导致的更新失败",
   "downloads_cn": {
-    "ui_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/ui_config.json",
-    "job_config": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/job_config.json",
-    "readme": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/README.md",
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.exe",
     "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter.dmg",
     "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.1/BOSS_ResumeFilter_mac.zip"
