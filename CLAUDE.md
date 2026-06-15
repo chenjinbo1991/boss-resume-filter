@@ -9,7 +9,7 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.11）
+├── gui_main.py           # 图形界面主程序（v2.11.1）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
@@ -24,8 +24,9 @@ boss-resume-filter/
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）
 ├── selectors.json        # 页面选择器配置（CSS/XPath/关键词，DOM 变化时修改）
+├── ui_config.json        # UI 尺寸与缩放配置
 ├── tests/                # 测试脚本目录
-├── scripts/              # 辅助脚本目录
+├── scripts/              # 辅助脚本（发布监控、PPT 生成、截图等）
 │   └── watch_progress.py # 发布进度监控脚本（轮询 .build_progress.json）
 └── pyinstaller-hooks/    # PyInstaller 自定义 hook（控制模块收集范围，减小产物体积）
 ```

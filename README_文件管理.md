@@ -65,6 +65,29 @@ candidates_all.xlsx    # Excel 导出（覆盖）
 | followup_note | 跟进备注（自由文本） |
 | followup_updated_at | 跟进更新时间（YYYYMMDD_HHMMSS） |
 
+**黑名单字段**（GUI 加入黑名单后写入）：
+
+| 字段 | 说明 |
+|------|------|
+| blacklisted | 是否已加入黑名单（True/False） |
+| blacklist_reason | 屏蔽原因（自由文本） |
+| blacklisted_at | 加入黑名单时间（YYYYMMDD_HHMMSS） |
+
+黑名单按 `geek_id` 跨岗位生效。已屏蔽的候选人不计入后续扫描、统计和 Excel 导出；清空候选人时保留黑名单记录。
+
+**简历二次评估字段**（导入 PDF/Word 简历后 LLM 评估写入）：
+
+| 字段 | 说明 |
+|------|------|
+| resume_file | 导入的简历文件路径 |
+| resume_imported_at | 简历导入时间 |
+| resume_eval_adjustment | 简历评估调整值（-10 ~ +10） |
+| resume_eval_reason | 简历评估理由 |
+| resume_eval_model | 使用的 LLM 模型名称 |
+| resume_eval_at | 评估执行时间 |
+
+简历评估在 LLM 一次评估基础上叠加第二次调整，最终分 = 规则分 + LLM 调整 + 简历评估调整。
+
 ## 运行参数
 
 ```bash

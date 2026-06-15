@@ -307,20 +307,19 @@ def capture_changelog_dialog(root: tk.Tk, app: gui_main.BossFilterGUI, filename:
 def capture_update_dialog(root: tk.Tk, app: gui_main.BossFilterGUI, filename: str) -> None:
     """Capture a sample auto-update prompt without downloading anything."""
     sample_result = {
-        "current": "2.9.2",
-        "latest": "2.9.3",
+        "current": "2.10.3",
+        "latest": "2.11",
         "download_url": "https://example.com/BOSS_ResumeFilter.exe",
         "download_url_fallback": "https://example.com/BOSS_ResumeFilter.exe",
         "asset_info": {},
-        "changelog_body": """### 体验优化
-- **AI 解析更稳定**：网络不稳定或模型响应慢时，会自动重试或回退到本地解析。
-- **解析结果更精准**：泛化词不再被误识别为技能关键词。
-- **基础条件自动归类**：学历要求、工作年限等基础条件自动归入基本信息。
-- **优先项权重更合理**：优先项的加分权重不再被过度放大。
+        "changelog_body": """### 新增功能
+- **候选人黑名单**：按 geek_id 跨岗位屏蔽，扫描、统计和 Excel 导出自动跳过。
+- **简历二次评估**：支持导入 PDF/Word 简历，再次调用 LLM 评估并叠加调整分。
+- **显示已屏蔽候选人**：结果页新增开关，可临时查看和恢复黑名单候选人。
 
-### 问题修复
-- **AI Agent 变体匹配**：修复多种 Agent 写法无法正确匹配的问题。
-- **工作地点匹配**：修复 AI 返回的地点格式不统一导致筛选失败的问题。
+### 体验优化
+- **黑名单弹窗布局优化**：屏蔽原因使用提示文本引导填写，按钮风格统一。
+- **安装包更轻**：PDF 解析切换到 pdfminer.six，体积更小，中文解析更准确。
 """,
     }
     gui_main.updater.show_update_dialog(root, sample_result, gui=app)

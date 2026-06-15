@@ -58,7 +58,7 @@ job_config.json
 ### 加密存储
 - API Key 使用系统级加密（Windows DPAPI / macOS Keychain）
 - 加密绑定到当前用户账户
-- 按服务商统一管理（同一服务商的模型共享一个 Key）
+- 按 provider + base_url 组合管理（同一服务商不同接入方式可独立配置 Key）
 - 配置文件 `api_config.json` 中不含明文 Key
 
 ### 跨电脑迁移
