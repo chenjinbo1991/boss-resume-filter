@@ -12,6 +12,10 @@ on:
           - all
           - macos
           - windows
+      tag:
+        description: 'Release tag (e.g. v2.11.2). Required when triggered manually.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -27,7 +31,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ inputs.tag || github.ref_name }}"
           PLATFORM="${{ inputs.platform || 'all' }}"
           needs='[]'
 
@@ -116,6 +120,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             dist/BOSS_ResumeFilter.exe
             dist/BOSS_ResumeFilter.dmg
