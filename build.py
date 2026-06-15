@@ -581,6 +581,7 @@ REQUIRED_IMPORTS = {
     "tkcalendar": "tkcalendar",
     "pdfminer": "pdfminer.six",
     "docx": "python-docx",
+    "striprtf": "striprtf",
 }
 
 
@@ -3571,6 +3572,7 @@ def main():
         '--hidden-import=tkinter.messagebox',
         '--hidden-import=tkcalendar',
         '--hidden-import=pdfminer',
+        '--hidden-import=striprtf',
         '--hidden-import=babel',
         '--hidden-import=babel.numbers',
         '--hidden-import=babel.dates',

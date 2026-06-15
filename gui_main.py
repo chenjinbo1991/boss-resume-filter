@@ -8304,9 +8304,12 @@ class BossFilterGUI:
         filepath = filedialog.askopenfilename(
             title=f"导入简历 — {candidate.get('name', '')}",
             filetypes=[
-                ("简历文件", "*.pdf *.docx"),
+                ("简历文件", "*.pdf *.docx *.txt *.md *.rtf *.html"),
                 ("PDF 文件", "*.pdf"),
                 ("Word 文件", "*.docx"),
+                ("文本文件", "*.txt *.md"),
+                ("RTF 文件", "*.rtf"),
+                ("HTML 文件", "*.html *.htm"),
                 ("所有文件", "*.*"),
             ],
         )
@@ -8336,8 +8339,52 @@ class BossFilterGUI:
                     return
                 doc = docx.Document(filepath)
                 resume_text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            elif ext in ('.txt', '.md'):
+                # 纯文本 / Markdown：直接读取，尝试多种编码
+                for enc in ('utf-8', 'gbk', 'gb2312', 'latin-1'):
+                    try:
+                        with open(filepath, 'r', encoding=enc) as f:
+                            resume_text = f.read()
+                        break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+                if not resume_text:
+                    messagebox.showwarning("读取失败", "无法以常见编码读取文件，请检查文件是否为文本格式。")
+                    return
+            elif ext == '.rtf':
+                try:
+                    from striprtf.striprtf import rtf_to_text
+                except ImportError:
+                    messagebox.showwarning("缺少依赖",
+                        "需要安装 striprtf 才能解析 RTF 文件。\n\n"
+                        "安装命令：pip install striprtf")
+                    return
+                with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                    rtf_content = f.read()
+                resume_text = rtf_to_text(rtf_content)
+            elif ext in ('.html', '.htm'):
+                import re
+                html_content = ""
+                for enc in ('utf-8', 'gbk', 'gb2312', 'latin-1'):
+                    try:
+                        with open(filepath, 'r', encoding=enc) as f:
+                            html_content = f.read()
+                        break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+                if not html_content:
+                    messagebox.showwarning("读取失败", "无法以常见编码读取 HTML 文件。")
+                    return
+                # 去除 <script>/<style> 块，再剥离标签
+                html_content = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html_content, flags=re.S | re.I)
+                resume_text = re.sub(r'<[^>]+>', ' ', html_content)
+                resume_text = re.sub(r'\s+', ' ', resume_text).strip()
+                # 还原常见 HTML 实体
+                import html as _html_module
+                resume_text = _html_module.unescape(resume_text)
             else:
-                messagebox.showwarning("不支持的格式", f"仅支持 PDF 和 DOCX 格式，当前文件：{ext}")
+                messagebox.showwarning("不支持的格式",
+                    f"支持的格式：PDF、DOCX、TXT、MD、RTF、HTML\n当前文件：{ext}")
                 return
         except Exception as e:
             messagebox.showerror("解析失败", f"无法解析简历文件：\n{e}")

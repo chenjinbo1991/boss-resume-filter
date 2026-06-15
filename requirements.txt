@@ -19,6 +19,7 @@ Pillow>=10.0.0
 # 日历控件（筛选结果页日期选择）
 tkcalendar>=1.6.0
 
-# 简历文件解析（PDF/DOCX 二次评估）
+# 简历文件解析（PDF/DOCX/TXT/MD/RTF/HTML 二次评估）
 pdfminer.six>=20231228
 python-docx>=1.1.0
+striprtf>=0.0.26
