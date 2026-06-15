@@ -773,10 +773,15 @@ def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
             build._gitee_upload_single = original_upload
             build.LARGE_TRANSFER_THRESHOLD = original_large_threshold
 
-    assert download_order == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
-    assert upload_order == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
-    assert downloads_cn["macos"].endswith("/BOSS_ResumeFilter_mac.zip")
-    assert downloads_cn["macos_dmg"].endswith("/BOSS_ResumeFilter.dmg")
+    assert download_order == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"], \
+        f"download_order: {download_order}"
+    assert upload_order == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"], \
+        f"upload_order: {upload_order}"
+    assert "macos" in downloads_cn, f"downloads_cn keys: {list(downloads_cn.keys()) if downloads_cn else 'None'}"
+    assert downloads_cn["macos"].endswith("/BOSS_ResumeFilter_mac.zip"), \
+        f"downloads_cn[macos]: {downloads_cn.get('macos')}"
+    assert downloads_cn["macos_dmg"].endswith("/BOSS_ResumeFilter.dmg"), \
+        f"downloads_cn[macos_dmg]: {downloads_cn.get('macos_dmg')}"
 
 
 def test_sync_gitee_from_github_supports_macos_release_waiting_for_windows_exe():
