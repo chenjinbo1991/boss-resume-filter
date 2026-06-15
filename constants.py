@@ -62,6 +62,9 @@ UPDATE_TIMEOUT_GITEE = 8           # Gitee latest.json 请求
 UPDATE_TIMEOUT_GITHUB = 10         # GitHub Releases API 请求
 UPDATE_TIMEOUT_DOWNLOAD = 30       # 文件下载（含国内镜像）
 UPDATE_TIMEOUT_CHANGELOG = 8       # 远端 CHANGELOG.md 获取
+UPDATE_TIMEOUT_RELEASE_NOTES_GITEE = 3.0   # 更新日志弹窗远端说明：Gitee 首次短超时
+UPDATE_TIMEOUT_RELEASE_NOTES_GITEE_RETRY = 5.0  # 更新日志弹窗远端说明：Gitee 重试超时
+UPDATE_TIMEOUT_RELEASE_NOTES_GITHUB = 3.5  # 更新日志弹窗远端说明：GitHub 短超时
 UPDATE_TIMEOUT_GIT_PULL = 30       # git pull subprocess 超时
 
 # ========== 城市列表 ==========

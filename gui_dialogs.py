@@ -2,10 +2,11 @@
 GUI 对话框模块 - 从 gui_main.py 提取的独立对话框
 """
 import sys
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from changelog_parser import parse_changelog_versions, resolve_local_changelog_path
+from changelog_parser import normalize_version, parse_changelog_versions, resolve_local_changelog_path
 
 
 def render_changelog_text(
@@ -314,6 +315,19 @@ def show_changelog_dialog(gui):
 
     row_frames = []
     selected_row_idx = [0]
+    current_version = str(getattr(gui, "version", "") or getattr(gui, "__version__", ""))
+    if not current_version:
+        try:
+            import gui_main
+            current_version = getattr(gui_main, "__version__", "")
+        except Exception:
+            current_version = ""
+    current_idx = next(
+        (i for i, (tag, _, _) in enumerate(versions)
+         if normalize_version(tag) == normalize_version(current_version)),
+        0,
+    )
+    remote_sections = {}
 
     for idx, (tag, title_line, _) in enumerate(versions):
         is_patch = tag.count('.') >= 2  # X.Y.Z 是补丁版本
@@ -437,6 +451,7 @@ def show_changelog_dialog(gui):
 
     def show_version(index):
         tag, title_line, section = versions[index]
+        display_section = remote_sections.get(index, section)
         # 更新顶部标题
         version_title.config(text=tag)
         # 提取副标题（## v2.7 — LLM 智能评估... → LLM 智能评估...）
@@ -451,14 +466,42 @@ def show_changelog_dialog(gui):
         text_widget.configure(state="normal")
         text_widget.delete("1.0", "end")
         render_changelog_text(
-            text_widget, section, gui.colors, FONT_FAMILY, FONT_FAMILY,
+            text_widget, display_section, gui.colors, FONT_FAMILY, FONT_FAMILY,
             changelog_fs, fs, section_font_size=13, item_font_size=12)
         text_widget.configure(state="disabled")
         text_widget.yview_moveto(0)
         schedule_detail_scrollbar_refresh()
 
+    def apply_remote_current_notes(notes):
+        if not notes:
+            return
+        try:
+            if not dialog.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        tag, title_line, _ = versions[current_idx]
+        remote_sections[current_idx] = f"{title_line}\n\n{notes.strip()}"
+        if selected_row_idx[0] == current_idx:
+            show_version(current_idx)
+
+    def load_remote_current_notes():
+        try:
+            import updater
+            cached = updater.get_cached_release_notes(current_version)
+            if cached:
+                gui.root.after(0, lambda: apply_remote_current_notes(cached))
+            notes = updater.fetch_current_release_notes(current_version, use_cache=False)
+            if notes and notes != cached:
+                gui.root.after(0, lambda: apply_remote_current_notes(notes))
+        except Exception:
+            return
+
     # 默认选中第一个版本（最新）
     select_version(0)
+
+    if current_version:
+        threading.Thread(target=load_remote_current_notes, daemon=True).start()
 
     # 内容创建完成后再按实际窗口尺寸复位一次，避免初始布局请求导致视觉中心偏移。
     dialog.update_idletasks()

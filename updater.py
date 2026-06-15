@@ -25,6 +25,9 @@ from constants import (
     UPDATE_TIMEOUT_GITEE,
     UPDATE_TIMEOUT_GITHUB,
     UPDATE_TIMEOUT_GIT_PULL,
+    UPDATE_TIMEOUT_RELEASE_NOTES_GITEE,
+    UPDATE_TIMEOUT_RELEASE_NOTES_GITEE_RETRY,
+    UPDATE_TIMEOUT_RELEASE_NOTES_GITHUB,
 )
 from paths import get_base_dir
 
@@ -925,6 +928,102 @@ def _fetch_changelog_section(target_version):
         return None
 
     return extract_changelog_section(content, target_version)
+
+
+_RELEASE_NOTES_CACHE_TTL = 60 * 60
+
+
+def _release_notes_cache_path(base_dir=None):
+    """Return the small cache file used by the GUI changelog dialog."""
+    return Path(base_dir or get_base_dir()) / "release_notes_cache.json"
+
+
+def get_cached_release_notes(version, *, max_age_seconds=_RELEASE_NOTES_CACHE_TTL, base_dir=None):
+    """Return cached current-version Release Notes when fresh enough."""
+    cache_path = _release_notes_cache_path(base_dir)
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+    target = str(version).lstrip("vV")
+    if str(data.get("version", "")).lstrip("vV") != target:
+        return None
+    try:
+        fetched_at = float(data.get("fetched_at", 0))
+    except (TypeError, ValueError):
+        return None
+    if max_age_seconds is not None and time.time() - fetched_at > max_age_seconds:
+        return None
+
+    notes = data.get("release_notes")
+    return notes.strip() if isinstance(notes, str) and notes.strip() else None
+
+
+def _write_release_notes_cache(version, release_notes, *, source="", base_dir=None):
+    """Best-effort cache write for remote Release Notes."""
+    if not release_notes:
+        return
+    cache_path = _release_notes_cache_path(base_dir)
+    payload = {
+        "version": str(version).lstrip("vV"),
+        "source": source,
+        "fetched_at": time.time(),
+        "release_notes": release_notes.strip(),
+    }
+    try:
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        return
+
+
+def fetch_current_release_notes(version, *, use_cache=True, base_dir=None):
+    """Fetch only the current version's remote Release Notes.
+
+    The changelog dialog calls this from a background thread. Keep timeouts short
+    so the remote correction path never competes with the local first paint.
+    """
+    target = str(version).lstrip("vV")
+    if use_cache:
+        cached = get_cached_release_notes(target, base_dir=base_dir)
+        if cached:
+            return cached
+
+    # Gitee latest.json is the primary path for domestic users. Try once with a
+    # short timeout, then retry with a longer timeout before falling back.
+    gitee_url = "https://gitee.com/yaoyouzhong/boss-resume-filter/raw/master/latest.json"
+    for timeout in (UPDATE_TIMEOUT_RELEASE_NOTES_GITEE, UPDATE_TIMEOUT_RELEASE_NOTES_GITEE_RETRY):
+        try:
+            resp = requests.get(gitee_url, timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            if str(data.get("version", "")).lstrip("vV") == target:
+                notes = data.get("release_notes")
+                if isinstance(notes, str) and notes.strip():
+                    notes = notes.strip()
+                    _write_release_notes_cache(target, notes, source="gitee", base_dir=base_dir)
+                    return notes
+            break
+        except Exception:
+            continue
+
+    # Fallback to the exact GitHub Release tag, not the full release list.
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/yaoyouzhong/boss-resume-filter/releases/tags/v{target}",
+            headers={'Accept': 'application/vnd.github.v3+json'},
+            timeout=UPDATE_TIMEOUT_RELEASE_NOTES_GITHUB,
+        )
+        resp.raise_for_status()
+        notes = resp.json().get("body")
+        if isinstance(notes, str) and notes.strip():
+            notes = notes.strip()
+            _write_release_notes_cache(target, notes, source="github", base_dir=base_dir)
+            return notes
+    except Exception:
+        pass
+
+    return None
 
 
 def show_update_dialog(root, result, gui=None, source="manual", on_defer=None):
