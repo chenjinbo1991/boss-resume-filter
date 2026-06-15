@@ -87,6 +87,10 @@ boss-resume-filter/
 - Release 模式只自动提交 `--version` 引起的版本号变化，其他变更须先手工提交
 - 推送前 `input()` 确认 [y/N]；tag 冲突时自动 `--force`（master 除外）
 
+#### CHANGELOG 核实规范（双向验证）
+- **正向**（CHANGELOG → 代码）：`build.py --check` 自动化覆盖条目质量和 README 同步
+- **反向**（代码 → CHANGELOG）：`git diff` 逐文件扫描 5 类用户可见变更（UI 文本、新配置、行为变更、新数据、删除/限制），与 CHANGELOG 交叉比对；三个分类各自独立验证，不假设任何分类已完整
+
 #### 打包体积优化（当前 Windows 约 36.4MB，macOS ZIP/DMG 约 31-33MB）
 
 - **PIL**：精确 `--hidden-import` 仅收集 Image/ImageDraw/ImageTk，排除 `_avif`/`_webp`
