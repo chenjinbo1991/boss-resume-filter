@@ -3340,16 +3340,15 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
         print("  [跳过] 无需下载对端产物")
         return downloads_cn if downloads_cn else None
 
-    # 流水线：每个文件 download→upload 独立执行，文件间并行
+    # 同步对端产物：小文件可并发，大文件按 opposite_assets 顺序串行。
+    # Windows 同步 macOS 产物时，ZIP 必须先于 DMG，保证自动更新包优先可用。
     download_dir = DIST_DIR / "_gh_download"
     download_dir.mkdir(exist_ok=True)
 
-    import threading
-    downloads_cn_lock = threading.Lock()
     failed = []
 
     def _sync_one_asset(name):
-        """下载一个产物并立刻上传到 Gitee（流水线：下完即传）"""
+        """下载一个产物并上传到 Gitee。"""
         # 1. 从 GitHub 下载
         path = _download_from_github_release(tag, name, download_dir)
         print(f"  [OK] 已下载: {name}")
@@ -3360,10 +3359,8 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
             same, reason = _gitee_asset_matches_local(path, remote, owner, repo, tag, token=token)
             if same:
                 url = _gitee_asset_url(owner, repo, tag, name)
-                with downloads_cn_lock:
-                    downloads_cn[_downloads_cn_key(name)] = url
                 print(f"  [跳过] Gitee 已有且一致: {name} ({reason})")
-                return
+                return name, url
 
         # 3. 删除旧附件（如有）
         if name in existing:
@@ -3371,27 +3368,30 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
             print(f"  [更新] Gitee {name}")
             _gitee_delete_asset(api_base, token, release_id, remote["id"], name)
 
-        # 4. 上传到 Gitee（下载完立刻上传，不等其他文件）
+        # 4. 上传到 Gitee
         _name, asset = _gitee_upload_single(path, api_base, token, release_id)
         url = asset.get("browser_download_url",
                         _gitee_asset_url(owner, repo, tag, name))
-        with downloads_cn_lock:
-            downloads_cn[_downloads_cn_key(name)] = url
         print(f"  [OK] Gitee 已上传: {name}")
+        return name, url
 
-    # 文件间并行下载+上传（macOS: ZIP + DMG 两线程，Windows: EXE 单线程）
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    workers = min(len(to_download), 2)
     try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_sync_one_asset, name): name for name in to_download}
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"  [失败] {name}: {e}")
-                    failed.append(name)
+        def _sync_success(name, result):
+            asset_name, url = result
+            downloads_cn[_downloads_cn_key(asset_name)] = url
+
+        def _sync_failure(name, error):
+            print(f"  [失败] {name}: {error}")
+            failed.append(name)
+
+        _run_transfer_batch(
+            to_download,
+            "同步 GitHub 到 Gitee",
+            _sync_one_asset,
+            _sync_success,
+            _sync_failure,
+            remote_assets=github_assets,
+        )
 
         if failed:
             print(f"\n{'!'*60}")
@@ -3399,18 +3399,16 @@ def _sync_gitee_from_github(version, release_title, release_notes, need_wait=Fal
             print(f"  手动补传: python build.py --gitee-upload {version}")
             print(f"{'!'*60}\n")
 
-        # 清理临时下载目录
-        shutil.rmtree(download_dir, ignore_errors=True)
-
         return downloads_cn if downloads_cn else None
 
     except requests.exceptions.RequestException as e:
-        shutil.rmtree(download_dir, ignore_errors=True)
         print(f"\n{'!'*60}")
         print(f"  [!!]  Gitee Release 同步失败: {e}")
         print(f"  手动补传: python build.py --gitee-upload {version}")
         print(f"{'!'*60}\n")
         return None
+    finally:
+        shutil.rmtree(download_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
