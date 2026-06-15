@@ -31,6 +31,7 @@ build/
 *.spec
 *.rar
 *.zip
+*.pdf
 
 # 日志和调试
 *.log
