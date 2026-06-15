@@ -2781,7 +2781,15 @@ class BossFilterGUI:
         row_ai.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_ai, text="AI 评估:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
-        # 检测 API Key 是否已配置，据此设置默认值
+        # 检测 API Key 是否已配置，据此设置默认值。
+        # 启动时 load_api_config(resolve_keys=False) 跳过了 keyring 查询，
+        # 这里按需补查一次，避免运行控制页始终显示"未配置"。
+        if not self.api_config.get("api_key"):
+            _provider = self.api_config.get("api_provider", "")
+            if _provider:
+                _key = get_api_key(_provider, self.api_config.get("base_url", ""))
+                if _key:
+                    self.api_config["api_key"] = _key
         has_api_key = bool(self.api_config.get("api_key"))
         self.ai_eval_var = tk.BooleanVar(value=has_api_key)
         # 大 indicator + 文字一体，用父容器 anchor 做垂直居中
