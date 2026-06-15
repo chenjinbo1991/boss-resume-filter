@@ -719,17 +719,23 @@ def _run_unit_checks():
     _run_checked([sys.executable, "tests/test_import.py"], "导入烟测")
 
 
-def _check_changelog_updated():
-    """检测核心代码有变更时 CHANGELOG.md 必须同步更新。"""
+def _get_last_tag():
+    """获取最近一个 git tag，供各检查函数复用。"""
     result = subprocess.run(
         ["git", "describe", "--tags", "--abbrev=0"],
         capture_output=True, text=True, cwd=BASE_DIR
     )
     if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _check_changelog_updated():
+    """检测核心代码有变更时 CHANGELOG.md 必须同步更新。"""
+    last_tag = _get_last_tag()
+    if not last_tag:
         print("  [跳过] CHANGELOG 检查：无法获取上一个 tag")
         return
-
-    last_tag = result.stdout.strip()
 
     # 检查核心代码是否有变更
     core_files = ["gui_main.py", "bossmaster.py", "filtering.py", "storage.py",
@@ -789,22 +795,63 @@ def _check_changelog_entry_quality():
 
     warnings = []
 
-    # 规则 1: 非用户感知关键词（出现在条目正文中）
+    # 规则 1: 非用户感知关键词（出现即警告）
+    # 每个元素为 (pattern, description)，pattern 用 \b 边界匹配避免子串误命中
     INTERNAL_PATTERNS = [
-        "过程中", "中间步骤", "开发过程",
-        "build.py", "发布流程", "CI ", "workflow",
-        "requirements.txt", "依赖管理",
+        (r"\bCI\b", "CI"),
+        (r"\bworkflow\b", "workflow"),
+        (r"\bpyinstaller\b", "PyInstaller"),
+        (r"\bhook\b", "hook"),
+        (r"\bvenv\b", "venv"),
+        (r"\bsetup\.py\b", "setup.py"),
+        (r"\bMANIFEST\b", "MANIFEST"),
+        (r"\bgit\s+(push|tag|commit|rebase|reset)\b", "git 操作"),
+        ("build\\.py", "build.py"),
+        ("发布流程", "发布流程"),
+        ("打包脚本", "打包脚本"),
+        ("打包体积", "打包体积"),
+        ("一键发布", "一键发布"),
+        ("虚拟环境", "虚拟环境"),
+        ("构建指纹", "构建指纹"),
+        ("requirements\\.txt", "requirements.txt"),
+        ("依赖管理", "依赖管理"),
+        ("过程中", "过程中"),
+        ("中间步骤", "中间步骤"),
+        ("开发过程", "开发过程"),
+    ]
+    # 代码级描述关键词：条目正文中出现说明写的是实现细节而非用户感知
+    CODE_LEVEL_PATTERNS = [
+        (r"\bsys\.exit\b", "sys.exit"),
+        (r"\bprint\(\s*[f\"']", "print() 调用"),
+        (r"\blogger\.\w+\(", "logger 调用"),
+        (r"\blogging\.\w+\(", "logging 调用"),
+        (r"\btry\s*:\s*$", "try/except 描述"),
+        (r"\bexcept\s+\w+", "except 描述"),
+        (r"\bimport\s+\w+", "import 语句"),
+        (r"\bfrom\s+\w+\s+import\b", "from import 语句"),
     ]
     for section_name, entries in sections.items():
         for entry in entries:
-            for pat in INTERNAL_PATTERNS:
-                if pat in entry:
-                    title_match = re.match(r"-\s+\*\*(.+?)\*\*", entry)
-                    title_text = title_match.group(1) if title_match else entry[:40]
+            # 规则 1a: 内部变更关键词（仅匹配条目正文，跳过标题）
+            title_match = re.match(r"-\s+\*\*(.+?)\*\*[：:]?(.*)", entry)
+            title_text = title_match.group(1) if title_match else ""
+            body_text = title_match.group(2) if title_match else entry
+            for pat, desc in INTERNAL_PATTERNS:
+                if re.search(pat, body_text, re.IGNORECASE):
                     warnings.append(
-                        f"  [{section_name}] {title_text} — 含内部变更关键词「{pat}」"
+                        f"  [{section_name}] {title_text} — 含内部变更关键词「{desc}」"
                     )
                     break
+
+            # 规则 1b: 代码级描述（条目正文中出现代码语句）
+            if title_text and body_text:
+                for pat, desc in CODE_LEVEL_PATTERNS:
+                    if re.search(pat, body_text, re.MULTILINE):
+                        warnings.append(
+                            f"  [{section_name}] {title_text} — 含代码级描述「{desc}」，"
+                            f"请改为用户可感知的行为描述"
+                        )
+                        break
 
     # 规则 2+3: 体验优化/问题修复 与 新增功能 关键词重叠
     new_features = sections.get("新增功能", [])
@@ -844,6 +891,88 @@ def _check_changelog_entry_quality():
         sys.exit(1)
 
     print("  [OK] CHANGELOG 条目质量检查通过")
+
+
+def _check_changelog_code_coverage():
+    """检查 CHANGELOG 当前版本各条目是否有对应的代码变更。
+
+    对每个条目提取核心关键词，在 git diff 中搜索。找不到对应代码变更的条目
+    可能属于"写了但没改"的幽灵条目，发出警告（非致命，因为可能涉及非 Python 文件变更）。
+    """
+    version = _read_version()
+    try:
+        _title, body = _extract_changelog_release(version)
+    except SystemExit:
+        return
+
+    last_tag = _get_last_tag()
+    if not last_tag:
+        print("  [跳过] 代码覆盖检查：无法获取上一个 tag")
+        return
+
+    # 获取 Python 文件 diff（主要检查对象）
+    diff_result = subprocess.run(
+        ["git", "diff", last_tag, "HEAD", "--", "*.py"],
+        capture_output=True, text=True, cwd=BASE_DIR
+    )
+    if diff_result.returncode != 0:
+        print("  [跳过] 代码覆盖检查：git diff 失败")
+        return
+    diff_text = diff_result.stdout.lower()
+    if not diff_text.strip():
+        print("  [跳过] 代码覆盖检查：无 Python 代码变更")
+        return
+
+    # 额外获取非 Python 文件变更列表（用于二次确认）
+    other_result = subprocess.run(
+        ["git", "diff", "--name-only", last_tag, "HEAD", "--", ".", ":(exclude)*.py"],
+        capture_output=True, text=True, cwd=BASE_DIR
+    )
+    other_files = set(
+        f.strip() for f in other_result.stdout.strip().splitlines()
+        if f.strip() and not f.strip().endswith('.md')
+    )
+
+    # 解析条目
+    entries = []
+    current_section = None
+    for line in body.splitlines():
+        m = re.match(r"^###\s+(.+?)\s*$", line)
+        if m:
+            current_section = m.group(1)
+            continue
+        if current_section and line.startswith("- **"):
+            entries.append((current_section, line.strip()))
+
+    if not entries:
+        return
+
+    # 对每个条目提取关键词并在 diff 中搜索
+    orphans = []
+    for section, entry in entries:
+        title_match = re.match(r"-\s+\*\*(.+?)\*\*[：:]", entry)
+        if not title_match:
+            continue
+        title = title_match.group(1)
+        # 提取 2 字以上中文词作为搜索关键词
+        keywords = re.findall(r"[一-鿿]{2,}", title)
+        if not keywords:
+            continue
+        found = any(kw.lower() in diff_text for kw in keywords)
+        if not found:
+            orphans.append((section, title))
+
+    if orphans:
+        print("[警告] 以下 CHANGELOG 条目在当前 git diff 中未找到对应 Python 代码变更：")
+        for section, title in orphans:
+            print(f"  [{section}] {title}")
+        if other_files:
+            print(f"\n当前版本还修改了以下非 Python 文件：{', '.join(sorted(other_files))}")
+            print("如果上述条目对应这些文件的变更，可以忽略本警告。")
+        print("否则请确认条目是否准确描述了实际代码变更。\n")
+
+    covered = len(entries) - len(orphans)
+    print(f"  [OK] CHANGELOG 代码覆盖检查完成（{covered}/{len(entries)} 条目有对应 Python 代码变更）")
 
 
 def _check_todo_not_stale():
@@ -887,6 +1016,24 @@ def _check_claude_md_size():
     print(f"  [OK] CLAUDE.md {line_count}/{limit} 行")
 
 
+def _check_project_docs_version_sync(version):
+    """检查 CLAUDE.md 和 AGENTS.md 项目结构中的 gui_main.py 版本注释。"""
+    pattern = re.compile(
+        rf"gui_main\.py\s+#\s+图形界面主程序（v{re.escape(version)}）"
+    )
+    for doc_name in ("CLAUDE.md", "AGENTS.md"):
+        doc_path = BASE_DIR / doc_name
+        if not doc_path.exists():
+            continue
+        content = doc_path.read_text(encoding="utf-8")
+        if not pattern.search(content):
+            print(f"[错误] {doc_name} 项目结构中的 gui_main.py 版本未同步为 v{version}")
+            print(f"请将 {doc_name} 项目结构中的 gui_main.py 标注更新为："
+                  f"gui_main.py{' ' * 12}# 图形界面主程序（v{version}）")
+            sys.exit(1)
+    print(f"  [OK] CLAUDE.md / AGENTS.md 项目结构版本注释已同步 v{version}")
+
+
 def _preflight_checks(require_clean=True):
     """发布/打包前检查"""
     print("\n>>> 发布前检查")
@@ -898,12 +1045,14 @@ def _preflight_checks(require_clean=True):
     _check_source_compiles()
     _check_changelog_updated()
     _check_changelog_entry_quality()
+    _check_changelog_code_coverage()
     _check_todo_not_stale()
     _check_claude_md_size()
     _run_unit_checks()
     current_version = _read_version()
     _extract_changelog_release(current_version)
     _check_readme_release(current_version)
+    _check_project_docs_version_sync(current_version)
     _check_version_history_integrity()
 
     if require_clean:
@@ -1809,6 +1958,22 @@ def _check_version_history_integrity():
         for ver in sorted(missing_recent_in_readme, key=_version_sort_key, reverse=True):
             print(f"  - v{ver}")
         print("\nREADME.md 只需保留最近 3 个版本；更早版本请引导用户查看 CHANGELOG.md。")
+        sys.exit(1)
+
+    # 检查 README 是否保留了过多详细版本段落（最多 3 个）
+    all_readme_versions = [
+        v for v in re.findall(
+            r"^###\s+v(\d+\.\d+(?:\.\d+)?)\b(?!.*及更早版本)",
+            readme_text, re.MULTILINE
+        )
+    ]
+    excess = len(all_readme_versions) - 3
+    if excess > 0:
+        print(
+            f"[错误] README.md 保留了 {len(all_readme_versions)} 个详细版本段落，"
+            f"超过上限 3 个（多 {excess} 个）"
+        )
+        print("请将更早版本合并为「vX.Y 及更早版本 → 完整版本历史见 CHANGELOG.md」")
         sys.exit(1)
 
     print(
