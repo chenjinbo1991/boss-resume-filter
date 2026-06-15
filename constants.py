@@ -39,6 +39,14 @@ EMPTY_ROUNDS_LIMIT = 5             # 连续无新候选人轮数上限
 GREET_FAIL_LIMIT = 3               # 连续打招呼失败次数上限
 CAPTCHA_MAX_WAIT = 300             # 验证码最大等待秒数（5 分钟）
 CAPTCHA_CHECK_INTERVAL = 3         # 验证码检查间隔秒数
+API_PAGE_DELAY_CENTER = 1.8        # API 分页直调间隔中心值（秒）
+API_PAGE_DELAY_SPREAD = 1.4        # API 分页直调随机抖动范围（秒）
+AUTO_GREET_RUN_LIMIT = 20          # 单次自动打招呼人数上限
+GREET_DELAY_CENTER = 5.5           # 自动打招呼单人间隔中心值（秒）
+GREET_DELAY_SPREAD = 3.0           # 自动打招呼单人间隔随机抖动范围（秒）
+GREET_BATCH_SIZE = 6               # 自动打招呼批次大小
+GREET_BATCH_PAUSE_CENTER = 45.0    # 自动打招呼批次暂停中心值（秒）
+GREET_BATCH_PAUSE_SPREAD = 30.0    # 自动打招呼批次暂停随机抖动范围（秒）
 
 # ========== HTTP ==========
 USER_AGENT = "BossResumeFilter/1.0"

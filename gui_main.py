@@ -7672,10 +7672,13 @@ class BossFilterGUI:
                     done.wait(timeout=0.5)
                 return result[0]
 
+            def notice_callback(title, message):
+                self.root.after(0, lambda: messagebox.showinfo(title, message, parent=self.root))
+
             # 调用 run_smart_scan 并传入参数和进度回调
             run_smart_scan(args, progress_callback=on_progress, confirm_callback=confirm_callback,
                            stop_event=self.stop_event, existing_page=self.browser_page,
-                           captcha_callback=captcha_callback)
+                           captcha_callback=captcha_callback, notice_callback=notice_callback)
 
         except KeyboardInterrupt:
             self.append_log("用户取消岗位切换，已停止")
@@ -9359,8 +9362,35 @@ class BossFilterGUI:
 
                 from bossmaster import send_greeting_on_list_page
                 self.append_log(f"[打招呼] 正在向 {name} 打招呼...")
+
+                def captcha_callback(detail):
+                    result = [False]
+                    done = threading.Event()
+
+                    def show_dialog():
+                        answer = messagebox.askyesno(
+                            "检测到安全验证弹窗",
+                            f"程序检测到安全验证弹窗\n（{detail}）\n\n"
+                            "请在浏览器中手动完成验证。\n\n"
+                            "点击「是」继续等待验证完成\n"
+                            "点击「否」停止当前操作",
+                            parent=self.root,
+                        )
+                        result[0] = answer
+                        done.set()
+
+                    self.root.after(0, show_dialog)
+                    while not done.is_set():
+                        if self.stop_event.is_set():
+                            result[0] = False
+                            done.set()
+                            break
+                        done.wait(timeout=0.5)
+                    return result[0]
+
                 success, msg = send_greeting_on_list_page(
-                    self.browser_page, geek_id, stop_event=self.stop_event
+                    self.browser_page, geek_id, stop_event=self.stop_event,
+                    captcha_callback=captcha_callback
                 )
                 if success:
                     self.append_log(f"[打招呼] ✅ {name} — {msg}")

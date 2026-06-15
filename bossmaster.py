@@ -28,6 +28,14 @@ from constants import (
     GREET_FAIL_LIMIT,
     CAPTCHA_MAX_WAIT,
     CAPTCHA_CHECK_INTERVAL,
+    API_PAGE_DELAY_CENTER,
+    API_PAGE_DELAY_SPREAD,
+    AUTO_GREET_RUN_LIMIT,
+    GREET_DELAY_CENTER,
+    GREET_DELAY_SPREAD,
+    GREET_BATCH_SIZE,
+    GREET_BATCH_PAUSE_CENTER,
+    GREET_BATCH_PAUSE_SPREAD,
 )
 from filtering import (
     _calc_edu_bonus,
@@ -64,6 +72,15 @@ def _read_app_version() -> str:
 class StopRequested(Exception):
     """停止请求异常 — 用于立即终止扫描流程"""
     pass
+
+
+class ApiRiskBlocked(Exception):
+    """BOSS API 返回疑似风控状态码时立即熔断，不继续刷新或 DOM 滚动。"""
+
+    def __init__(self, status: int | str, page_num: int):
+        self.status = status
+        self.page_num = page_num
+        super().__init__(f"API page {page_num} returned risk status {status}")
 
 
 def _save_progress_on_exit() -> None:
@@ -1476,6 +1493,15 @@ def _same_recommend_page_identity(before: dict[str, str], after: dict[str, str])
     return True
 
 
+def _is_api_risk_status(status: Any) -> bool:
+    """判断接口错误是否应视为风控熔断，而不是普通接口失败。"""
+    try:
+        status_int = int(status)
+    except (TypeError, ValueError):
+        return False
+    return status_int in {403, 412, 429}
+
+
 def _fetch_api_page_result(page: Any, pagination: dict[str, Any], page_num: int) -> tuple[list[dict[str, str]], bool | None]:
     """通过浏览器 fetch 直接调用 BOSS 推荐接口分页，返回候选人和 hasMore。"""
     from urllib.parse import urlencode
@@ -1509,11 +1535,15 @@ def _fetch_api_page_result(page: Any, pagination: dict[str, Any], page_num: int)
         import json as _json
         payload = _json.loads(result)
         if isinstance(payload, dict) and 'error' in payload:
+            if _is_api_risk_status(payload['error']):
+                raise ApiRiskBlocked(payload['error'], page_num)
             logger.error("  API 分页直调失败 (page=%d): %s", page_num, payload['error'])
             return [], None
         zp_data = payload.get('zpData') if isinstance(payload, dict) else {}
         has_more = zp_data.get('hasMore') if isinstance(zp_data, dict) else None
         return _extract_candidates_from_api_payload(payload), has_more
+    except ApiRiskBlocked:
+        raise
     except Exception as e:
         logger.error("  API 分页直调异常 (page=%d): %s", page_num, e)
         return [], None
@@ -1555,9 +1585,9 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
     consecutive_empty = 0
 
     # 优先使用当前 iframe 的 jobid 直接请求推荐接口分页，不刷新页面、不重置岗位。
-    # 原生 listener 保留为兜底：当直调失败或 BOSS 接口参数变化时仍可通过页面请求补充。
+    # listener 只在直调失败后启动，避免成功路径额外开启网络监听或注入 JS 拦截。
     api_pagination = _build_recommend_api_pagination_from_page(target)
-    api_listener = _start_recommend_api_listener(page)
+    api_listener = None
     refresh_listener_attempted = False
     stop_after_identity_mismatch = False
 
@@ -1572,7 +1602,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 is_captcha, captcha_msg = _detect_captcha(page)
                 if is_captcha:
                     print(f"\n⚠️  检测到安全验证弹窗 ({captcha_msg})")
-                    if not _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg):
+                    if not _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg, stage="scan"):
                         break
 
             # 进度上报
@@ -1651,7 +1681,13 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
 
                 # API 直调优先；失败时降级为监听消费。
                 if api_pagination:
-                    api_candidates, has_more = _fetch_api_page_result(target, api_pagination, scroll_round + 1)
+                    if scroll_round > 0:
+                        time.sleep(_human_delay(API_PAGE_DELAY_CENTER, API_PAGE_DELAY_SPREAD))
+                    try:
+                        api_candidates, has_more = _fetch_api_page_result(target, api_pagination, scroll_round + 1)
+                    except ApiRiskBlocked as e:
+                        print(f"API 返回疑似风控状态码 {e.status}（第 {e.page_num} 页），停止本轮扫描，避免继续刷新或滚动触发更严格验证。")
+                        break
                     if not api_candidates and scroll_round == 0:
                         api_pagination = None
                         api_candidates = []
@@ -1662,22 +1698,27 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                     api_candidates, _api_url = _consume_recommend_api_candidates(api_listener)
 
                 # 直调不可用且监听尚未捕获首屏时，尝试备用方案：listener + page.refresh()。
-                if not api_candidates and scroll_round == 0 and api_listener and not refresh_listener_attempted:
+                if not api_candidates and scroll_round == 0 and not refresh_listener_attempted:
                     refresh_listener_attempted = True
-                    before_identity = _read_recommend_page_identity(target)
-                    try:
-                        page.refresh()
-                        time.sleep(_human_delay(1.2, 0.4))
-                        iframe = get_iframe(page)
-                        target = iframe if iframe else page
-                        after_identity = _read_recommend_page_identity(target)
-                        if not _same_recommend_page_identity(before_identity, after_identity):
-                            print("刷新后岗位已变化，请先将目标岗位设为默认岗位。")
-                            stop_after_identity_mismatch = True
-                            break
-                        api_candidates, _api_url = _consume_recommend_api_candidates(api_listener, timeout=2.0)
-                    except Exception as e:
-                        print(f"刷新监听备用方案失败，将继续使用 DOM 提取：{e}")
+                    if not api_listener:
+                        api_listener = _start_recommend_api_listener(page)
+                    if not api_listener:
+                        print("启动 API 监听失败，将继续使用 DOM 提取")
+                    else:
+                        before_identity = _read_recommend_page_identity(target)
+                        try:
+                            page.refresh()
+                            time.sleep(_human_delay(1.2, 0.4))
+                            iframe = get_iframe(page)
+                            target = iframe if iframe else page
+                            after_identity = _read_recommend_page_identity(target)
+                            if not _same_recommend_page_identity(before_identity, after_identity):
+                                print("刷新后岗位已变化，请先将目标岗位设为默认岗位。")
+                                stop_after_identity_mismatch = True
+                                break
+                            api_candidates, _api_url = _consume_recommend_api_candidates(api_listener, timeout=2.0)
+                        except Exception as e:
+                            print(f"刷新监听备用方案失败，将继续使用 DOM 提取：{e}")
 
                 for item in api_candidates:
                     item['_source'] = 'api'
@@ -1910,8 +1951,9 @@ def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_
             return False, f"沟通次数已达上限: {limit_msg}"
         if is_captcha:
             print(f"\n   打招呼时检测到安全验证弹窗 ({captcha_msg})")
-            if _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg):
-                # 验证完成后重新检测弹窗状态
+            if _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg, stage="greeting"):
+                # 验证完成后重新检测弹窗状态。验证码出现说明当前账号/环境已被风控关注，
+                # 不继续自动点击下一批，避免刚解除验证又触发更严格的拦截。
                 time.sleep(_human_delay(0.5, 0.3))
                 is_limited, limit_msg = _detect_limit_popup(page)
                 is_captcha, captcha_msg = _detect_captcha(page)
@@ -1919,7 +1961,7 @@ def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_
                     return False, f"沟通次数已达上限: {limit_msg}"
                 if is_captcha:
                     return False, f"验证后仍存在安全弹窗: {captcha_msg}"
-                return True, "成功（验证后继续）"
+                return False, "安全验证已完成，为降低风控风险已停止本轮自动打招呼"
             else:
                 return False, f"安全验证未完成: {captcha_msg}"
 
@@ -2052,7 +2094,77 @@ def _detect_captcha(page: ChromiumPage) -> tuple[bool, str]:
         return False, ""
 
 
-def _wait_for_captcha_resolution(page, stop_event=None, max_wait=CAPTCHA_MAX_WAIT, captcha_callback=None, detail=""):
+def _collect_captcha_diagnostic(page: ChromiumPage, detail: str = "", stage: str = "") -> Path | None:
+    """保存验证码现场诊断信息，供用户反馈不同弹窗形态时定位。"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_stage = re.sub(r"[^a-zA-Z0-9_-]+", "_", stage or "unknown").strip("_") or "unknown"
+    out_dir = BASE_DIR / "captcha_diagnostics"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.warning("创建验证码诊断目录失败：%s", e)
+        return None
+
+    def _run_js(target: Any, script: str) -> Any:
+        try:
+            return target.run_js(script)
+        except Exception:
+            return None
+
+    iframe = None
+    try:
+        iframe = get_iframe(page)
+    except Exception:
+        iframe = None
+    target = iframe if iframe else page
+
+    href = _run_js(target, "return location.href") or _run_js(page, "return location.href") or getattr(page, "url", "")
+    title = _run_js(target, "return document.title") or _run_js(page, "return document.title") or ""
+    visible_text = _run_js(
+        target,
+        "return (document.body && document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 4000)",
+    ) or ""
+
+    screenshot_path = out_dir / f"{timestamp}_{safe_stage}.png"
+    screenshot_saved = False
+    for method_name, kwargs in (
+        ("get_screenshot", {"path": str(screenshot_path)}),
+        ("get_screenshot", {"name": str(screenshot_path)}),
+        ("save_screenshot", {"path": str(screenshot_path)}),
+        ("screenshot", {"path": str(screenshot_path)}),
+    ):
+        method = getattr(page, method_name, None)
+        if not method:
+            continue
+        try:
+            method(**kwargs)
+            screenshot_saved = screenshot_path.exists()
+            if screenshot_saved:
+                break
+        except Exception:
+            continue
+
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "stage": stage,
+        "detail": detail,
+        "url": href,
+        "title": title,
+        "screenshot": screenshot_path.name if screenshot_saved else "",
+        "visible_text_excerpt": visible_text,
+    }
+    json_path = out_dir / f"{timestamp}_{safe_stage}.json"
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        print(f"   已保存验证码诊断：{json_path}")
+        return json_path
+    except Exception as e:
+        logger.warning("保存验证码诊断失败：%s", e)
+        return None
+
+
+def _wait_for_captcha_resolution(page, stop_event=None, max_wait=CAPTCHA_MAX_WAIT, captcha_callback=None, detail="", stage=""):
     """
     等待用户手动完成安全验证（验证码/滑块）。
 
@@ -2073,6 +2185,7 @@ def _wait_for_captcha_resolution(page, stop_event=None, max_wait=CAPTCHA_MAX_WAI
     """
     print(f"\n⚠️  检测到安全验证弹窗，请在浏览器中手动完成验证。")
     print(f"   程序将自动检测验证状态，完成后继续运行...（最长等待 {max_wait} 秒）")
+    _collect_captcha_diagnostic(page, detail=detail, stage=stage or "captcha")
 
     # 通知 GUI 弹窗
     if captcha_callback:
@@ -2247,7 +2360,7 @@ def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
 
     return results
 
-def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None, stats=None):
+def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None, notice_callback=None, stats=None):
     """
     智能扫描候选人 - 两阶段模式
 
@@ -2271,6 +2384,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         api_key: API Key 字符串，AI 评估时使用
         captcha_callback: callable(detail) -> bool，检测到验证码时调用，
             用于 GUI 弹窗通知用户。返回 True 继续等待，False 中止。
+        notice_callback: callable(title, message)，用于 GUI 展示非阻塞提示。
     """
     job_name = job_info['job_name']
 
@@ -2457,7 +2571,13 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 pct = int((i + 1) / len(raw_candidates) * 100)
                 progress_callback(pct, f"正在智能筛选... {i + 1}/{len(raw_candidates)}")
 
-    # 按分数从高到低排序
+    raw_order_by_geek_id = {
+        str(candidate.get('geek_id')): idx
+        for idx, candidate in enumerate(raw_candidates)
+        if candidate.get('geek_id')
+    }
+
+    # 按分数从高到低排序，保持结果展示和 AI 评估优先级不变。
     passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
 
     print(f"\n筛选完成：通过 {len(passed_candidates)}/{len(raw_candidates)} 个")
@@ -2545,9 +2665,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             print(f"... 还有 {len(passed_candidates) - 50} 个")
         return passed_candidates
 
-    # === 阶段 2: 按分数从高到低依次打招呼 ===
+    # === 阶段 2: 按页面顺序依次打招呼 ===
     if auto_greet and passed_candidates:
-        print("\n=== 阶段 2: 按分数排序打招呼 ===")
+        print("\n=== 阶段 2: 按页面顺序打招呼 ===")
         print("正在刷新候选人列表...")
 
         # 温和刷新：小幅度滚动触发懒加载渲染，不滚回顶部破坏虚拟列表
@@ -2582,8 +2702,23 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             if blocked_count:
                 print(f"  已跳过 {blocked_count} 人：需要人工确认后再打招呼")
 
-        # 按分数排序
-        to_greet_list.sort(key=lambda x: x.get('match_score', 0), reverse=True)
+        # 点击顺序按扫描/页面顺序，减少虚拟列表反复回顶和跳跃滚动。
+        to_greet_list.sort(key=lambda x: raw_order_by_geek_id.get(str(x.get('geek_id')), len(raw_order_by_geek_id)))
+        if len(to_greet_list) > AUTO_GREET_RUN_LIMIT:
+            remaining_count = len(to_greet_list) - AUTO_GREET_RUN_LIMIT
+            limit_msg = (
+                f"为降低 BOSS 风控风险，本轮最多自动打招呼 {AUTO_GREET_RUN_LIMIT} 人，"
+                f"剩余 {remaining_count} 人下次继续。\n\n"
+                "下次直接再次运行同一岗位扫描即可：程序会跳过当前岗位已打过招呼的人，"
+                "未打招呼的合格候选人会重新进入待打招呼队列。"
+            )
+            print(f"  {limit_msg.replace(chr(10), ' ')}")
+            if notice_callback:
+                try:
+                    notice_callback("已达到本轮自动打招呼上限", limit_msg)
+                except Exception:
+                    pass
+            to_greet_list = to_greet_list[:AUTO_GREET_RUN_LIMIT]
 
         greet_success_count = 0
         greet_fail_count = 0
@@ -2606,9 +2741,13 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                     pct = int((i + 1) / len(to_greet_list) * 100)
                     progress_callback(pct, f"正在打招呼... {i + 1}/{len(to_greet_list)}")
 
-                # 每个打招呼间隔 ~0.5 秒（带随机抖动）
                 if i > 0:
-                    time.sleep(_human_delay(0.5, 0.4))
+                    if i % GREET_BATCH_SIZE == 0:
+                        pause = _human_delay(GREET_BATCH_PAUSE_CENTER, GREET_BATCH_PAUSE_SPREAD)
+                        print(f"\n  已连续打招呼 {i} 人，暂停 {int(pause)} 秒降低风控风险...")
+                        time.sleep(pause)
+                    else:
+                        time.sleep(_human_delay(GREET_DELAY_CENTER, GREET_DELAY_SPREAD))
 
                 print(f"  [{i+1}/{len(to_greet_list)}] {candidate['name']} ({candidate['recommend_level']}, {candidate['match_score']}分) {action}...", end=" ")
 
@@ -2731,7 +2870,7 @@ def _show_job_navigation_prompt(current_idx, total, next_job_name, confirm_callb
             print("  继续处理...\n")
 
 
-def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None, existing_page=None, captcha_callback=None):
+def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None, existing_page=None, captcha_callback=None, notice_callback=None):
     """运行智能扫描（支持多岗位）
 
     参数：
@@ -2742,6 +2881,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         existing_page: 已有的浏览器页面对象（GUI 模式传入，避免重复连接）
         captcha_callback: callable(detail) -> bool，检测到验证码时调用，
             用于 GUI 弹窗通知用户。返回 True 继续等待，False 中止。
+        notice_callback: callable(title, message)，用于 GUI 展示非阻塞提示。
     """
     import argparse
 
@@ -2862,6 +3002,21 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                     print(f"  - {c.get('name')} ({c.get('recommend_level')}, {c.get('match_score')}分)")
                 if len(to_greet) > 10:
                     print(f"  ... 还有 {len(to_greet) - 10} 个")
+                if len(to_greet) > AUTO_GREET_RUN_LIMIT:
+                    remaining_count = len(to_greet) - AUTO_GREET_RUN_LIMIT
+                    limit_msg = (
+                        f"为降低 BOSS 风控风险，本轮最多补打招呼 {AUTO_GREET_RUN_LIMIT} 人，"
+                        f"剩余 {remaining_count} 人下次继续。\n\n"
+                        "下次再次运行补打招呼即可：程序会跳过已经标记为已打招呼的人，"
+                        "未打招呼的候选人会继续进入补打招呼队列。"
+                    )
+                    print(f"  {limit_msg.replace(chr(10), ' ')}")
+                    if notice_callback:
+                        try:
+                            notice_callback("已达到本轮补打招呼上限", limit_msg)
+                        except Exception:
+                            pass
+                    to_greet = to_greet[:AUTO_GREET_RUN_LIMIT]
 
                 # 需要打开浏览器进行打招呼
                 if existing_page:
@@ -2885,6 +3040,13 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                             break
                         geek_id = c.get('geek_id')
                         name = c.get('name', '未知')
+                        if i > 0:
+                            if i % GREET_BATCH_SIZE == 0:
+                                pause = _human_delay(GREET_BATCH_PAUSE_CENTER, GREET_BATCH_PAUSE_SPREAD)
+                                print(f"\n已连续打招呼 {i} 人，暂停 {int(pause)} 秒降低风控风险...")
+                                time.sleep(pause)
+                            else:
+                                time.sleep(_human_delay(GREET_DELAY_CENTER, GREET_DELAY_SPREAD))
                         print(f"[{i+1}/{len(to_greet)}] 正在向 {name} 打招呼...", end=" ")
                         success, msg = send_greeting_on_list_page(page, geek_id, stop_event=stop_event, captcha_callback=captcha_callback)
                         if success:
@@ -3014,6 +3176,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                                api_config=ai_api_config,
                                                api_key=ai_api_key,
                                                captcha_callback=captcha_callback,
+                                               notice_callback=notice_callback,
                                                stats=job_stats)
             all_candidates.extend(candidates)
             total_raw += job_stats.get('raw_count', 0)

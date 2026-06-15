@@ -96,6 +96,7 @@ def test_sel_captcha_css_selectors_is_list():
     css = bossmaster._sel('captcha_detection', 'css_selectors')
     assert isinstance(css, list)
     assert '.geetest_panel' in css
+    assert '[class*="geetest"]' in css
 
 
 def test_sel_card_by_id_template():

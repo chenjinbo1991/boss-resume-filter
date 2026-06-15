@@ -44,7 +44,15 @@
       "#captcha",
       ".yoda-modal",
       ".geetest_widget",
-      ".geetest_radar_tip"
+      ".geetest_radar_tip",
+      ".geetest_box",
+      ".geetest_panel_box",
+      ".geetest_popup_box",
+      ".geetest_slider_button",
+      ".geetest_canvas",
+      "[class*=\"geetest\"]",
+      "[class*=\"captcha\"]",
+      "[class*=\"verify\"]"
     ],
     "keywords": [
       "请完成安全验证",

@@ -15,6 +15,7 @@ import io
 import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -318,7 +319,7 @@ def test_scan_uses_direct_api_pagination_without_refresh_or_dom_scroll():
     assert [c["geek_id"] for c in candidates] == ["g-api-1", "g-api-2"]
     assert page.refresh_count == 0
     assert mock_fetch.call_count == 3
-    mock_start_listener.assert_called_once()
+    mock_start_listener.assert_not_called()
     mock_consume_api.assert_not_called()
     mock_dom_extract.assert_not_called()
 
@@ -363,6 +364,66 @@ def test_scan_falls_back_to_refresh_listener_when_direct_api_unavailable():
     mock_fetch.assert_called_once()
     mock_consume_api.assert_called_once()
     mock_dom_extract.assert_not_called()
+
+
+def test_scan_stops_on_api_risk_status_without_refresh_or_dom_fallback():
+    class FakePage:
+        def __init__(self):
+            self.refresh_count = 0
+
+        def run_js(self, script):
+            if script == 'return location.href':
+                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+            return None
+
+        def refresh(self):
+            self.refresh_count += 1
+
+    page = FakePage()
+
+    with patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._fetch_api_page_result', side_effect=bossmaster.ApiRiskBlocked(429, 1)) as mock_fetch, \
+            patch('bossmaster._start_recommend_api_listener') as mock_start_listener, \
+            patch('bossmaster._consume_recommend_api_candidates') as mock_consume_api, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=1)
+
+    assert candidates == []
+    assert page.refresh_count == 0
+    mock_fetch.assert_called_once()
+    mock_start_listener.assert_not_called()
+    mock_consume_api.assert_not_called()
+    mock_dom_extract.assert_not_called()
+
+
+def test_collect_captcha_diagnostic_writes_json_without_screenshot():
+    class FakePage:
+        def run_js(self, script):
+            if script == "return location.href":
+                return "https://www.zhipin.com/web/chat/recommend"
+            if script == "return document.title":
+                return "推荐牛人"
+            if "document.body" in script:
+                return "请完成安全验证"
+            return ""
+
+    with tempfile.TemporaryDirectory() as tmpdir, \
+            patch.object(bossmaster, "BASE_DIR", Path(tmpdir)), \
+            patch.object(bossmaster, "get_iframe", return_value=None):
+        path = bossmaster._collect_captcha_diagnostic(
+            FakePage(),
+            detail="主页面检测到安全验证弹窗",
+            stage="scan",
+        )
+
+        assert path is not None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["stage"] == "scan"
+        assert payload["url"] == "https://www.zhipin.com/web/chat/recommend"
+        assert "安全验证" in payload["visible_text_excerpt"]
 
 
 def test_refresh_listener_stops_when_refresh_changes_job_identity():
@@ -525,6 +586,88 @@ def test_auto_greet_skips_manual_review_candidates():
     assert result[0]["manual_review_required"] is True
     assert result[0]["greet_sent"] is False
     mock_greet.assert_not_called()
+
+
+def test_auto_greet_uses_page_order_not_score_order():
+    class FakePage:
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+    job_info = {
+        "job_id": "job-order",
+        "job_name": "Java 工程师",
+        "rule_key": "java",
+        "rule": {"min_exp": 0, "edu": "不限", "keywords": ["Java"]},
+    }
+    raw_candidates = [
+        {"geek_id": "g-page-first", "name": "张三", "summary": "本科，3 年 Java"},
+        {"geek_id": "g-page-second", "name": "李四", "summary": "本科，10 年 Java"},
+    ]
+    filter_results = [
+        (True, 65, {"skill_matches": ["Java"]}),
+        (True, 95, {"skill_matches": ["Java"]}),
+    ]
+
+    with patch.object(bossmaster, "load_candidates_all", return_value=[]), \
+         patch.object(bossmaster, "extract_candidates_by_comprehensive_analysis", return_value=raw_candidates), \
+         patch.object(bossmaster, "filter_candidate", side_effect=filter_results), \
+         patch.object(bossmaster, "get_iframe", return_value=None), \
+         patch.object(bossmaster, "_human_delay", return_value=0), \
+         patch.object(bossmaster.time, "sleep"), \
+         patch.object(bossmaster, "send_greeting_on_list_page", return_value=(True, "成功")) as mock_greet, \
+         patch.object(bossmaster, "save_candidates_all"):
+        bossmaster.smart_scan_candidates(
+            FakePage(),
+            job_info,
+            auto_greet=True,
+            max_rounds=1,
+            greet_level="normal",
+        )
+
+    assert [call.args[1] for call in mock_greet.call_args_list] == [
+        "g-page-first",
+        "g-page-second",
+    ]
+
+
+def test_auto_greet_limit_triggers_notice_and_caps_greetings():
+    class FakePage:
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+    job_info = {
+        "job_id": "job-limit",
+        "job_name": "Java 工程师",
+        "rule_key": "java",
+        "rule": {"min_exp": 0, "edu": "不限", "keywords": ["Java"]},
+    }
+    raw_candidates = [
+        {"geek_id": f"g-{i}", "name": f"候选人{i}", "summary": "本科，5 年 Java"}
+        for i in range(25)
+    ]
+    notices = []
+
+    with patch.object(bossmaster, "load_candidates_all", return_value=[]), \
+         patch.object(bossmaster, "extract_candidates_by_comprehensive_analysis", return_value=raw_candidates), \
+         patch.object(bossmaster, "filter_candidate", return_value=(True, 80, {"skill_matches": ["Java"]})), \
+         patch.object(bossmaster, "get_iframe", return_value=None), \
+         patch.object(bossmaster, "_human_delay", return_value=0), \
+         patch.object(bossmaster.time, "sleep"), \
+         patch.object(bossmaster, "send_greeting_on_list_page", return_value=(True, "成功")) as mock_greet, \
+         patch.object(bossmaster, "save_candidates_all"):
+        bossmaster.smart_scan_candidates(
+            FakePage(),
+            job_info,
+            auto_greet=True,
+            max_rounds=1,
+            greet_level="normal",
+            notice_callback=lambda title, message: notices.append((title, message)),
+        )
+
+    assert mock_greet.call_count == bossmaster.AUTO_GREET_RUN_LIMIT
+    assert notices
+    assert "剩余 5 人下次继续" in notices[0][1]
+    assert "再次运行同一岗位扫描" in notices[0][1]
 
 
 def test_filter_candidate_age_boundaries_are_stable():
