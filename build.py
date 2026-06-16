@@ -738,11 +738,16 @@ def _check_changelog_updated():
         return
 
     # 检查核心代码是否有变更
-    core_files = ["gui_main.py", "bossmaster.py", "filtering.py", "storage.py",
-                  "llm_eval.py", "job_ai_parser.py", "doc_parser.py", "security.py", "updater.py", "icons.py"]
+    core_files = [
+        "gui_main.py", "gui_dialogs.py", "changelog_parser.py", "bossmaster.py",
+        "filtering.py", "storage.py", "llm_eval.py", "job_ai_parser.py",
+        "doc_parser.py", "security.py", "updater.py", "icons.py",
+        "constants.py", "paths.py", "selectors.json", "ui_config.json",
+        "job_config.json",
+    ]
     result = subprocess.run(
-        ["git", "diff", "--name-only", last_tag, "HEAD", "--"] + core_files,
-        capture_output=True, text=True, cwd=BASE_DIR
+        ["git", "diff", "--name-only", last_tag, "--"] + core_files,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=BASE_DIR
     )
     changed_core = [f for f in result.stdout.strip().splitlines() if f]
 
@@ -752,8 +757,8 @@ def _check_changelog_updated():
 
     # 检查 CHANGELOG.md 是否更新
     result = subprocess.run(
-        ["git", "diff", "--name-only", last_tag, "HEAD", "--", "CHANGELOG.md"],
-        capture_output=True, text=True, cwd=BASE_DIR
+        ["git", "diff", "--name-only", last_tag, "--", "CHANGELOG.md"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=BASE_DIR
     )
     changelog_changed = bool(result.stdout.strip())
 
@@ -765,6 +770,57 @@ def _check_changelog_updated():
         sys.exit(1)
 
     print("  [OK] CHANGELOG 已同步更新")
+
+
+CHANGELOG_REQUIRED_SECTIONS = ["新增功能", "体验优化", "问题修复"]
+
+
+def _normalize_markdown(text):
+    """Normalize markdown for release-note equality checks."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    return "\n".join(lines).strip()
+
+
+def _parse_changelog_sections(body, heading_prefix="###"):
+    """Return CHANGELOG/README release sections as {section_name: [bullet, ...]}."""
+    sections = {}
+    current_section = None
+    heading_re = re.compile(rf"^{re.escape(heading_prefix)}\s+(.+?)\s*$")
+    for line in body.splitlines():
+        m_section = heading_re.match(line)
+        if m_section:
+            current_section = m_section.group(1)
+            sections[current_section] = []
+            continue
+        if current_section and line.startswith("- "):
+            sections[current_section].append(line.strip())
+    return sections
+
+
+def _parse_readme_release_sections(body):
+    """Return README current-version summary sections as {section_name: [bullet, ...]}."""
+    sections = {}
+    current_section = None
+    for line in body.splitlines():
+        m_section = re.match(r"^\*\*(.+?)\*\*\s*$", line)
+        if m_section:
+            current_section = m_section.group(1)
+            sections[current_section] = []
+            continue
+        if current_section and line.startswith("- "):
+            sections[current_section].append(line.strip())
+    return sections
+
+
+def _extract_release_entry_titles(entries):
+    """Extract bold release-note entry titles from bullet lines."""
+    titles = []
+    for entry in entries:
+        m = re.match(r"-\s+\*\*(.+?)\*\*", entry)
+        if m:
+            titles.append(m.group(1).strip())
+    return titles
 
 
 def _check_changelog_entry_quality():
@@ -910,23 +966,27 @@ def _check_changelog_code_coverage():
         print("  [跳过] 代码覆盖检查：无法获取上一个 tag")
         return
 
-    # 获取 Python 文件 diff（主要检查对象）
+    # 获取用户可见相关文件 diff（包含当前未提交工作区）
     diff_result = subprocess.run(
-        ["git", "diff", last_tag, "HEAD", "--", "*.py"],
-        capture_output=True, text=True, cwd=BASE_DIR
+        ["git", "diff", last_tag, "--",
+         "*.py", "*.json",
+         ":(exclude)tests/*", ":(exclude)build.py",
+         ":(exclude)scripts/*", ":(exclude)pyinstaller-hooks/*",
+         ":(exclude)latest.json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=BASE_DIR
     )
     if diff_result.returncode != 0:
         print("  [跳过] 代码覆盖检查：git diff 失败")
         return
     diff_text = diff_result.stdout.lower()
     if not diff_text.strip():
-        print("  [跳过] 代码覆盖检查：无 Python 代码变更")
+        print("  [跳过] 代码覆盖检查：无代码变更")
         return
 
     # 额外获取非 Python 文件变更列表（用于二次确认）
     other_result = subprocess.run(
-        ["git", "diff", "--name-only", last_tag, "HEAD", "--", ".", ":(exclude)*.py"],
-        capture_output=True, text=True, cwd=BASE_DIR
+        ["git", "diff", "--name-only", last_tag, "--", ".", ":(exclude)*.py"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=BASE_DIR
     )
     other_files = set(
         f.strip() for f in other_result.stdout.strip().splitlines()
@@ -950,12 +1010,18 @@ def _check_changelog_code_coverage():
     # 对每个条目提取关键词并在 diff 中搜索
     orphans = []
     for section, entry in entries:
-        title_match = re.match(r"-\s+\*\*(.+?)\*\*[：:]", entry)
+        title_match = re.match(r"-\s+\*\*(.+?)\*\*[：:]?(.*)", entry)
         if not title_match:
             continue
         title = title_match.group(1)
-        # 提取 2 字以上中文词作为搜索关键词
-        keywords = re.findall(r"[一-鿿]{2,}", title)
+        entry_body = title_match.group(2)
+        # 提取标题 + 正文关键词；正文常包含 API/DOM/403 等更接近代码的证据。
+        keywords = re.findall(r"[一-鿿]{2,}", f"{title} {entry_body}")
+        keywords += [
+            word.lower()
+            for word in re.findall(r"\b[A-Za-z][A-Za-z0-9_]{2,}\b", entry_body)
+            if word.lower() not in {"release", "notes"}
+        ]
         if not keywords:
             continue
         found = any(kw.lower() in diff_text for kw in keywords)
@@ -963,16 +1029,274 @@ def _check_changelog_code_coverage():
             orphans.append((section, title))
 
     if orphans:
-        print("[警告] 以下 CHANGELOG 条目在当前 git diff 中未找到对应 Python 代码变更：")
+        print("[提示] 以下 CHANGELOG 条目未被正向关键词检查直接命中：")
         for section, title in orphans:
             print(f"  [{section}] {title}")
         if other_files:
             print(f"\n当前版本还修改了以下非 Python 文件：{', '.join(sorted(other_files))}")
-            print("如果上述条目对应这些文件的变更，可以忽略本警告。")
-        print("否则请确认条目是否准确描述了实际代码变更。\n")
+        print("这一步只做幽灵条目提示；遗漏门禁由反向覆盖检查执行。\n")
 
     covered = len(entries) - len(orphans)
     print(f"  [OK] CHANGELOG 代码覆盖检查完成（{covered}/{len(entries)} 条目有对应 Python 代码变更）")
+
+
+def _check_code_to_changelog_coverage():
+    """反向检查：git diff 中的用户可见变更是否被 CHANGELOG 覆盖。
+
+    扫描 diff 中的强信号（UI 文本、新配置、行为变更、新数据、删除/限制），
+    与 CHANGELOG 当前版本段落交叉比对。未覆盖的强信号会阻断发布。
+    """
+    version = _read_version()
+    try:
+        _title, body = _extract_changelog_release(version)
+    except SystemExit:
+        return
+
+    last_tag = _get_last_tag()
+    if not last_tag:
+        print("  [跳过] 反向覆盖检查：无法获取上一个 tag")
+        return
+
+    # 获取 diff（包含当前未提交工作区；排除测试/构建/脚本/发布清单）
+    diff_result = subprocess.run(
+        ["git", "diff", last_tag, "--",
+         "*.py", "*.json",
+         ":(exclude)tests/*", ":(exclude)build.py",
+         ":(exclude)scripts/*", ":(exclude)pyinstaller-hooks/*",
+         ":(exclude)latest.json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=BASE_DIR,
+    )
+    if diff_result.returncode != 0 or not diff_result.stdout.strip():
+        print("  [跳过] 反向覆盖检查：无代码变更")
+        return
+
+    # 按文件解析 diff，保留 + / - 行。删除和限制类变更经常只出现在 - 行。
+    file_additions: dict[str, list[str]] = {}
+    file_removals: dict[str, list[str]] = {}
+    current_file = None
+    for line in diff_result.stdout.splitlines():
+        if line.startswith("diff --git"):
+            m = re.search(r"b/(\S+)$", line)
+            current_file = m.group(1) if m else None
+        elif current_file and line.startswith("+") and not line.startswith("+++"):
+            file_additions.setdefault(current_file, []).append(line[1:])
+        elif current_file and line.startswith("-") and not line.startswith("---"):
+            file_removals.setdefault(current_file, []).append(line[1:])
+
+    def _keywords(text: str) -> list[str]:
+        """提取中英文关键词，用于与 CHANGELOG 做宽松交叉比对。"""
+        result: list[str] = []
+        for run in re.findall(r"[一-鿿]+", text):
+            if len(run) < 2:
+                continue
+            result.append(run)  # 保留完整段（用于长串匹配）
+            for i in range(len(run) - 1):
+                result.append(run[i:i + 2])  # 2 字窗口
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", text):
+            result.append(word.lower())
+            result.extend(part.lower() for part in word.split("_") if len(part) >= 3)
+        return result
+
+    def _snippet(line: str, limit: int = 96) -> str:
+        line = line.strip()
+        return line if len(line) <= limit else line[:limit - 3] + "..."
+
+    def _is_comment_or_doc_line(line: str) -> bool:
+        stripped = line.strip()
+        return (
+            not stripped
+            or stripped.startswith("#")
+            or stripped.startswith('"""')
+            or stripped.startswith("'''")
+            or stripped in ('"""', "'''")
+        )
+
+    def _context_keywords(fpath: str, line: str) -> list[str]:
+        lowered = f"{fpath} {line}".lower()
+        keywords: list[str] = []
+        if (
+            "updater.py" in fpath
+            or "gui_dialogs.py" in fpath
+            or "release_notes" in lowered
+            or "changelog" in lowered
+        ):
+            if re.search(r"release|changelog|notes|cache|cached|timeout|retry|gitee|github", lowered):
+                keywords.extend(["更新日志", "远端", "release", "notes"])
+        if "bossmaster.py" in fpath and re.search(r"captcha|verify|risk|403|412|429", lowered):
+            keywords.extend(["风控", "验证码", "验证"])
+        return keywords
+
+    # 每条规则产出 (信号类型, 摘要, 关键词, 建议分类)
+    signals: list[tuple[str, str, list[str], str]] = []
+    behavior_re = re.compile(
+        r"(风控|验证码|验证|弹窗|重试|超时|缓存|刷新|兜底|跳过|停止|暂停|"
+        r"上限|限制|批次|间隔|延迟|扫描|打招呼|更新日志|远端|"
+        r"\bAPI\b|\bDOM\b|listener|refresh|fallback|captcha|verify|risk|"
+        r"retry|timeout|cache|ttl|limit|throttle|batch|403|412|429)",
+        re.IGNORECASE,
+    )
+    data_re = re.compile(
+        r"(candidate|candidates|feedback|followup|blacklist|resume|score|"
+        r"export|excel|status|reason|note|updated_at|geek_id|job_name)",
+        re.IGNORECASE,
+    )
+    ui_files = ("gui_main.py", "gui_dialogs.py", "updater.py")
+
+    for fpath in sorted(set(file_additions) | set(file_removals)):
+        additions = file_additions.get(fpath, [])
+        removals = file_removals.get(fpath, [])
+        joined = "\n".join(additions)
+
+        # 1. 新配置 / 阈值 / 默认值
+        if "constants.py" in fpath:
+            for m in re.finditer(
+                r"^\+?([A-Z][A-Z0-9_]{3,})\s*=\s*(.+)", joined, re.MULTILINE
+            ):
+                name, value = m.group(1), m.group(2).strip()[:60]
+                signals.append((
+                    "新配置", f"{fpath}: {name} = {value}",
+                    _keywords(f"{name} {value}"),
+                    "体验优化",
+                ))
+
+        if fpath.endswith((".json", ".JSON")):
+            for m in re.finditer(r'"(\w+)"\s*:\s*\{', joined):
+                group = m.group(1)
+                if group not in ("version",):
+                    signals.append((
+                        "新配置", f"{fpath}: {group}",
+                        _keywords(group),
+                        "新增功能" if fpath.endswith("selectors.json") else "体验优化",
+                    ))
+
+        # 2. 新错误处理路径
+        if any(k in fpath for k in ("bossmaster.py", "gui_main.py")):
+            for m in re.finditer(
+                r"class\s+(\w+)\s*\(\s*\w*Exception\w*\s*\)", joined
+            ):
+                signals.append((
+                    "新异常类", m.group(1),
+                    _keywords(joined[max(0, m.start()-100):m.end()+100]),
+                    "体验优化",
+                ))
+
+        # 3. 核心文件新增公开函数（不以 _ 开头 = 用户可见的新入口）
+        if fpath in ("bossmaster.py", "gui_main.py"):
+            for m in re.finditer(r"def\s+([a-z]\w{5,})\s*\(", joined):
+                fname = m.group(1)
+                after = joined[m.end():m.end()+300]
+                signals.append(("新函数", f"{fpath}: {fname}", _keywords(f"{fname} {after}"), "新增功能"))
+
+        # 4. UI 文案 / 弹窗 / 用户可见输出
+        if fpath.endswith(".py"):
+            for line in additions:
+                if _is_comment_or_doc_line(line):
+                    continue
+                if not re.search(r"[一-鿿]{3,}", line):
+                    continue
+                if "print(" in line or any(ui_file in fpath for ui_file in ui_files):
+                    text = _snippet(re.sub(r"\s+", " ", line))
+                    signals.append((
+                        "UI文本", f"{fpath}: {text}",
+                        _keywords(text) + _context_keywords(fpath, line),
+                        "体验优化",
+                    ))
+
+        # 5. 行为变更：风控、兜底、重试、缓存、上限、节奏等
+        for line in additions:
+            if _is_comment_or_doc_line(line):
+                continue
+            if behavior_re.search(line):
+                text = _snippet(re.sub(r"\s+", " ", line))
+                signals.append((
+                    "行为变更", f"{fpath}: {text}",
+                    _keywords(text) + _context_keywords(fpath, line),
+                    "体验优化",
+                ))
+
+        # 6. 新数据字段：持久化、导出、状态、评分、候选人结构
+        if fpath.endswith(".py") and any(k in fpath for k in ("storage.py", "filtering.py", "bossmaster.py", "gui_main.py", "llm_eval.py")):
+            for line in additions:
+                if _is_comment_or_doc_line(line):
+                    continue
+                if data_re.search(line) and re.search(r"['\"][A-Za-z_][A-Za-z0-9_]{2,}['\"]\s*:", line):
+                    text = _snippet(re.sub(r"\s+", " ", line))
+                    signals.append(("新数据", f"{fpath}: {text}", _keywords(text), "新增功能"))
+
+        # 7. 删除 / 限制：删除 UI 文案、函数入口、配置键，或新增限制逻辑
+        for line in removals:
+            if _is_comment_or_doc_line(line):
+                continue
+            if (
+                re.search(r"[一-鿿]{3,}", line)
+                or re.search(r"def\s+[a-zA-Z_]\w+\s*\(", line)
+                or re.search(r'"[A-Za-z_][A-Za-z0-9_]+"\s*:', line)
+            ):
+                text = _snippet(re.sub(r"\s+", " ", line))
+                signals.append(("删除/限制", f"{fpath}: removed {text}", _keywords(text), "体验优化"))
+        for line in additions:
+            if _is_comment_or_doc_line(line):
+                continue
+            if re.search(r"(limit|max|上限|限制|停止|跳过|return\s+|raise\s+)", line, re.IGNORECASE) and behavior_re.search(line):
+                text = _snippet(re.sub(r"\s+", " ", line))
+                signals.append((
+                    "删除/限制", f"{fpath}: {text}",
+                    _keywords(text) + _context_keywords(fpath, line),
+                    "体验优化",
+                ))
+
+    if not signals:
+        print("  [OK] 反向覆盖检查：未检测到用户可见的新增代码信号")
+        return
+
+    # 去重，避免同一行同时命中多条规则造成噪声过大。
+    deduped = []
+    seen = set()
+    for signal in signals:
+        key = (signal[0], signal[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(signal)
+    signals = deduped
+
+    changelog_text = _normalize_markdown(body).lower()
+    sections = _parse_changelog_sections(body)
+    missing_sections = sorted(
+        {required for *_rest, required in signals if required not in sections},
+        key=lambda name: CHANGELOG_REQUIRED_SECTIONS.index(name)
+        if name in CHANGELOG_REQUIRED_SECTIONS else 99,
+    )
+    uncovered = []
+    for category, summary, keywords, required_section in signals:
+        useful_keywords = [kw for kw in keywords if len(kw) >= 2]
+        if not useful_keywords:
+            uncovered.append((category, summary, required_section))
+            continue
+        if not any(kw.lower() in changelog_text for kw in useful_keywords):
+            uncovered.append((category, summary, required_section))
+
+    if missing_sections or uncovered:
+        print(
+            f"[错误] git diff 中检测到用户可见变更未被 CHANGELOG v{version} 完整覆盖："
+        )
+        if missing_sections:
+            print("\n缺少建议分类：")
+            for section in missing_sections:
+                print(f"  - {section}")
+        if uncovered:
+            print("\n未覆盖信号：")
+        for category, summary, required_section in uncovered[:12]:
+            print(f"  [{category} -> 建议 {required_section}] {summary}")
+        if len(uncovered) > 12:
+            print(f"  ... 另有 {len(uncovered) - 12} 个（仅展示前 12 个）")
+        print("\n请补充 CHANGELOG，或调整检查规则避免误报。")
+        sys.exit(1)
+    else:
+        print(
+            f"  [OK] 反向覆盖检查：{len(signals)} 个代码信号"
+            f"均已在 CHANGELOG 中体现"
+        )
 
 
 def _check_todo_not_stale():
@@ -1046,12 +1370,14 @@ def _preflight_checks(require_clean=True):
     _check_changelog_updated()
     _check_changelog_entry_quality()
     _check_changelog_code_coverage()
+    _check_code_to_changelog_coverage()
     _check_todo_not_stale()
     _check_claude_md_size()
     _run_unit_checks()
     current_version = _read_version()
     _extract_changelog_release(current_version)
     _check_readme_release(current_version)
+    _check_latest_json_release_notes(current_version)
     _check_project_docs_version_sync(current_version)
     _check_version_history_integrity()
 
@@ -1700,7 +2026,7 @@ def _extract_changelog_release(version):
         print(f"[错误] CHANGELOG.md 中 v{version} 段落正文为空")
         sys.exit(1)
 
-    required_sections = ["新增功能", "体验优化", "问题修复"]
+    required_sections = CHANGELOG_REQUIRED_SECTIONS
     found_sections = re.findall(r"^###\s+(.+?)\s*$", body, re.MULTILINE)
 
     # 至少有一个分类
@@ -1860,22 +2186,61 @@ def _check_readme_release(version):
         if cl_match and rm_match:
             cl_section = cl_match.group(1)
             rm_section = rm_match.group(1)
+            cl_sections = _parse_changelog_sections(cl_section)
+            rm_sections = _parse_readme_release_sections(rm_section)
 
             for category in ["新增功能", "体验优化", "问题修复"]:
-                cl_items = len(re.findall(rf"(?:^### {category}\n)?^- \*\*", cl_section, re.MULTILINE))
-                rm_items = len(re.findall(rf"(?:^\*\*{category}\*\*\n)?^- \*\*", rm_section, re.MULTILINE))
-                # 更精确：按分类提取条目数
-                cl_cat_match = re.search(rf"^### {category}\n(.*?)(?=^### |\Z)", cl_section, re.MULTILINE | re.DOTALL)
-                rm_cat_match = re.search(rf"^\*\*{category}\*\*\n(.*?)(?=^\*\*|\Z)", rm_section, re.MULTILINE | re.DOTALL)
-                cl_count = len(re.findall(r"^- \*\*", cl_cat_match.group(1), re.MULTILINE)) if cl_cat_match else 0
-                rm_count = len(re.findall(r"^- \*\*", rm_cat_match.group(1), re.MULTILINE)) if rm_cat_match else 0
+                cl_titles = _extract_release_entry_titles(cl_sections.get(category, []))
+                rm_titles = _extract_release_entry_titles(rm_sections.get(category, []))
+                cl_count = len(cl_titles)
+                rm_count = len(rm_titles)
 
                 if cl_count != rm_count:
                     print(f"[错误] README.md v{version} {category} 条目数（{rm_count}）与 CHANGELOG（{cl_count}）不一致")
                     print(f"请同步 CHANGELOG.md 中 v{version} {category} 的全部条目到 README.md")
                     sys.exit(1)
+                if cl_titles != rm_titles:
+                    print(f"[错误] README.md v{version} {category} 条目标题与 CHANGELOG 不一致")
+                    print("CHANGELOG：")
+                    for title in cl_titles:
+                        print(f"  - {title}")
+                    print("README：")
+                    for title in rm_titles:
+                        print(f"  - {title}")
+                    sys.exit(1)
 
-            print(f"  [OK] README.md v{version} 条目数与 CHANGELOG 一致")
+            print(f"  [OK] README.md v{version} 条目标题与 CHANGELOG 一致")
+
+
+def _check_latest_json_release_notes(version):
+    """验证 latest.json 内置 release_notes 与 CHANGELOG 当前版本一致。"""
+    latest_path = BASE_DIR / "latest.json"
+    if not latest_path.exists():
+        print("  [跳过] latest.json release_notes 检查：文件不存在")
+        return
+
+    try:
+        data = json.loads(latest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"[错误] latest.json 解析失败：{e}")
+        sys.exit(1)
+
+    latest_version = str(data.get("version", "")).lstrip("v")
+    if latest_version != version:
+        print(
+            f"  [跳过] latest.json release_notes 检查：latest.json 为 v{latest_version}，"
+            f"当前源码为 v{version}"
+        )
+        return
+
+    expected_title, expected_body = _extract_changelog_release(version)
+    actual_body = data.get("release_notes", "")
+    if _normalize_markdown(actual_body) != _normalize_markdown(expected_body):
+        print(f"[错误] latest.json release_notes 与 CHANGELOG.md v{version} 不一致")
+        print("请运行发布流程或同步 latest.json，确保内置更新说明来自当前 CHANGELOG。")
+        sys.exit(1)
+
+    print(f"  [OK] latest.json release_notes 已同步 CHANGELOG.md v{version}（{expected_title}）")
 
 
 def _version_sort_key(version):
