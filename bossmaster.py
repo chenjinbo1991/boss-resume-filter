@@ -1613,6 +1613,17 @@ def _read_recommend_page_identity(target: Any) -> dict[str, str]:
     except Exception:
         title = ""
 
+    # 诊断：如果没读到 title，打印页面文本前 10 行看看实际结构
+    if not title:
+        try:
+            debug_text = target.run_js(r'''
+                return (document.body && document.body.innerText || '')
+                    .split('\n').map(s => s.trim()).filter(Boolean).slice(0, 10).join(' | ')
+            ''') or "(empty)"
+            print(f"[identity-debug] 未找到岗位名，页面前10行: {debug_text[:200]}")
+        except Exception:
+            pass
+
     return {"job_id": job_id, "job_title": title, "href": href}
 
 
