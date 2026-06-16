@@ -10,16 +10,9 @@
     "windows": {
       "size": 38204556,
       "sha256": "c94640045fb0f3d5bbf58843bbafd9d43c203084434873069b1aaa15dac73172"
-    },
-    "macos": {
-      "size": 46263837,
-      "sha256": "fbce2c9b505cef863a63c6f563c5bf2e710a59ffd33e1c61ae671ded0a72df66"
-    },
-    "macos_dmg": {
-      "size": 44538736,
-      "sha256": "b7a0533b07a3ed6cb696c7e87dcf2b8e0095971029701b08aae948264812720c"
     }
   },
+  "release_notes": "### 新增功能\n\n- **结构化补全说明**：图形界面运行控制页固定展示 `listener + refresh → DOM → API 兜底` 的结构化补全策略，不再暴露\"安全扫描\"开关；运行日志会记录 listener 捕获数量和接口地址\n- **API 补全预算**：API 直调仅用于补全 DOM 已出现候选人的结构化字段，默认最多补全 5 页，补全页数按 `max_candidates` 预算推导但上限为 10 页，按 `page_num` range 范围逐页翻取且页间保留随机间隔\n- **页面跑偏检测**：扫描和打招呼前自动检查浏览器是否仍在推荐牛人页面，页面被意外切换时停止本轮运行并提醒切回\n\n### 体验优化\n\n- **提取链路默认更稳**：默认先用 listener + refresh 捕获同页 API 结构化数据，再用 DOM 滚动确认可点击候选人，最后只对仍缺结构化字段的 DOM 候选人做 API 兜底；结构化数据只按 `geek_id` 合并，API 返回的额外候选人不会进入筛选和自动打招呼队列\n- **API 分页和打招呼节奏放缓**：API 分页默认约 5-8 秒随机间隔；自动打招呼按批次暂停，整体节奏更接近人工操作\n- **页面上下文更一致**：listener + refresh 后会校验岗位标识，发现刷新后岗位变化会提示切回目标岗位；验证码和页面提示通过 `captcha_callback` / `notice_callback` 传递，等待循环使用 `done.wait(timeout=0.5)` 保持界面可停止；API 遇到 403/412/429 等风控状态只停止结构化补全，不丢弃已通过 DOM 提取的候选人\n- **结构化日志更聚焦**：运行日志只保留 listener/API 捕获数量、接口地址、命中 DOM 数量和分页兜底结果，清除 jobId、identity、API URL 探测等临时诊断输出\n- **运行控制页简化**：移除旧安全扫描开关、读取上限输入框、读取上限滚轮处理（mousewheel）和安全扫描联动控件（removed def `_update_safe_scan_controls`），界面只保留 DOM 滚动轮次、岗位选择、自动打招呼和 AI 评估\n- **更新日志远端修正**：更新日志弹窗现在从远端 Release Notes 获取当前版本说明，本地内容先显示、后台自动更新；读取失败时静默保留本地内容",
   "downloads_cn": {
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.3/BOSS_ResumeFilter.exe",
     "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.11.3/BOSS_ResumeFilter_mac.zip",

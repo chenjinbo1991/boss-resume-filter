@@ -2293,16 +2293,6 @@ class BossFilterGUI:
                       min(UI_CONFIG['spinbox_rounds_max'], new_val))
         self.rounds_var.set(str(new_val))
 
-    def _on_max_candidates_mousewheel(self, event):
-        """API 直调读取上限 Spinbox 的鼠标滚轮处理"""
-        step = 20 if event.delta > 0 else -20
-        try:
-            current = int(self.max_candidates_var.get())
-        except ValueError:
-            current = API_CANDIDATE_LIMIT_DEFAULT
-        new_val = max(20, min(500, current + step))
-        self.max_candidates_var.set(str(new_val))
-
     def _create_api_config_content(self):
         """创建 API 配置页面内容（在可滚动框架中）"""
         api_container = self.api_scrollable_frame
@@ -2749,44 +2739,6 @@ class BossFilterGUI:
                  foreground=self.colors['text_muted'], background=self.colors['bg_card'])
         self.rounds_hint_label.pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
 
-        # 安全扫描模式
-        row_safe = ttk.Frame(param_frame, style='TFrame')
-        row_safe.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
-        ttk.Label(row_safe, text="安全扫描:", font=self.font_label, width=12,
-                 background=self.colors['bg_card']).pack(side="left")
-        self.safe_scan_var = tk.BooleanVar(value=True)
-        _safe_cb_style = ttk.Style()
-        _safe_indicator_size = int(32 * self.dpi_scale * self.zoom_factor)
-        _safe_cb_style.configure('AIEval.TCheckbutton',
-                                 font=self.font_label,
-                                 background=self.colors['bg_card'],
-                                 indicatordiameter=_safe_indicator_size)
-        _safe_cb_style.map('AIEval.TCheckbutton',
-                           background=[('active', self.colors['bg_card'])])
-        self.safe_scan_check = ttk.Checkbutton(row_safe, text="开启",
-                                               variable=self.safe_scan_var,
-                                               style='AIEval.TCheckbutton')
-        self.safe_scan_check.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
-        ttk.Label(row_safe, text="开启后，不使用API直调方案，稳定优先",
-                 font=(FONT_FAMILY, int(11 * self.font_scale)),
-                 foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-
-        # 候选人读取上限（仅安全扫描关闭时显示）
-        row_limit = ttk.Frame(param_frame, style='TFrame')
-        ttk.Label(row_limit, text="读取上限:", font=self.font_label, width=12,
-                 background=self.colors['bg_card']).pack(side="left")
-        self.max_candidates_var = tk.StringVar(value=str(API_CANDIDATE_LIMIT_DEFAULT))
-        self.max_candidates_spin = ttk.Spinbox(row_limit, from_=20, to=500,
-                                               increment=20, textvariable=self.max_candidates_var,
-                                               width=15, font=self.font_label)
-        self.max_candidates_spin.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
-        self.max_candidates_spin.bind('<Enter>',
-            lambda e: self.max_candidates_spin.bind('<MouseWheel>', self._on_max_candidates_mousewheel))
-        self.max_candidates_spin.bind('<Leave>',
-            lambda e: self.max_candidates_spin.unbind('<MouseWheel>'))
-        ttk.Label(row_limit, text=f"(默认 {API_CANDIDATE_LIMIT_DEFAULT} 人，限制 API 直调最多读取人数)", font=(FONT_FAMILY, int(11 * self.font_scale)),
-                 foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-
         # 选择岗位（多岗位运行时指定处理哪个岗位）
         row_job = ttk.Frame(param_frame, style='TFrame')
         row_job.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
@@ -2802,22 +2754,6 @@ class BossFilterGUI:
                  font=(FONT_FAMILY, int(11 * self.font_scale)),
                  foreground=self.colors['text_muted'],
                  background=self.colors['bg_card']).pack(side="left", padx=int(10 * self.dpi_scale * self.zoom_factor))
-
-        def _update_safe_scan_controls(*_):
-            if self.safe_scan_var.get():
-                if self.rounds_var.get().strip() == "30":
-                    self.rounds_var.set("100")
-                self.rounds_hint_label.config(text="(推荐 50-200 轮次)")
-                row_limit.pack_forget()
-            else:
-                if self.rounds_var.get().strip() == "100":
-                    self.rounds_var.set("30")
-                self.rounds_hint_label.config(text="(推荐 30-50 轮次)")
-                if not row_limit.winfo_manager():
-                    row_limit.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor), before=row_job)
-
-        self.safe_scan_check.configure(command=_update_safe_scan_controls)
-        _update_safe_scan_controls()
 
         # 打招呼等级
         row2 = ttk.Frame(param_frame, style='TFrame')
@@ -7637,29 +7573,8 @@ class BossFilterGUI:
             log_redirector = LogRedirector(self.append_log)
             sys.stdout = log_redirector
 
-            safe_scan_enabled = self.safe_scan_var.get()
             rounds = int(self.rounds_var.get())
-            if safe_scan_enabled:
-                effective_max_candidates = 0
-            else:
-                raw_max_candidates = self.max_candidates_var.get().strip()
-                try:
-                    max_candidates = int(raw_max_candidates)
-                except (TypeError, ValueError):
-                    max_candidates = API_CANDIDATE_LIMIT_DEFAULT
-                    self.root.after(0, lambda: self.max_candidates_var.set(str(API_CANDIDATE_LIMIT_DEFAULT)))
-                    self.root.after(0, lambda: messagebox.showwarning(
-                        "读取上限无效",
-                        f"读取上限必须是数字，已回退为默认 {API_CANDIDATE_LIMIT_DEFAULT} 人。"
-                    ))
-                    self.append_log(f"读取上限无效：{raw_max_candidates or '空'}，已回退为默认 {API_CANDIDATE_LIMIT_DEFAULT} 人")
-                else:
-                    clamped = max(20, min(500, max_candidates))
-                    if clamped != max_candidates:
-                        max_candidates = clamped
-                        self.root.after(0, lambda value=clamped: self.max_candidates_var.set(str(value)))
-                        self.append_log(f"读取上限已调整为 {clamped} 人（允许范围 20-500）")
-                effective_max_candidates = max_candidates
+            effective_max_candidates = API_CANDIDATE_LIMIT_DEFAULT
             # 将中文打招呼等级映射为程序参数
             greet_level_text = self.greet_level_var.get()
             no_greet = greet_level_text == "不打招呼（仅筛选）"
@@ -7670,10 +7585,7 @@ class BossFilterGUI:
 
             self.append_log(f">>> BOSS 直聘候选人智能提取工具 v{__version__} [图形界面模式]")
             self.append_log(f"滚动轮次：{rounds}, 自动打招呼：{greet_level_text}")
-            if safe_scan_enabled:
-                self.append_log("安全扫描模式：开启，使用 listener + refresh 一次，失败后回退页面滚动")
-            else:
-                self.append_log(f"安全扫描模式：关闭，API 直调读取上限：{effective_max_candidates} 人")
+            self.append_log("提取链路：listener + refresh 优先捕获结构化数据；DOM 扫描确认可点击候选人；必要时 API 最后补全已出现候选人")
 
             # 获取选择的岗位
             selected_job = self.job_select_var.get()
@@ -7709,7 +7621,7 @@ class BossFilterGUI:
                 rounds=rounds,
                 max_candidates=effective_max_candidates,
                 dom_only=False,
-                listener_first=safe_scan_enabled,
+                listener_first=False,
                 verbose=False,
                 ai_eval=ai_eval_enabled,
                 api_config=ai_api_config,
@@ -7783,10 +7695,26 @@ class BossFilterGUI:
             def notice_callback(title, message):
                 self.root.after(0, lambda: messagebox.showinfo(title, message, parent=self.root))
 
+            def blocking_notice_callback(title, message):
+                """阻塞式通知弹窗 — 等待用户点击确定后返回"""
+                done = threading.Event()
+
+                def show_dialog():
+                    messagebox.showinfo(title, message, parent=self.root)
+                    done.set()
+
+                self.root.after(0, show_dialog)
+                while not done.is_set():
+                    if self.stop_event.is_set():
+                        done.set()
+                        break
+                    done.wait(timeout=0.5)
+
             # 调用 run_smart_scan 并传入参数和进度回调
             run_smart_scan(args, progress_callback=on_progress, confirm_callback=confirm_callback,
                            stop_event=self.stop_event, existing_page=self.browser_page,
-                           captcha_callback=captcha_callback, notice_callback=notice_callback)
+                           captcha_callback=captcha_callback, notice_callback=notice_callback,
+                           blocking_notice_callback=blocking_notice_callback)
 
         except KeyboardInterrupt:
             self.append_log("用户取消岗位切换，已停止")
@@ -9957,7 +9885,7 @@ class BossFilterGUI:
    - 保存配置
 
 2. 运行控制：
-   - 设置滚动轮次（安全扫描推荐 50-200，API 模式推荐 30-50）
+    - 设置 DOM 滚动轮次（深度扫描可提高到 50-200）
    - 选择打招呼等级
    - 点击"开始运行"
 

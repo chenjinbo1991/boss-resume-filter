@@ -287,7 +287,7 @@ def test_recommend_api_pagination_builds_from_current_iframe_jobid():
     assert pagination["query_params"]["page"] == "1"
 
 
-def test_scan_uses_direct_api_pagination_without_refresh_or_dom_scroll():
+def test_api_enrichment_keeps_dom_candidates_only():
     class FakeFrame:
         def __init__(self):
             self.refresh_count = 0
@@ -301,28 +301,36 @@ def test_scan_uses_direct_api_pagination_without_refresh_or_dom_scroll():
             self.refresh_count += 1
 
     page = FakeFrame()
-    api_pages = [
-        ([{"geek_id": "g-api-1", "name": "张三", "summary": "本科，5年 Java", "structured": {"exp_years": 5}}], True),
-        ([{"geek_id": "g-api-2", "name": "李四", "summary": "本科，6年 Java", "structured": {"exp_years": 6}}], False),
-        ([], False),
+    dom_batch = [
+        {"geek_id": "g-dom-1", "name": "张三", "text": "本科，5年 Java"},
+        {"geek_id": "g-dom-2", "name": "李四", "text": "本科，6年 Java"},
     ]
+    api_page = ([
+        {"geek_id": "g-dom-1", "name": "张三", "summary": "本科，5年 Java，南京，25岁", "structured": {"age": 25}},
+        {"geek_id": "g-api-extra", "name": "王五", "summary": "本科，8年 Java", "structured": {"exp_years": 8}},
+    ], False)
 
     with patch('bossmaster.time.sleep'), \
             patch('bossmaster._human_delay', return_value=0), \
             patch('bossmaster.get_iframe', return_value=None), \
-            patch('bossmaster._start_recommend_api_listener') as mock_start_listener, \
-            patch('bossmaster._fetch_api_page_result', side_effect=api_pages) as mock_fetch, \
+            patch('bossmaster._start_recommend_api_listener', return_value=None) as mock_start_listener, \
+            patch('bossmaster._fetch_api_page_result', return_value=api_page) as mock_fetch, \
             patch('bossmaster._consume_recommend_api_candidates') as mock_consume_api, \
             patch('bossmaster._detect_captcha', return_value=(False, "")), \
-            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
-        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=3)
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch) as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
+            page, max_rounds=1, extraction_mode="api"
+        )
 
-    assert [c["geek_id"] for c in candidates] == ["g-api-1", "g-api-2"]
+    assert [c["geek_id"] for c in candidates] == ["g-dom-1", "g-dom-2"]
+    assert candidates[0]["structured"] == {"age": 25}
+    assert candidates[0]["summary"] == "本科，5年 Java，南京，25岁"
+    assert all(c["geek_id"] != "g-api-extra" for c in candidates)
     assert page.refresh_count == 0
-    assert mock_fetch.call_count == 3
-    mock_start_listener.assert_not_called()
+    mock_fetch.assert_called_once()
+    mock_start_listener.assert_called_once()
     mock_consume_api.assert_not_called()
-    mock_dom_extract.assert_not_called()
+    mock_dom_extract.assert_called_once()
 
 
 def test_dom_only_scan_skips_direct_api_listener_and_refresh():
@@ -369,95 +377,7 @@ def test_dom_only_scan_skips_direct_api_listener_and_refresh():
     mock_dom_extract.assert_called_once()
 
 
-def test_listener_first_scan_skips_direct_api_and_refreshes_once():
-    class FakeListener:
-        def stop(self):
-            pass
-
-    class FakePage:
-        def __init__(self):
-            self.refresh_count = 0
-
-        def run_js(self, script):
-            if script == 'return location.href':
-                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
-            return None
-
-        def refresh(self):
-            self.refresh_count += 1
-
-    page = FakePage()
-
-    with patch('bossmaster.time.sleep'), \
-            patch('bossmaster._human_delay', return_value=0), \
-            patch('bossmaster.get_iframe', return_value=None), \
-            patch('bossmaster._build_recommend_api_pagination_from_page') as mock_build_api, \
-            patch('bossmaster._fetch_api_page_result') as mock_fetch, \
-            patch('bossmaster._start_recommend_api_listener', return_value=FakeListener()) as mock_start_listener, \
-            patch('bossmaster._consume_recommend_api_candidates', return_value=(
-                [
-                    {"geek_id": "g-listener-1", "name": "李四", "summary": "本科，6年 Java", "structured": {"exp_years": 6}},
-                    {"geek_id": "g-listener-2", "name": "王五", "summary": "本科，7年 Java", "structured": {"exp_years": 7}},
-                ],
-                "/wapi/zpjob/rec/geek/list",
-            )) as mock_consume_api, \
-            patch('bossmaster._detect_captcha', return_value=(False, "")), \
-            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
-        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
-            page, max_rounds=1, extraction_mode="listener", max_candidates=1
-        )
-
-    assert [c["geek_id"] for c in candidates] == ["g-listener-1", "g-listener-2"]
-    mock_build_api.assert_not_called()
-    mock_fetch.assert_not_called()
-    mock_start_listener.assert_called_once()
-    assert mock_consume_api.call_count >= 1
-    assert page.refresh_count == 1
-    mock_dom_extract.assert_not_called()
-
-
-def test_scan_caps_direct_api_candidates_before_next_page():
-    class FakeFrame:
-        def run_js(self, script):
-            if script == 'return location.href':
-                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
-            return None
-
-    def page_items(start, count):
-        return [
-            {
-                "geek_id": f"g-api-{idx}",
-                "name": f"候选人{idx}",
-                "summary": "本科，5年 Java",
-                "structured": {"exp_years": 5},
-            }
-            for idx in range(start, start + count)
-        ]
-
-    api_pages = [
-        (page_items(0, 30), True),
-        (page_items(30, 30), True),
-        (page_items(60, 30), True),
-        (page_items(90, 30), True),
-    ]
-
-    with patch('bossmaster.time.sleep'), \
-            patch('bossmaster._human_delay', return_value=0), \
-            patch('bossmaster.get_iframe', return_value=None), \
-            patch('bossmaster._fetch_api_page_result', side_effect=api_pages) as mock_fetch, \
-            patch('bossmaster._detect_captcha', return_value=(False, "")), \
-            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
-        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
-            FakeFrame(), max_rounds=10, max_candidates=80
-        )
-
-    assert len(candidates) == 80
-    assert candidates[-1]["geek_id"] == "g-api-79"
-    assert mock_fetch.call_count == 3
-    mock_dom_extract.assert_not_called()
-
-
-def test_scan_falls_back_to_refresh_listener_when_direct_api_unavailable():
+def test_listener_first_scan_refreshes_to_capture_first_screen_api():
     class FakeListener:
         def stop(self):
             pass
@@ -477,29 +397,119 @@ def test_scan_falls_back_to_refresh_listener_when_direct_api_unavailable():
             self.refresh_count += 1
 
     page = FakePage()
+    dom_batch = [
+        {"geek_id": "g-listener-1", "name": "李四", "text": "本科，6年 Java"},
+    ]
+
+    with patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._build_recommend_api_pagination_from_page') as mock_build_api, \
+            patch('bossmaster._fetch_api_page_result') as mock_fetch, \
+            patch('bossmaster._start_recommend_api_listener', return_value=FakeListener()) as mock_start_listener, \
+            patch('bossmaster._consume_recommend_api_candidates', return_value=(
+                [
+                    {"geek_id": "g-listener-1", "name": "李四", "summary": "本科，6年 Java", "structured": {"exp_years": 6}},
+                    {"geek_id": "g-listener-2", "name": "王五", "summary": "本科，7年 Java", "structured": {"exp_years": 7}},
+                ],
+                "/wapi/zpjob/rec/geek/list",
+            )) as mock_consume_api, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch) as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
+            page, max_rounds=1, extraction_mode="listener", max_candidates=1
+        )
+
+    assert [c["geek_id"] for c in candidates] == ["g-listener-1"]
+    assert candidates[0]["structured"] == {"exp_years": 6}
+    mock_build_api.assert_not_called()
+    mock_fetch.assert_not_called()
+    mock_start_listener.assert_called_once()
+    assert mock_consume_api.call_count >= 1
+    # listener 启动后刷新一次，捕获首屏 API 响应（结构化字段来源）
+    assert page.refresh_count == 1
+    mock_dom_extract.assert_called_once()
+
+
+def test_api_enrichment_uses_page_cap_and_random_delay():
+    class FakeFrame:
+        def run_js(self, script):
+            if script == 'return location.href':
+                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+            return None
+
+    api_pages = [
+        ([{"geek_id": "g-extra-1", "name": "外部1", "summary": "本科，5年 Java", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-2", "name": "外部2", "summary": "本科，5年 Java", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-3", "name": "外部3", "summary": "本科，5年 Java", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-4", "name": "外部4", "summary": "本科，5年 Java", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-5", "name": "外部5", "summary": "本科，5年 Java", "structured": {"exp_years": 5}}], True),
+    ]
+    dom_batch = [{"geek_id": "g-dom-missing", "name": "张三", "text": "本科，5年 Java"}]
+
+    with patch('bossmaster.time.sleep') as mock_sleep, \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener', return_value=None), \
+            patch('bossmaster._fetch_api_page_result', side_effect=api_pages) as mock_fetch, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch) as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
+            FakeFrame(), max_rounds=1, extraction_mode="api", max_candidates=20
+        )
+
+    assert [c["geek_id"] for c in candidates] == ["g-dom-missing"]
+    assert mock_fetch.call_count == 5
+    assert mock_sleep.call_count >= 4
+    mock_dom_extract.assert_called_once()
+
+
+def test_default_scan_uses_dom_with_listener_enrichment():
+    class FakeListener:
+        def stop(self):
+            pass
+
+    class FakePage:
+        def __init__(self):
+            self.refresh_count = 0
+
+        def run_js(self, script):
+            if script == 'return location.href':
+                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+            if "document.body" in script:
+                return "Java 工程师 _ 南京 15-20K"
+            return None
+
+        def refresh(self):
+            self.refresh_count += 1
+
+    page = FakePage()
+    dom_batch = [{"geek_id": "g-dom-refresh", "name": "王五", "text": "本科，7年 Java"}]
 
     with patch('bossmaster.time.sleep'), \
             patch('bossmaster._human_delay', return_value=0), \
             patch('bossmaster.get_iframe', return_value=None), \
             patch('bossmaster._start_recommend_api_listener', return_value=FakeListener()) as mock_start_listener, \
-            patch('bossmaster._fetch_api_page_result', return_value=([], False)) as mock_fetch, \
+            patch('bossmaster._fetch_api_page_result') as mock_fetch, \
             patch('bossmaster._consume_recommend_api_candidates', return_value=(
-                [{"geek_id": "g-api-refresh", "name": "王五", "summary": "本科，7年 Java", "structured": {"exp_years": 7}}],
+                [{"geek_id": "g-dom-refresh", "name": "王五", "summary": "本科，7年 Java", "structured": {"exp_years": 7}}],
                 "https://www.zhipin.com/wapi/zpjob/rec/geek/list",
             )) as mock_consume_api, \
             patch('bossmaster._detect_captcha', return_value=(False, "")), \
-            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch) as mock_dom_extract:
         candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=1)
 
-    assert [c["geek_id"] for c in candidates] == ["g-api-refresh"]
+    assert [c["geek_id"] for c in candidates] == ["g-dom-refresh"]
+    assert candidates[0]["structured"] == {"exp_years": 7}
+    # listener 启动后刷新一次，捕获首屏 API 响应（结构化字段来源）
     assert page.refresh_count == 1
     mock_start_listener.assert_called_once()
-    mock_fetch.assert_called_once()
+    mock_fetch.assert_not_called()
     mock_consume_api.assert_called_once()
-    mock_dom_extract.assert_not_called()
+    mock_dom_extract.assert_called_once()
 
 
-def test_scan_stops_on_api_risk_status_without_refresh_or_dom_fallback():
+def test_api_risk_status_stops_enrichment_without_dropping_dom_candidates():
     class FakePage:
         def __init__(self):
             self.refresh_count = 0
@@ -513,23 +523,26 @@ def test_scan_stops_on_api_risk_status_without_refresh_or_dom_fallback():
             self.refresh_count += 1
 
     page = FakePage()
+    dom_batch = [{"geek_id": "g-dom-risk", "name": "张三", "text": "本科，5年 Java"}]
 
     with patch('bossmaster.time.sleep'), \
             patch('bossmaster._human_delay', return_value=0), \
             patch('bossmaster.get_iframe', return_value=None), \
             patch('bossmaster._fetch_api_page_result', side_effect=bossmaster.ApiRiskBlocked(429, 1)) as mock_fetch, \
-            patch('bossmaster._start_recommend_api_listener') as mock_start_listener, \
+            patch('bossmaster._start_recommend_api_listener', return_value=None) as mock_start_listener, \
             patch('bossmaster._consume_recommend_api_candidates') as mock_consume_api, \
             patch('bossmaster._detect_captcha', return_value=(False, "")), \
-            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
-        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=1)
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch) as mock_dom_extract:
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
+            page, max_rounds=1, extraction_mode="api"
+        )
 
-    assert candidates == []
+    assert [c["geek_id"] for c in candidates] == ["g-dom-risk"]
     assert page.refresh_count == 0
     mock_fetch.assert_called_once()
-    mock_start_listener.assert_not_called()
+    mock_start_listener.assert_called_once()
     mock_consume_api.assert_not_called()
-    mock_dom_extract.assert_not_called()
+    mock_dom_extract.assert_called_once()
 
 
 def test_collect_captcha_diagnostic_writes_json_without_screenshot():
@@ -559,7 +572,7 @@ def test_collect_captcha_diagnostic_writes_json_without_screenshot():
         assert "安全验证" in payload["visible_text_excerpt"]
 
 
-def test_refresh_listener_stops_when_refresh_changes_job_identity():
+def test_listener_mode_refreshes_and_warns_when_job_identity_changes():
     class FakeListener:
         def stop(self):
             pass
@@ -580,24 +593,31 @@ def test_refresh_listener_stops_when_refresh_changes_job_identity():
             self.refresh_count += 1
 
     page = FakePage()
+    dom_batch = [{"geek_id": "g-stable-dom", "name": "张三", "text": "本科，5年 Java"}]
 
     with patch('bossmaster.time.sleep'), \
             patch('bossmaster._human_delay', return_value=0), \
             patch('bossmaster.get_iframe', return_value=None), \
             patch('bossmaster._start_recommend_api_listener', return_value=FakeListener()), \
-            patch('bossmaster._fetch_api_page_result', return_value=([], None)), \
-            patch('bossmaster._consume_recommend_api_candidates') as mock_consume_api, \
+            patch('bossmaster._fetch_api_page_result') as mock_fetch, \
+            patch('bossmaster._consume_recommend_api_candidates', return_value=([], "")) as mock_consume_api, \
             patch('bossmaster._detect_captcha', return_value=(False, "")), \
-            patch('bossmaster._extract_cards_batch') as mock_dom_extract:
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch) as mock_dom_extract:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            candidates = bossmaster.extract_candidates_by_comprehensive_analysis(page, max_rounds=1)
+            candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
+                page, max_rounds=1, extraction_mode="listener"
+            )
 
-    assert candidates == []
+    assert [c["geek_id"] for c in candidates] == ["g-stable-dom"]
+    # listener 启动后刷新一次，捕获首屏 API 响应
     assert page.refresh_count == 1
-    assert "刷新后岗位已变化，请先将目标岗位设为默认岗位" in output.getvalue()
-    mock_consume_api.assert_not_called()
-    mock_dom_extract.assert_not_called()
+    # 刷新后岗位标识变化，应打印警告
+    assert "刷新后岗位标识变化" in output.getvalue()
+    mock_fetch.assert_not_called()
+    # consume 被调用两次：弹窗后清空旧数据 + 滚动循环中消费新数据
+    assert mock_consume_api.call_count == 2
+    mock_dom_extract.assert_called_once()
 
 
 def test_find_card_by_scroll_returns_to_top_after_current_position_miss():

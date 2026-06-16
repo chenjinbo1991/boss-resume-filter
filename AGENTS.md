@@ -136,9 +136,14 @@ boss-resume-filter/
 - **随机延迟**：`_human_delay(center, spread)` 所有 sleep 带随机抖动
 - **验证码检测**：`_detect_captcha()` 关键词 + CSS 选择器检测，暂停等待用户完成验证（5 分钟超时）
 - **API 熔断**：`ApiRiskBlocked` 异常，BOSS API 返回 403/412/429 时立即停止扫描，不降级 DOM
-- **安全扫描模式**：GUI 默认开启，跳过 API 直调，先用 `listener + refresh()` 一次捕获页面自然接口数据，失败后回退 DOM 滚动；关闭安全扫描后才启用 API 优先链路
 - **API 读取限速**：API 直调默认约 5-8 秒随机间隔；单次最多读取 `API_CANDIDATE_LIMIT_DEFAULT`（默认 80）人，达到上限停止继续翻页
 - **打招呼限速**：每 `GREET_BATCH_SIZE` 人暂停随机间隔；每轮上限 `AUTO_GREET_RUN_LIMIT`（默认 20）
+
+> **重要架构约束**：BOSS 直聘推荐页使用 `srcdoc` iframe（非 `src` URL），导致 `iframe.run_js('return location.href')` 始终返回 `about:srcdoc`。这意味着：
+>
+> - Listener 监听 (`page.listen`) 无法捕获 API 调用（数据嵌在服务端渲染的 HTML 中，无客户端请求）
+> - API 直调 (`_build_recommend_api_pagination_from_page()`) 无法从 iframe URL 读取 `jobId`
+> - 实际有效的数据提取方式是 **纯 DOM 滚动提取** (`_extract_cards_batch()`)
 
 ### 去重机制
 
@@ -153,7 +158,17 @@ boss-resume-filter/
 
 ### 候选人提取
 
-候选人提取分两种运行方式：GUI 安全扫描默认走 **监听优先链路**（`_start_recommend_api_listener()` + `page.refresh()` 只刷新一次，失败后回退 `_extract_cards_batch()` DOM 滚动提取），稳定性优先且保留部分结构化字段；关闭安全扫描或 CLI 默认走三级链路：**API 直调**（`_build_recommend_api_pagination_from_page()` 从当前页面 URL 读取 jobId 直接调用推荐接口分页，默认单次最多读取 80 人）→ **监听兜底**（`_start_recommend_api_listener()` + `page.refresh()` 触发接口，会重置岗位）→ **DOM 提取**。`_read_recommend_page_identity()` 用于刷新前后比对岗位标识，防止兜底方案静默抓取错误岗位。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
+候选人提取使用 **DOM 滚动提取**（`_extract_cards_batch()`），通过滚动页面逐批加载候选人卡片并解析 DOM 结构。提取流程：
+
+1. 滚动页面触发懒加载
+2. 等待新卡片渲染
+3. 批量提取当前可见的所有卡片
+4. 去重合并到候选人列表
+5. 重复直到触底或达到轮次上限
+
+> **为什么不用 API 监听/直调？** BOSS 直聘推荐页使用 `srcdoc` iframe，`iframe.run_js('return location.href')` 始终返回 `about:srcdoc`，无法获取 jobId 参数。同时页面数据由服务端渲染嵌入 HTML，无客户端 API 调用可供监听。代码中保留了 `_start_recommend_api_listener()` 和 `_build_recommend_api_pagination_from_page()` 等函数，但在当前 BOSS 页面结构下均无效。
+
+`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
 
 ### 滚动提前终止
 

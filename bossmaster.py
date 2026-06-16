@@ -1229,6 +1229,51 @@ def _merge_candidates_into_list(
     return candidates_in_round
 
 
+def _merge_api_enrichment_into_existing(
+    api_candidates: list[dict[str, Any]],
+    all_candidates: list[dict[str, Any]],
+    candidate_index_by_id: dict[str, int],
+) -> int:
+    """Use API/listener data only to enrich candidates already discovered in DOM."""
+    updated = 0
+    for item in api_candidates:
+        geek_id = item.get('geek_id', '') or ''
+        if not geek_id:
+            continue
+        existing_idx = candidate_index_by_id.get(geek_id)
+        if existing_idx is None:
+            continue
+
+        existing = all_candidates[existing_idx]
+        changed = False
+
+        new_summary = item.get('summary', '') or ''
+        if new_summary and len(new_summary) > len(existing.get('summary', '') or ''):
+            existing['summary'] = new_summary
+            existing['name'] = item.get('name') or existing.get('name', '未知')
+            changed = True
+
+        new_structured = item.get('structured') or {}
+        if new_structured:
+            current_structured = existing.get('structured') or {}
+            merged_structured = dict(current_structured)
+            before_structured = dict(merged_structured)
+            for key, value in new_structured.items():
+                if value not in (None, '') and not merged_structured.get(key):
+                    merged_structured[key] = value
+            if merged_structured != before_structured:
+                existing['structured'] = merged_structured
+                changed = True
+
+        if item.get('_api_profile') and not existing.get('_api_profile'):
+            existing['_api_profile'] = item['_api_profile']
+            changed = True
+
+        if changed:
+            updated += 1
+
+    return updated
+
 class _ApiCapture:
     """基于 JS fetch 拦截的 API 响应捕获器。
 
@@ -1246,7 +1291,7 @@ class _ApiCapture:
             const resp = await window.__bossApiCapture.origFetch.apply(this, args);
             try {
                 const url = (typeof args[0] === 'string') ? args[0] : (args[0]?.url || '');
-                if (url.includes('zpjob/rec/geek/list') || url.includes('geek/recommend')) {
+                if (url.includes('geek') && (url.includes('/wapi/') || url.includes('/api/'))) {
                     const clone = resp.clone();
                     const body = await clone.text();
                     window.__bossApiCapture.requests.push({url: url, body: body, method: args[1]?.method || 'GET'});
@@ -1266,7 +1311,7 @@ class _ApiCapture:
         XMLHttpRequest.prototype.send = function(body) {
             var xhr = this;
             var url = xhr.__bossUrl || '';
-            if (url.includes('zpjob/rec/geek/list') || url.includes('geek/recommend')) {
+            if (url.includes('geek') && (url.includes('/wapi/') || url.includes('/api/'))) {
                 xhr.addEventListener('load', function() {
                     try {
                         window.__bossApiCapture.requests.push({
@@ -1355,7 +1400,8 @@ def _start_recommend_api_listener(page: ChromiumPage) -> Any | None:
             listener.stop()
         except Exception:
             pass
-        listener.start("zpjob/rec/geek/list", method=("GET", "POST"), res_type=("XHR", "Fetch"))
+        # BOSS 会调整推荐接口路径；宽监听 geek 相关 XHR，再由 payload parser 判定是否有候选人。
+        listener.start("geek", method=("GET", "POST"), res_type=("XHR", "Fetch"))
         return listener
     except Exception:
         pass
@@ -1404,6 +1450,54 @@ def _consume_recommend_api_candidates(listener: Any | None, timeout: float = 0.0
         timeout = 0.01
 
     return candidates, api_url
+
+
+def _looks_like_recommend_api_url(url: str) -> bool:
+    """Best-effort match for BOSS recommendation API URLs."""
+    lowered = (url or "").lower()
+    return (
+        "geek" in lowered
+        and ("/wapi/" in lowered or "/api/" in lowered)
+        and any(token in lowered for token in ("rec", "recommend", "list"))
+    )
+
+
+def _find_recent_recommend_api_url(*targets: Any) -> str:
+    """Find a recent geek recommendation XHR/fetch URL from browser performance entries."""
+    seen: set[str] = set()
+    urls: list[str] = []
+    js = r'''
+        return (function() {
+            try {
+                return JSON.stringify(
+                    performance.getEntriesByType('resource')
+                        .map(e => e && e.name || '')
+                        .filter(Boolean)
+                        .filter(u => u.indexOf('geek') >= 0 && (u.indexOf('/wapi/') >= 0 || u.indexOf('/api/') >= 0))
+                        .slice(-20)
+                );
+            } catch (e) {
+                return '[]';
+            }
+        })()
+    '''
+    for target in targets:
+        if not target:
+            continue
+        try:
+            raw = target.run_js(js)
+            import json as _json
+            for url in _json.loads(raw or "[]"):
+                if url and url not in seen:
+                    urls.append(url)
+                    seen.add(url)
+        except Exception:
+            continue
+
+    preferred = [url for url in urls if _looks_like_recommend_api_url(url)]
+    if preferred:
+        return preferred[-1]
+    return ""
 
 
 def _parse_api_pagination(url: str) -> dict[str, Any] | None:
@@ -1499,7 +1593,7 @@ def _read_recommend_page_identity(target: Any) -> dict[str, str]:
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(href)
             params = parse_qs(parsed.query, keep_blank_values=True)
-            job_id = (params.get('jobid') or params.get('jobId') or [""])[0]
+            job_id = (params.get('jobid') or params.get('jobId') or params.get('job_id') or [""])[0]
         except Exception:
             job_id = ""
 
@@ -1523,15 +1617,23 @@ def _read_recommend_page_identity(target: Any) -> dict[str, str]:
 
 
 def _same_recommend_page_identity(before: dict[str, str], after: dict[str, str]) -> bool:
-    """判断刷新前后是否仍是同一推荐岗位。"""
+    """判断刷新前后是否仍是同一推荐岗位。
+
+    job_id（URL 参数）是最可靠的标识，两者都读到且相等即可确认同一岗位。
+    title 作为 job_id 不可用时的 fallback，刷新前能读到但刷新后读不到 → 保守视为已变化。
+    """
     before_job = before.get("job_id", "")
     after_job = after.get("job_id", "")
-    if before_job and after_job and before_job != after_job:
+    if before_job and after_job:
+        return before_job == after_job
+    if before_job and not after_job:
         return False
 
     before_title = before.get("job_title", "")
     after_title = after.get("job_title", "")
     if before_title and after_title and before_title != after_title:
+        return False
+    if before_title and not after_title:
         return False
 
     return True
@@ -1608,7 +1710,7 @@ def _fetch_api_page(page: Any, pagination: dict[str, Any], page_num: int) -> lis
     return candidates
 
 
-def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEFAULT, progress_callback=None, stop_event=None, captcha_callback=None, notice_callback=None, max_candidates=API_CANDIDATE_LIMIT_DEFAULT, use_api_extraction=True, extraction_mode=None):
+def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEFAULT, progress_callback=None, stop_event=None, captcha_callback=None, notice_callback=None, blocking_notice_callback=None, max_candidates=API_CANDIDATE_LIMIT_DEFAULT, use_api_extraction=True, extraction_mode=None):
     """通过全面分析提取候选人
 
     Args:
@@ -1618,9 +1720,9 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
         stop_event: threading.Event，设位时立即停止扫描
         captcha_callback: 验证码回调 callable(stage, detail)
         notice_callback: GUI 提示回调 callable(title, message)
-        max_candidates: API 直调读取上限，仅 extraction_mode="api" 的直调分页生效；0 表示不限
+        max_candidates: API 直调补全预算，用于推导最多补全页数；0 表示使用保守默认值
         use_api_extraction: 兼容旧调用；False 等价于 extraction_mode="dom"
-        extraction_mode: 提取模式，api=API直调优先，listener=监听刷新一次后DOM兜底，dom=仅DOM滚动
+        extraction_mode: 提取模式，api=listener+refresh+DOM+API补全，listener=listener+refresh+DOM补全，dom=仅DOM滚动
     """
     print("正在提取候选人...")
     time.sleep(_human_delay(1.0, 0.5))
@@ -1635,15 +1737,74 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
 
     if extraction_mode is None:
         extraction_mode = "api" if use_api_extraction else "dom"
-    api_direct_enabled = extraction_mode == "api"
+    api_enrichment_enabled = extraction_mode == "api"
     listener_enabled = extraction_mode in {"api", "listener"}
 
-    # API 模式优先使用当前 iframe 的 jobid 直接请求推荐接口分页。
-    # listener 模式跳过直调，只刷新一次页面监听自然接口响应；dom 模式只滚动页面。
-    api_pagination = _build_recommend_api_pagination_from_page(target) if api_direct_enabled else None
-    api_listener = None
-    refresh_listener_attempted = not listener_enabled
-    stop_after_identity_mismatch = False
+    # DOM 是候选人来源；listener/API 只能按 geek_id 补全已出现的候选人。
+    api_listener = _start_recommend_api_listener(page) if listener_enabled else None
+    if listener_enabled and not api_listener:
+        print("启动 API 监听失败，将继续使用 DOM 提取")
+    pending_listener_candidates: list[dict[str, Any]] = []
+    pending_listener_url = ""
+    observed_api_url = ""
+    listener_refresh_captured = False
+
+    # listener 启动后刷新一次，让首屏 API 请求被监听器捕获（结构化字段来源）。
+    # 刷新会使页面恢复默认岗位，用 identity 校验检测是否跑偏。
+    if api_listener:
+        identity_before = _read_recommend_page_identity(target)
+        try:
+            page.refresh()
+            # 轮询等待 iframe 内容就绪（候选人卡片出现），最多 10 秒
+            for _wait in range(20):
+                if stop_event and stop_event.is_set():
+                    break
+                time.sleep(0.5)
+                iframe = get_iframe(page)
+                if iframe:
+                    try:
+                        has_cards = iframe.run_js('return !!(document.querySelector("[data-geekid]"))')
+                        if has_cards:
+                            break
+                    except Exception:
+                        pass
+            else:
+                iframe = get_iframe(page)
+            target = iframe if iframe else page
+            identity_after = _read_recommend_page_identity(target)
+            # 刷新后完全读不到身份标识 → 页面未加载完，跳过校验
+            if not identity_after.get("job_id") and not identity_after.get("job_title"):
+                print("刷新后页面加载中，跳过岗位校验")
+            elif not _same_recommend_page_identity(identity_before, identity_after):
+                before_title = identity_before.get("job_title") or identity_before.get("job_id") or "原岗位"
+                after_title = identity_after.get("job_title") or identity_after.get("job_id") or "当前岗位"
+                msg = (f"刷新页面后岗位已变化：\n"
+                       f"  原岗位：{before_title}\n"
+                       f"  当前岗位：{after_title}\n\n"
+                       f"请在浏览器中切回目标岗位后点击「确定」继续。")
+                print(f"⚠️  刷新后岗位标识变化：{before_title} → {after_title}")
+                # 先清空 listener 中错误岗位的旧数据，再弹窗；
+                # 弹窗期间用户切岗产生的新 API 响应会保留在 listener 中
+                _consume_recommend_api_candidates(api_listener, timeout=0.01)
+                _blocker = blocking_notice_callback or notice_callback
+                if _blocker:
+                    _blocker("岗位已变化", msg)
+                else:
+                    input(f"\n⚠️  {msg}\n按 Enter 继续（或 Ctrl+C 中止）...")
+            captured = _consume_recommend_api_candidates(api_listener, timeout=2.0)
+            if isinstance(captured, tuple) and len(captured) == 2:
+                pending_listener_candidates, pending_listener_url = captured
+                listener_refresh_captured = bool(pending_listener_candidates or pending_listener_url)
+                if pending_listener_url:
+                    observed_api_url = pending_listener_url
+            if not observed_api_url:
+                observed_api_url = _find_recent_recommend_api_url(target, page)
+            print(
+                f"listener + refresh 捕获: {len(pending_listener_candidates)} 条, "
+                f"url={pending_listener_url[:80] if pending_listener_url else '(none)'}"
+            )
+        except Exception as e:
+            print(f"刷新页面失败，将继续使用当前页面：{e}")
 
     try:
         for scroll_round in range(max_rounds):
@@ -1667,11 +1828,11 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 pct = int((scroll_round + 1) / max_rounds * 100)
                 progress_callback(pct, f"正在扫描候选人... 第{scroll_round + 1}/{max_rounds}轮")
 
-            # API 直调可直接分页，不需要滚动触发接口；无直调时保留原 DOM 滚动策略。
-            if scroll_round > 0 and not api_pagination:
+            # DOM 扫描始终滚动页面，确保候选人集合和后续可点击列表一致。
+            if scroll_round > 0:
                 if iframe:
                     # 滚动 window + 候选人列表的实际滚动容器
-                    scroll_result = iframe.run_js(f'''
+                    iframe.run_js(f'''
                         (function() {{
                             var winBefore = window.scrollY || 0;
                             window.scrollBy(0, {SCROLL_PX});
@@ -1730,94 +1891,59 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         print(f"检测到'到底'提示，第 {scroll_round + 1} 轮提前终止（累计 {len(all_candidates)} 个候选人）")
                         break
 
-            # 收集候选人：API 结构化数据优先，DOM 兜底
+            # 收集候选人：DOM 建集合，listener 只增强已有 geek_id。
             candidates_in_round = []
 
             try:
                 batch = []
-
-                # API 直调优先；失败时降级为监听消费。
-                if api_pagination:
-                    if scroll_round > 0:
-                        time.sleep(_human_delay(API_PAGE_DELAY_CENTER, API_PAGE_DELAY_SPREAD))
-                    try:
-                        api_candidates, has_more = _fetch_api_page_result(target, api_pagination, scroll_round + 1)
-                    except ApiRiskBlocked as e:
-                        print(f"API 返回疑似风控状态码 {e.status}（第 {e.page_num} 页），停止本轮扫描，避免继续刷新或滚动触发更严格验证。")
-                        break
-                    if not api_candidates and scroll_round == 0:
-                        api_pagination = None
-                        api_candidates = []
-                    elif has_more is False and not api_candidates:
-                        api_pagination = None  # API 分页结束，后续轮次 fallback 到 DOM
-                        continue  # 本轮 API已确认无更多数据，跳过 DOM 直接进入下一轮
-                else:
-                    if listener_enabled and api_listener:
-                        api_candidates, _api_url = _consume_recommend_api_candidates(api_listener)
-                    else:
-                        api_candidates = []
-
-                # 直调不可用且监听尚未捕获首屏时，尝试备用方案：listener + page.refresh()。
-                if not api_candidates and scroll_round == 0 and not refresh_listener_attempted:
-                    refresh_listener_attempted = True
-                    if not api_listener:
-                        api_listener = _start_recommend_api_listener(page)
-                    if not api_listener:
-                        print("启动 API 监听失败，将继续使用 DOM 提取")
-                    else:
-                        before_identity = _read_recommend_page_identity(target)
-                        try:
-                            page.refresh()
-                            time.sleep(_human_delay(1.2, 0.4))
-                            iframe = get_iframe(page)
-                            target = iframe if iframe else page
-                            after_identity = _read_recommend_page_identity(target)
-                            if not _same_recommend_page_identity(before_identity, after_identity):
-                                print("刷新后岗位已变化，请先将目标岗位设为默认岗位。")
-                                stop_after_identity_mismatch = True
-                                break
-                            api_candidates, _api_url = _consume_recommend_api_candidates(api_listener, timeout=2.0)
-                        except Exception as e:
-                            print(f"刷新监听备用方案失败，将继续使用 DOM 提取：{e}")
-
-                # max_candidates 是 API 直调专用读取上限。listener/DOM 兜底不使用这个隐藏指标，
-                # 否则安全扫描开启时会被用户看不到的默认值截断。
-                if api_direct_enabled and api_candidates and max_candidates and max_candidates > 0:
-                    remaining_slots = max_candidates - len(all_candidates)
-                    if remaining_slots <= 0:
-                        print(f"已达到本轮候选人读取上限 {max_candidates} 人，停止继续翻页。")
-                        break
-                    if len(api_candidates) > remaining_slots:
-                        api_candidates = api_candidates[:remaining_slots]
-
-                for item in api_candidates:
-                    item['_source'] = 'api'
-                batch.extend(api_candidates)
-
-                # DOM 提取：API 不可用或本轮无 API 数据时兜底。
-                if not api_candidates:
-                    dom_batch = _extract_cards_batch(target)
-                    for item in dom_batch:
-                        batch.append({
-                            'geek_id': item.get('geek_id', ''),
-                            'name': item.get('name', '未知'),
-                            'summary': item.get('text', ''),
-                            '_source': 'dom',
-                        })
+                dom_batch = _extract_cards_batch(target)
+                for item in dom_batch:
+                    batch.append({
+                        'geek_id': item.get('geek_id', ''),
+                        'name': item.get('name', '未知'),
+                        'summary': item.get('text', ''),
+                        '_source': 'dom',
+                    })
 
                 candidates_in_round = _merge_candidates_into_list(
                     batch, all_candidates, seen_geek_ids, candidate_index_by_id
                 )
+
+                if pending_listener_candidates:
+                    matched = _merge_api_enrichment_into_existing(
+                        pending_listener_candidates, all_candidates, candidate_index_by_id
+                    )
+                    print(
+                        f"listener + refresh 合并: 返回 {len(pending_listener_candidates)} 条, "
+                        f"命中 DOM {matched} 条"
+                    )
+                    pending_listener_candidates = []
+                    pending_listener_url = ""
+
+                if api_listener and not (scroll_round == 0 and listener_refresh_captured):
+                    consumed = _consume_recommend_api_candidates(api_listener)
+                    if isinstance(consumed, tuple) and len(consumed) == 2:
+                        api_candidates, _api_url = consumed
+                        if _api_url:
+                            observed_api_url = _api_url
+                    else:
+                        api_candidates = []
+                    if api_candidates or _api_url:
+                        print(
+                            f"listener 滚动捕获(第 {scroll_round + 1} 轮): "
+                            f"返回 {len(api_candidates)} 条, url={_api_url[:80] if _api_url else '(none)'}"
+                        )
+                    matched = _merge_api_enrichment_into_existing(
+                        api_candidates, all_candidates, candidate_index_by_id
+                    )
+                    if api_candidates or _api_url:
+                        print(f"listener 滚动合并(第 {scroll_round + 1} 轮): 命中 DOM {matched} 条")
 
             except Exception as e:
                 logger.error("提取候选人元素失败(轮次%d): %s", scroll_round + 1, e)
 
             new_count = len(candidates_in_round)
             total_count = len(all_candidates)
-
-            if api_pagination and max_candidates and max_candidates > 0 and total_count >= max_candidates:
-                print(f"已达到本轮候选人读取上限 {max_candidates} 人，停止继续翻页。")
-                break
 
             # 连续空轮次检测（兜底策略，不依赖特定文案）
             if new_count == 0:
@@ -1832,15 +1958,59 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
             if (scroll_round + 1) % 10 == 0 or (scroll_round + 1) == max_rounds:
                 status = f"+{new_count}" if new_count > 0 else "无新增"
                 print(f"轮次 {scroll_round + 1}/{max_rounds}: {status}, 累计 {total_count} 个")
-
-            if stop_after_identity_mismatch:
-                break
     finally:
         if api_listener:
             try:
                 api_listener.stop()
             except Exception:
                 pass
+
+    if api_enrichment_enabled and all_candidates:
+        missing_ids = {
+            c.get('geek_id') for c in all_candidates
+            if c.get('geek_id') and not c.get('structured')
+        }
+        if missing_ids:
+            if not observed_api_url:
+                observed_api_url = _find_recent_recommend_api_url(target, page)
+            pagination = _parse_api_pagination(observed_api_url) if observed_api_url else None
+            if not pagination:
+                pagination = _build_recommend_api_pagination_from_page(target)
+            if pagination:
+                if max_candidates and max_candidates > 0:
+                    page_limit = min(10, max(5, (max_candidates + 19) // 20))
+                else:
+                    page_limit = 5
+                api_job_id = pagination.get('query_params', {}).get('jobId', '')
+                print(
+                    f"API 直调仅补全 DOM 已出现候选人，最多 {page_limit} 页 "
+                    f"(jobId={api_job_id or 'unknown'}, url={pagination.get('base_url', '')})"
+                )
+                for page_num in range(1, page_limit + 1):
+                    if stop_event and stop_event.is_set():
+                        raise StopRequested()
+                    if page_num > 1:
+                        time.sleep(_human_delay(API_PAGE_DELAY_CENTER, API_PAGE_DELAY_SPREAD))
+                    try:
+                        api_candidates, has_more = _fetch_api_page_result(target, pagination, page_num)
+                    except ApiRiskBlocked as e:
+                        print(f"API 返回疑似风控状态码 {e.status}（第 {e.page_num} 页），停止 API 补全。")
+                        break
+                    matched = _merge_api_enrichment_into_existing(
+                        api_candidates, all_candidates, candidate_index_by_id
+                    )
+                    print(
+                        f"API 兜底第 {page_num} 页: 返回 {len(api_candidates)} 条, "
+                        f"命中 DOM {matched} 条, hasMore={has_more}"
+                    )
+                    missing_ids = {
+                        c.get('geek_id') for c in all_candidates
+                        if c.get('geek_id') and not c.get('structured')
+                    }
+                    if not missing_ids:
+                        break
+                    if has_more is False:
+                        break
 
     # 统计 API 结构化数据覆盖率
     _api_count = sum(1 for c in all_candidates if c.get('structured'))
@@ -2434,7 +2604,7 @@ def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
 
     return results
 
-def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None, notice_callback=None, stats=None, max_candidates=API_CANDIDATE_LIMIT_DEFAULT, use_api_extraction=True, extraction_mode=None):
+def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None, notice_callback=None, blocking_notice_callback=None, stats=None, max_candidates=API_CANDIDATE_LIMIT_DEFAULT, use_api_extraction=True, extraction_mode=None):
     """
     智能扫描候选人 - 两阶段模式
 
@@ -2496,7 +2666,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         print(f"已加载 candidates_all.json：累计 {len(all_existing_ids)} 个候选人，{len(greeted_geek_ids)} 人已打招呼{blacklist_text}")
 
     # === 阶段 1: 滚动收集所有候选人 ===
-    raw_candidates = extract_candidates_by_comprehensive_analysis(page, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event, captcha_callback=captcha_callback, notice_callback=notice_callback, max_candidates=max_candidates, use_api_extraction=use_api_extraction, extraction_mode=extraction_mode)
+    raw_candidates = extract_candidates_by_comprehensive_analysis(page, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event, captcha_callback=captcha_callback, notice_callback=notice_callback, blocking_notice_callback=blocking_notice_callback, max_candidates=max_candidates, use_api_extraction=use_api_extraction, extraction_mode=extraction_mode)
     print(f"原始提取到 {len(raw_candidates)} 个唯一候选人")
 
     if blacklisted_geek_ids:
@@ -2946,7 +3116,7 @@ def _show_job_navigation_prompt(current_idx, total, next_job_name, confirm_callb
             print("  继续处理...\n")
 
 
-def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None, existing_page=None, captcha_callback=None, notice_callback=None):
+def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None, existing_page=None, captcha_callback=None, notice_callback=None, blocking_notice_callback=None):
     """运行智能扫描（支持多岗位）
 
     参数：
@@ -2974,14 +3144,14 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         parser.add_argument('--greet-names', type=str, help='点对点打招呼（仅补打招呼模式有效）：指定候选人姓名，多个用逗号分隔')
         parser.add_argument('--list-candidates', action='store_true', help='仅列出候选人，不打招呼')
         parser.add_argument('--rounds', type=int, default=30,
-                            help='最大滚动轮次（默认 30，API 模式推荐 30-50；listener/DOM 深度扫描可手动设为 50-200）')
+                            help='最大 DOM 滚动轮次（默认 30；深度扫描可手动设为 50-200）')
         parser.add_argument('--max-candidates', type=int, default=API_CANDIDATE_LIMIT_DEFAULT,
-                            help=f'单次 API 直调最多读取候选人数（默认 {API_CANDIDATE_LIMIT_DEFAULT}，0 表示不限）')
+                            help=f'API 结构化补全预算（默认 {API_CANDIDATE_LIMIT_DEFAULT}，用于推导最多补全页数）')
         extraction_group = parser.add_mutually_exclusive_group()
         extraction_group.add_argument('--dom-only', action='store_true',
-                                      help='仅使用页面滚动 DOM 提取，不进行 API 直调或 listener 刷新兜底')
+                                      help='仅使用页面滚动 DOM 提取，不进行 listener/API 结构化补全')
         extraction_group.add_argument('--listener-first', action='store_true',
-                                      help='跳过 API 直调，仅使用 listener + refresh 一次，再回退 DOM')
+                                      help='使用 DOM 提取 + listener 结构化补全，不进行 API 直调补全')
         parser.add_argument('--verbose', action='store_true', help='输出详细评分信息（显示技能匹配详情）')
         parser.add_argument('--ai-eval', action='store_true', help='启用 AI 辅助评估：对通过筛选的候选人进行 LLM 二次评分')
         args = parser.parse_args()
@@ -3268,6 +3438,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                                api_key=ai_api_key,
                                                captcha_callback=captcha_callback,
                                                notice_callback=notice_callback,
+                                               blocking_notice_callback=blocking_notice_callback,
                                                max_candidates=getattr(args, 'max_candidates', API_CANDIDATE_LIMIT_DEFAULT),
                                                extraction_mode=extraction_mode,
                                                stats=job_stats)
