@@ -1799,10 +1799,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                     observed_api_url = pending_listener_url
             if not observed_api_url:
                 observed_api_url = _find_recent_recommend_api_url(target, page)
-            print(
-                f"listener + refresh 捕获: {len(pending_listener_candidates)} 条, "
-                f"url={pending_listener_url[:80] if pending_listener_url else '(none)'}"
-            )
+            print(f"listener + refresh 捕获: {len(pending_listener_candidates)} 条")
         except Exception as e:
             print(f"刷新页面失败，将继续使用当前页面：{e}")
 
@@ -1931,7 +1928,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                     if api_candidates or _api_url:
                         print(
                             f"listener 滚动捕获(第 {scroll_round + 1} 轮): "
-                            f"返回 {len(api_candidates)} 条, url={_api_url[:80] if _api_url else '(none)'}"
+                            f"返回 {len(api_candidates)} 条"
                         )
                     matched = _merge_api_enrichment_into_existing(
                         api_candidates, all_candidates, candidate_index_by_id
@@ -1981,11 +1978,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                     page_limit = min(10, max(5, (max_candidates + 19) // 20))
                 else:
                     page_limit = 5
-                api_job_id = pagination.get('query_params', {}).get('jobId', '')
-                print(
-                    f"API 直调仅补全 DOM 已出现候选人，最多 {page_limit} 页 "
-                    f"(jobId={api_job_id or 'unknown'}, url={pagination.get('base_url', '')})"
-                )
+                print(f"API 直调仅补全 DOM 已出现候选人，最多 {page_limit} 页")
                 for page_num in range(1, page_limit + 1):
                     if stop_event and stop_event.is_set():
                         raise StopRequested()
@@ -2001,7 +1994,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                     )
                     print(
                         f"API 兜底第 {page_num} 页: 返回 {len(api_candidates)} 条, "
-                        f"命中 DOM {matched} 条, hasMore={has_more}"
+                        f"命中 DOM {matched} 条"
                     )
                     missing_ids = {
                         c.get('geek_id') for c in all_candidates

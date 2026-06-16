@@ -116,6 +116,9 @@ pip install -r requirements.txt
 # 仅执行发布前检查：不打包、不提交、不推送
 python build.py --check
 
+# 严格发布文案检查：将 CHANGELOG 启发式覆盖、README 逐条镜像、latest.json 同步也作为硬门禁
+python build.py --check --strict-changelog
+
 # 使用自动打包脚本（推荐）
 python build.py
 
@@ -156,6 +159,8 @@ Release 标题和说明必须先写在 `CHANGELOG.md` 对应版本段落中。`p
 - 新增功能
 - 体验优化
 - 问题修复
+
+默认 `python build.py --check` 只把确定性发布契约作为硬门禁；CHANGELOG 条目质量、正反向关键词覆盖、README 与 CHANGELOG 逐条一致、latest.json release_notes 同步属于提示项。需要把这些提示也升级为硬门禁时，显式增加 `--strict-changelog`。
 
 如果打包环境来自 Anaconda，`build.py` 会自动定位并打包：
 

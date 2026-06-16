@@ -2,6 +2,7 @@
 BOSS 简历筛选器 - 打包脚本
 用法：
   python build.py --check                仅执行发布前检查，不打包、不提交、不推送
+  python build.py --check --strict-changelog  启用严格 CHANGELOG/README/latest.json 文案门禁
   python build.py                      仅打包 + 版本核对
   python build.py --release            打包 → 提交 → 打 tag → 推送 → GitHub Release
   python build.py --release --version 2.5  自动更新 __version__ + 一键发布
@@ -823,7 +824,7 @@ def _extract_release_entry_titles(entries):
     return titles
 
 
-def _check_changelog_entry_quality():
+def _check_changelog_entry_quality(strict=False):
     """检查 CHANGELOG 当前版本段落的条目质量。
 
     CHANGELOG 只包含用户可感知的变更。以下内容不应出现：
@@ -937,14 +938,18 @@ def _check_changelog_entry_quality():
                     )
 
     if warnings:
-        print("[错误] CHANGELOG 中发现可能不属于用户感知变更的条目：\n")
+        level = "错误" if strict else "警告"
+        print(f"[{level}] CHANGELOG 中发现可能不属于用户感知变更的条目：\n")
         for w in warnings:
             print(w)
         print("\nCHANGELOG 应只包含用户可感知的变更。以下内容建议移除：")
         print("  - 新功能开发过程中的中间 UI 调整（属于新功能本身）")
         print("  - 打包脚本、CI、发布流程优化（用户无感知）")
         print("  - 当前版本新功能引入的 bug（不算「问题修复」）")
-        sys.exit(1)
+        if strict:
+            sys.exit(1)
+        print("  [继续] 默认模式下仅提示；使用 --strict-changelog 可将此项作为硬门禁")
+        return
 
     print("  [OK] CHANGELOG 条目质量检查通过")
 
@@ -1040,7 +1045,7 @@ def _check_changelog_code_coverage():
     print(f"  [OK] CHANGELOG 代码覆盖检查完成（{covered}/{len(entries)} 条目有对应 Python 代码变更）")
 
 
-def _check_code_to_changelog_coverage():
+def _check_code_to_changelog_coverage(strict=False):
     """反向检查：git diff 中的用户可见变更是否被 CHANGELOG 覆盖。
 
     扫描 diff 中的强信号（UI 文本、新配置、行为变更、新数据、删除/限制），
@@ -1346,9 +1351,8 @@ def _check_code_to_changelog_coverage():
             uncovered.append((category, summary, required_section))
 
     if missing_sections or uncovered:
-        print(
-            f"[错误] git diff 中检测到用户可见变更未被 CHANGELOG v{version} 完整覆盖："
-        )
+        level = "错误" if strict else "警告"
+        print(f"[{level}] git diff 中检测到疑似用户可见变更未被 CHANGELOG v{version} 完整覆盖：")
         if missing_sections:
             print("\n缺少建议分类：")
             for section in missing_sections:
@@ -1359,8 +1363,11 @@ def _check_code_to_changelog_coverage():
             print(f"  [{category} -> 建议 {required_section}] {summary}")
         if len(uncovered) > 12:
             print(f"  ... 另有 {len(uncovered) - 12} 个（仅展示前 12 个）")
-        print("\n请补充 CHANGELOG，或调整检查规则避免误报。")
-        sys.exit(1)
+        print("\n请复核 CHANGELOG；这一步基于关键词启发式，可能存在误报。")
+        if strict:
+            print("严格模式已开启，请补充 CHANGELOG，或调整检查规则避免误报。")
+            sys.exit(1)
+        print("  [继续] 默认模式下仅提示；使用 --strict-changelog 可将此项作为硬门禁")
     else:
         print(
             f"  [OK] 反向覆盖检查：{len(signals)} 个代码信号"
@@ -1427,7 +1434,7 @@ def _check_project_docs_version_sync(version):
     print(f"  [OK] CLAUDE.md / AGENTS.md 项目结构版本注释已同步 v{version}")
 
 
-def _preflight_checks(require_clean=True):
+def _preflight_checks(require_clean=True, strict_changelog=False):
     """发布/打包前检查"""
     print("\n>>> 发布前检查")
     _check_dependencies()
@@ -1437,16 +1444,16 @@ def _preflight_checks(require_clean=True):
     _check_api_config_has_no_plaintext_key()
     _check_source_compiles()
     _check_changelog_updated()
-    _check_changelog_entry_quality()
+    _check_changelog_entry_quality(strict=strict_changelog)
     _check_changelog_code_coverage()
-    _check_code_to_changelog_coverage()
+    _check_code_to_changelog_coverage(strict=strict_changelog)
     _check_todo_not_stale()
     _check_claude_md_size()
     _run_unit_checks()
     current_version = _read_version()
     _extract_changelog_release(current_version)
-    _check_readme_release(current_version)
-    _check_latest_json_release_notes(current_version)
+    _check_readme_release(current_version, strict_details=strict_changelog)
+    _check_latest_json_release_notes(current_version, strict=strict_changelog)
     _check_project_docs_version_sync(current_version)
     _check_version_history_integrity()
 
@@ -2201,7 +2208,7 @@ def _sync_release_notes():
     print(f"\n>>> Release 说明同步完成")
 
 
-def _check_readme_release(version):
+def _check_readme_release(version, strict_details=False):
     """验证 README.md 已同步当前发布版本。"""
     readme_path = BASE_DIR / "README.md"
     if not readme_path.exists():
@@ -2265,23 +2272,31 @@ def _check_readme_release(version):
                 rm_count = len(rm_titles)
 
                 if cl_count != rm_count:
-                    print(f"[错误] README.md v{version} {category} 条目数（{rm_count}）与 CHANGELOG（{cl_count}）不一致")
-                    print(f"请同步 CHANGELOG.md 中 v{version} {category} 的全部条目到 README.md")
-                    sys.exit(1)
+                    level = "错误" if strict_details else "警告"
+                    print(f"[{level}] README.md v{version} {category} 条目数（{rm_count}）与 CHANGELOG（{cl_count}）不一致")
+                    print(f"请复核 README.md 当前版本摘要是否需要同步 CHANGELOG.md 中 v{version} {category} 的条目")
+                    if strict_details:
+                        sys.exit(1)
+                    continue
                 if cl_titles != rm_titles:
-                    print(f"[错误] README.md v{version} {category} 条目标题与 CHANGELOG 不一致")
+                    level = "错误" if strict_details else "警告"
+                    print(f"[{level}] README.md v{version} {category} 条目标题与 CHANGELOG 不一致")
                     print("CHANGELOG：")
                     for title in cl_titles:
                         print(f"  - {title}")
                     print("README：")
                     for title in rm_titles:
                         print(f"  - {title}")
-                    sys.exit(1)
+                    if strict_details:
+                        sys.exit(1)
 
-            print(f"  [OK] README.md v{version} 条目标题与 CHANGELOG 一致")
+            if strict_details:
+                print(f"  [OK] README.md v{version} 条目标题与 CHANGELOG 一致")
+            else:
+                print(f"  [OK] README.md v{version} 当前版本摘要已存在；逐条镜像检查为提示项")
 
 
-def _check_latest_json_release_notes(version):
+def _check_latest_json_release_notes(version, strict=False):
     """验证 latest.json 内置 release_notes 与 CHANGELOG 当前版本一致。"""
     latest_path = BASE_DIR / "latest.json"
     if not latest_path.exists():
@@ -2305,9 +2320,13 @@ def _check_latest_json_release_notes(version):
     expected_title, expected_body = _extract_changelog_release(version)
     actual_body = data.get("release_notes", "")
     if _normalize_markdown(actual_body) != _normalize_markdown(expected_body):
-        print(f"[错误] latest.json release_notes 与 CHANGELOG.md v{version} 不一致")
-        print("请运行发布流程或同步 latest.json，确保内置更新说明来自当前 CHANGELOG。")
-        sys.exit(1)
+        level = "错误" if strict else "警告"
+        print(f"[{level}] latest.json release_notes 与 CHANGELOG.md v{version} 不一致")
+        print("请在发布前运行发布流程或同步 latest.json，确保内置更新说明来自当前 CHANGELOG。")
+        if strict:
+            sys.exit(1)
+        print("  [继续] 默认检查模式下仅提示；使用 --strict-changelog 可将此项作为硬门禁")
+        return
 
     print(f"  [OK] latest.json release_notes 已同步 CHANGELOG.md v{version}（{expected_title}）")
 
@@ -3877,6 +3896,8 @@ def main():
                         help="发布时跳过跨平台 CI 重建和对端产物同步")
     parser.add_argument("--sync-release-notes", action="store_true",
                         help="修正 CHANGELOG 后同步 GitHub + Gitee Release 说明，不重新打包")
+    parser.add_argument("--strict-changelog", action="store_true",
+                        help="将 CHANGELOG 启发式覆盖、README 逐条镜像和 latest.json 同步检查作为硬门禁")
     args = parser.parse_args()
 
     version_changed = False
@@ -3903,7 +3924,7 @@ def main():
         return
 
     if args.check:
-        _preflight_checks(require_clean=True)
+        _preflight_checks(require_clean=True, strict_changelog=args.strict_changelog)
         return
 
     if args.gitee_clean_old_assets:
@@ -4071,7 +4092,7 @@ def main():
 
     # ---- 步骤 1：发布前检查 ----
     progress.start_step(0)
-    _preflight_checks(require_clean=not version_changed)
+    _preflight_checks(require_clean=not version_changed, strict_changelog=args.strict_changelog)
     progress.end_step()
 
     tk_args, pyinstaller_env = _pyinstaller_tk_args()

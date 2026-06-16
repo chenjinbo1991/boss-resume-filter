@@ -800,7 +800,7 @@ def test_auto_greet_limit_triggers_notice_and_caps_greetings():
     }
     raw_candidates = [
         {"geek_id": f"g-{i}", "name": f"候选人{i}", "summary": "本科，5 年 Java"}
-        for i in range(25)
+        for i in range(bossmaster.AUTO_GREET_RUN_LIMIT + 5)
     ]
     notices = []
 

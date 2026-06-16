@@ -9,7 +9,7 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.11.3）
+├── gui_main.py           # 图形界面主程序（v2.11.4）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
@@ -74,7 +74,8 @@ boss-resume-filter/
 
 #### 发布命令
 
-- `python build.py --check`：仅发布前检查，不打包不提交不推送；覆盖 README/CHANGELOG 当前版本、历史版本、发布分类校验和条目质量审查
+- `python build.py --check`：仅发布前检查，不打包不提交不推送；确定性校验（版本、README/CHANGELOG 当前版本、历史版本、发布分类、测试）失败会中断；CHANGELOG 语义覆盖、README 逐条镜像、latest.json release_notes 同步默认只提示
+- `python build.py --check --strict-changelog`：启用严格文案门禁，将 CHANGELOG 启发式覆盖、README 逐条镜像和 latest.json 同步检查也作为硬失败
 - `python build.py --sync-release-notes`：修正 CHANGELOG 后同步 GitHub + Gitee Release 说明，不重新打包
 - `python build.py`：自动打包（Windows EXE / macOS .app+ZIP+DMG），`IS_MAC`/`IS_WIN` 自动检测
 - `python build.py --release [--auto] [--version X.Y]`：打包→提交→tag→推送确认→GitHub Release 上传→Gitee 同步
@@ -88,8 +89,9 @@ boss-resume-filter/
 - 推送前 `input()` 确认 [y/N]；tag 冲突时自动 `--force`（master 除外）
 
 #### CHANGELOG 核实规范（双向验证）
-- **正向**（CHANGELOG → 代码）：`build.py --check` 自动化覆盖条目质量和 README 同步
-- **反向**（代码 → CHANGELOG）：`git diff` 逐文件扫描 5 类用户可见变更（UI 文本、新配置、行为变更、新数据、删除/限制），与 CHANGELOG 交叉比对；三个分类各自独立验证，不假设任何分类已完整
+- **硬门禁**：当前版本段落、发布分类顺序、README 当前版本入口、历史版本完整性、源码编译和回归测试必须通过
+- **提示项**：条目质量、正向覆盖（CHANGELOG → 代码）、反向覆盖（代码 → CHANGELOG）、README 与 CHANGELOG 逐条一致、latest.json release_notes 同步默认只提示，避免启发式误报反复打断开发
+- **严格模式**：需要发布文案洁癖审查时运行 `python build.py --check --strict-changelog`，此时上述提示项升级为硬门禁
 
 #### 打包体积优化（当前 Windows 约 36.4MB，macOS ZIP/DMG 约 31-33MB）
 

@@ -900,6 +900,96 @@ def test_update_latest_json_requires_complete_auto_update_metadata():
                     raise AssertionError("missing macos metadata should block latest.json publication")
 
 
+def test_readme_release_detail_mismatch_is_warning_by_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (tmp_path / "CHANGELOG.md").write_text(
+            "\n".join([
+                "## v9.9.9 — 测试版本",
+                "",
+                "### 新增功能",
+                "- **功能 A**：说明",
+                "- **功能 B**：说明",
+                "",
+                "### 体验优化",
+                "- **优化 A**：说明",
+                "",
+                "### 问题修复",
+                "- **修复 A**：说明",
+            ]),
+            encoding="utf-8",
+        )
+        (tmp_path / "README.md").write_text(
+            "\n".join([
+                "> 当前发布版本：v9.9.9 测试版本",
+                "",
+                "### v9.9.9 测试版本",
+                "",
+                "**新增功能**",
+                "- **功能 A**：摘要",
+                "",
+                "**体验优化**",
+                "- **优化 A**：摘要",
+                "",
+                "**问题修复**",
+                "- **修复 A**：摘要",
+                "",
+                "├── gui_main.py            # 图形界面主程序（v9.9.9）",
+            ]),
+            encoding="utf-8",
+        )
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                build._check_readme_release("9.9.9", strict_details=False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    build._check_readme_release("9.9.9", strict_details=True)
+                except SystemExit as exc:
+                    assert exc.code == 1
+                else:
+                    raise AssertionError("strict README detail check should fail on title/count mismatch")
+
+
+def test_latest_json_release_notes_mismatch_is_warning_by_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (tmp_path / "CHANGELOG.md").write_text(
+            "\n".join([
+                "## v9.9.9 — 测试版本",
+                "",
+                "### 新增功能",
+                "- **功能 A**：说明",
+                "",
+                "### 体验优化",
+                "- **优化 A**：说明",
+                "",
+                "### 问题修复",
+                "- **修复 A**：说明",
+            ]),
+            encoding="utf-8",
+        )
+        (tmp_path / "latest.json").write_text(
+            json.dumps({"version": "9.9.9", "release_notes": "stale"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with _with_build_context(tmp_path, dist_dir, is_win=True, is_mac=False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                build._check_latest_json_release_notes("9.9.9", strict=False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    build._check_latest_json_release_notes("9.9.9", strict=True)
+                except SystemExit as exc:
+                    assert exc.code == 1
+                else:
+                    raise AssertionError("strict latest.json release notes check should fail")
+
+
 def test_update_latest_json_skips_when_content_is_unchanged():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -1179,4 +1269,3 @@ def test_windows_update_script_resets_pyinstaller_runtime_env():
     assert 'if exist "%OLD_EXE%.old" del' not in bat_content
     assert 'Previous version kept at %OLD_EXE%.old' in bat_content
     assert 'if exist "%FAILED_FILE%" del /f /q "%FAILED_FILE%"' in bat_content
-
