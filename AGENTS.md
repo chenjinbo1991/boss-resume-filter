@@ -9,7 +9,7 @@ boss-resume-filter/
 ├── llm_eval.py           # LLM 辅助评估模块（prompt 构建、API 调用、批量评估）
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.11.2）
+├── gui_main.py           # 图形界面主程序（v2.11.3）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
@@ -136,6 +136,8 @@ boss-resume-filter/
 - **随机延迟**：`_human_delay(center, spread)` 所有 sleep 带随机抖动
 - **验证码检测**：`_detect_captcha()` 关键词 + CSS 选择器检测，暂停等待用户完成验证（5 分钟超时）
 - **API 熔断**：`ApiRiskBlocked` 异常，BOSS API 返回 403/412/429 时立即停止扫描，不降级 DOM
+- **安全扫描模式**：GUI 默认开启，跳过 API 直调，先用 `listener + refresh()` 一次捕获页面自然接口数据，失败后回退 DOM 滚动；关闭安全扫描后才启用 API 优先链路
+- **API 读取限速**：API 直调默认约 5-8 秒随机间隔；单次最多读取 `API_CANDIDATE_LIMIT_DEFAULT`（默认 80）人，达到上限停止继续翻页
 - **打招呼限速**：每 `GREET_BATCH_SIZE` 人暂停随机间隔；每轮上限 `AUTO_GREET_RUN_LIMIT`（默认 20）
 
 ### 去重机制
@@ -151,7 +153,7 @@ boss-resume-filter/
 
 ### 候选人提取
 
-三级提取链路：**API 直调**（`_build_recommend_api_pagination_from_page()` 从当前页面 URL 读取 jobId 直接调用推荐接口分页）→ **监听兜底**（`_start_recommend_api_listener()` + `page.refresh()` 触发接口，会重置岗位）→ **DOM 提取**（`_extract_cards_batch()` 滚动提取）。API 直调不触发页面刷新，是默认首选。`_read_recommend_page_identity()` 用于刷新前后比对岗位标识，防止兜底方案静默抓取错误岗位。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
+候选人提取分两种运行方式：GUI 安全扫描默认走 **监听优先链路**（`_start_recommend_api_listener()` + `page.refresh()` 只刷新一次，失败后回退 `_extract_cards_batch()` DOM 滚动提取），稳定性优先且保留部分结构化字段；关闭安全扫描或 CLI 默认走三级链路：**API 直调**（`_build_recommend_api_pagination_from_page()` 从当前页面 URL 读取 jobId 直接调用推荐接口分页，默认单次最多读取 80 人）→ **监听兜底**（`_start_recommend_api_listener()` + `page.refresh()` 触发接口，会重置岗位）→ **DOM 提取**。`_read_recommend_page_identity()` 用于刷新前后比对岗位标识，防止兜底方案静默抓取错误岗位。`filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
 
 ### 滚动提前终止
 

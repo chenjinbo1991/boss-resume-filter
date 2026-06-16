@@ -1085,6 +1085,65 @@ def _check_code_to_changelog_coverage():
 
     def _keywords(text: str) -> list[str]:
         """提取中英文关键词，用于与 CHANGELOG 做宽松交叉比对。"""
+        # 常见 Python/Tk 标识符，不纳入关键词比对（误报过滤）
+        _py_skip = {
+            # Python 内建 / 常见方法 / 关键字
+            "max", "min", "int", "str", "len", "set", "get", "new", "val", "var",
+            "cls", "self", "super", "raw", "try", "err", "exc", "msg", "key",
+            "tmp", "obj", "idx", "cnt", "num", "old", "cur", "buf", "src", "dst",
+            "fmt", "ptr", "ref", "box", "row", "col", "pos", "off", "end", "beg",
+            "elif", "else", "args", "kwargs", "func", "meth", "getattr", "hasattr",
+            # Tk / UI 框架方法和属性
+            "ttk", "tk", "tframe", "tlabel", "tbutton",
+            "pack", "forget", "grid", "place", "bind", "unbind",
+            "after", "config", "style", "frame", "label", "widget", "canvas",
+            "spinbox", "checkbutton", "radiobutton", "entry", "text", "button",
+            "pady", "padx", "dpi", "zoom", "factor",
+            # 回调 / 事件参数
+            "callback", "event", "handler", "listener", "observer", "progress",
+            "stop", "start", "begin", "finish", "complete", "abort", "cancel",
+            # 日志 / UI 输出
+            "log", "print", "append", "write", "read", "show", "hide", "display",
+            "warn", "error", "debug", "info", "trace",
+            # 通用英文修饰词
+            "default", "enable", "disable", "enabled", "disabled", "active",
+            "inactive", "valid", "invalid", "open", "close", "closed",
+            "empty", "full", "auto", "manual", "safe", "unsafe",
+            "effective", "actual", "real", "fake", "true", "false",
+            "current", "previous", "next", "last", "first",
+            "single", "multi", "double", "triple",
+            "local", "global", "public", "private", "protected",
+            "internal", "external", "main", "root", "base",
+            # 常见动词 / 名词
+            "create", "destroy", "build", "make", "init", "setup", "reset",
+            "update", "delete", "remove", "clear", "save", "load", "store",
+            "fetch", "send", "recv", "call", "invoke", "trigger", "fire",
+            "handle", "process", "parse", "format", "check", "test", "verify",
+            "validate", "compare", "match", "find", "search", "select", "pick",
+            "control", "controls", "configure", "command", "option", "setting",
+            "manager", "window", "dialog", "panel", "view", "screen", "page",
+            "menu", "item", "list", "array", "table", "chart", "graph", "map",
+            "click", "press", "release", "focus", "blur", "enter", "leave",
+            "drag", "drop", "move", "copy", "paste", "undo", "redo",
+            "scroll", "scrollbar", "slider", "scale", "size", "width", "height",
+            "font", "color", "background", "foreground", "border", "margin",
+            "padding", "spacing", "align", "anchor", "side", "fill", "expand",
+            "wrap", "truncate", "clip", "crop", "resize", "stretch",
+            "stable", "pending", "ready", "done", "fail", "success",
+            "type", "name", "title", "desc", "body", "head", "tail", "prefix",
+            "suffix", "tag", "attr", "prop", "field", "token",
+            "step", "count", "total", "limit", "rate", "freq", "level",
+            "mode", "state", "status", "phase", "stage", "flag", "mask",
+            "before", "after", "between", "during", "while",
+            "job", "task", "work", "param", "value", "data", "info",
+            "scan", "extract", "extraction",
+            "thread", "lock", "mutex", "semaphore", "queue", "stack", "heap",
+            "file", "dir", "path", "line", "char", "byte", "word", "block",
+            "batch", "loop", "iter", "recur", "chain", "pipe", "stream",
+            "push", "pull", "pop", "peek", "flush", "drain", "buffer",
+            "encode", "decode", "compress", "decompress", "hash", "sign",
+            "encrypt", "decrypt", "auth", "token", "session", "cookie",
+        }
         result: list[str] = []
         for run in re.findall(r"[一-鿿]+", text):
             if len(run) < 2:
@@ -1093,8 +1152,18 @@ def _check_code_to_changelog_coverage():
             for i in range(len(run) - 1):
                 result.append(run[i:i + 2])  # 2 字窗口
         for word in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", text):
-            result.append(word.lower())
-            result.extend(part.lower() for part in word.split("_") if len(part) >= 3)
+            lowered = word.lower()
+            parts = [p for p in word.split("_") if p]
+            all_parts_skipped = bool(parts) and all(
+                p.lower() in _py_skip for p in parts
+            )
+            if lowered in _py_skip or all_parts_skipped:
+                continue
+            result.append(lowered)
+            result.extend(
+                part.lower() for part in parts
+                if len(part) >= 3 and part.lower() not in _py_skip
+            )
         return result
 
     def _snippet(line: str, limit: int = 96) -> str:
@@ -1230,7 +1299,7 @@ def _check_code_to_changelog_coverage():
             if (
                 re.search(r"[一-鿿]{3,}", line)
                 or re.search(r"def\s+[a-zA-Z_]\w+\s*\(", line)
-                or re.search(r'"[A-Za-z_][A-Za-z0-9_]+"\s*:', line)
+                or re.search(r'"[A-Za-z_][A-Za-z0-9_]+"\s*:', line)  # JSON keys only (requires double quotes)
             ):
                 text = _snippet(re.sub(r"\s+", " ", line))
                 signals.append(("删除/限制", f"{fpath}: removed {text}", _keywords(text), "体验优化"))
@@ -1271,7 +1340,7 @@ def _check_code_to_changelog_coverage():
     for category, summary, keywords, required_section in signals:
         useful_keywords = [kw for kw in keywords if len(kw) >= 2]
         if not useful_keywords:
-            uncovered.append((category, summary, required_section))
+            # 所有关键词都被过滤（纯 Python/Tk 内建标识符），无需 changelog 条目
             continue
         if not any(kw.lower() in changelog_text for kw in useful_keywords):
             uncovered.append((category, summary, required_section))

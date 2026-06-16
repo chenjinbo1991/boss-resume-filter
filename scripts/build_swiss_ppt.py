@@ -330,7 +330,7 @@ SLIDES = r"""
         <div style="display:flex;flex-direction:column;gap:1vh;padding-top:2vh;border-top:1px solid var(--grey-2)">
           <div class="t-meta">— 02</div>
           <h3 style="font-family:var(--sans),var(--sans-zh);font-weight:300;font-size:min(2vw,3.6vh);line-height:1.1;letter-spacing:-.015em">滚动轮次</h3>
-          <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.88vw);line-height:1.55;opacity:.78">默认 100；少量测试可设 20-50</p>
+          <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.88vw);line-height:1.55;opacity:.78">安全扫描默认 100；API 模式默认 30</p>
         </div>
         <div style="display:flex;flex-direction:column;gap:1vh;padding-top:2vh;border-top:1px solid var(--grey-2)">
           <div class="t-meta">— 03</div>
@@ -517,7 +517,7 @@ SLIDES = r"""
           <ul class="col-list">
             <li>先只配置规则，不启用 AI</li>
             <li>打招呼策略选「不打招呼（仅筛选）」</li>
-            <li>滚动轮次设为 20-50（少量测试）</li>
+            <li>安全扫描开启，滚动轮次 50-200</li>
             <li>看结果里的误杀、误放</li>
             <li>调整岗位规则</li>
             <li>确认规则后开启「仅强烈推荐」</li>
@@ -530,7 +530,7 @@ SLIDES = r"""
           <ul class="col-list">
             <li>检查浏览器连接状态</li>
             <li>确认 BOSS 当前职位正确</li>
-            <li>运行筛选（滚动轮次 100）</li>
+            <li>运行筛选（安全扫描默认 100 轮）</li>
             <li>查看筛选结果</li>
             <li>导出 Excel</li>
             <li>查看统计，判断是否微调规则</li>
@@ -601,7 +601,7 @@ SLIDES = r"""
             <div style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,7.8vh);line-height:.9;color:var(--text-primary)">01</div>
             <div>
               <h3 style="font-family:var(--sans),var(--sans-zh);font-weight:400;font-size:max(18px,1.8vw);line-height:1.2;letter-spacing:-.015em;color:var(--text-primary);margin-bottom:1vh">新岗位先试跑</h3>
-              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">先用「仅筛选」模式跑 20-50 轮，确认规则无误杀误放后再开打招呼。</p>
+              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">先用「仅筛选」模式和安全扫描跑 50-200 轮，确认规则无误杀误放后再开打招呼。</p>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:start;padding:2.6vh 0;border-top:1px solid var(--border-subtle)">
