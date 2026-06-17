@@ -44,6 +44,7 @@ test_output.txt
 release_notes_cache.json
 .build_progress.json
 .build_state.json
+tests/manual/recon_output/
 
 # 孤儿文件（无引用，不纳入版本控制）
 input.txt
