@@ -33,6 +33,8 @@ _FEEDBACK_FIELDS = (
     'resume_eval_reason',
     'resume_eval_model',
     'resume_eval_at',
+    'greet_context',
+    'greet_context_updated_at',
 )
 
 # 有时间戳的字段组：(时间戳字段, (关联数据字段...))
@@ -41,6 +43,7 @@ _TIMESTAMP_FIELD_GROUPS = (
     ('feedback_updated_at', ('feedback_status', 'feedback_note')),
     ('followup_updated_at', ('followup_status', 'followup_note')),
     ('blacklisted_at', ('blacklisted', 'blacklist_reason')),
+    ('greet_context_updated_at', ('greet_context',)),
 )
 _TIMESTAMPED_FIELDS = frozenset(
     f for ts_f, related in _TIMESTAMP_FIELD_GROUPS for f in (ts_f, *related)

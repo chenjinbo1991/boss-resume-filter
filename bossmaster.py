@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from DrissionPage import ChromiumPage
 
@@ -89,6 +90,14 @@ RECOMMEND_PAGE_URL_PARTS = (
     "zhipin.com/web/frame/recommend",
 )
 RECOMMEND_PAGE_URL = "https://www.zhipin.com/web/chat/recommend"
+GREET_CONTEXT_VERSION = 1
+GREET_CONTEXT_CAPTURE_LIMIT = 30
+GREET_CONTEXT_MIN_SCORE = 60
+GREET_CONTEXT_DELAY_CENTER = 1.2
+GREET_CONTEXT_DELAY_SPREAD = 0.7
+GREET_CONTEXT_BATCH_SIZE = 10
+GREET_CONTEXT_BATCH_PAUSE_CENTER = 5.0
+GREET_CONTEXT_BATCH_PAUSE_SPREAD = 2.5
 
 
 def _ensure_recommend_page(page: Any, notice_callback=None, context: str = "运行") -> bool:
@@ -2010,6 +2019,16 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
     if all_candidates:
         print(f"API 结构化数据: {_api_count}/{len(all_candidates)} 人"
               f" ({_api_count * 100 // len(all_candidates)}%)")
+        # 拆分 listener 与 API 兜底的贡献（首次合并者胜，已在 _merge_... 中标记）
+        _listener_enriched = sum(
+            1 for c in all_candidates if c.get('_enriched_by') == 'listener'
+        )
+        _api_fb_enriched = sum(
+            1 for c in all_candidates if c.get('_enriched_by') == 'api_fallback'
+        )
+        if _listener_enriched or _api_fb_enriched:
+            print(f"  ├─ listener 结构化: {_listener_enriched} 人")
+            print(f"  └─ API 兜底结构化: {_api_fb_enriched} 人")
 
     print(f"\n=== 提取完成 ===")
     print(f"总共找到 {len(all_candidates)} 个候选人")
@@ -2119,6 +2138,360 @@ def _find_card_by_scroll(target, card_css, stop_event=None, max_scrolls=MAX_SCRO
             pass
 
     return None
+
+
+def _parse_greet_context_from_detail_url(detail_url: str) -> dict[str, Any]:
+    """Build a persisted greet_context from a BOSS candidate detail API URL."""
+    if not detail_url or "/wapi/zpjob/view/geek/info" not in detail_url:
+        return {}
+    parsed = urlparse(detail_url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+
+    def first(name: str) -> str:
+        values = params.get(name) or []
+        return str(values[0]) if values else ""
+
+    jid = first("encryptJid") or first("encryptExpectId")
+    expect_id = first("expectId")
+    security_id = first("securityId")
+    lid = first("lid")
+    if not jid or not security_id or not lid:
+        return {}
+
+    detail_api = {
+        "endpoint": parsed.path,
+        "encryptJid": first("encryptJid"),
+        "encryptExpectId": first("encryptExpectId"),
+        "expectId": expect_id,
+        "securityId": security_id,
+        "lid": lid,
+        "entrance": first("entrance"),
+        "wayType": first("wayType"),
+        "sourceType": first("sourceType"),
+    }
+    chat_start = {
+        "jid": jid,
+        "expectId": expect_id,
+        "lid": lid,
+        "securityId": security_id,
+        "greet": "",
+        "customGreetingGuide": "-1",
+    }
+    return {
+        "version": GREET_CONTEXT_VERSION,
+        "captured_at": datetime.now().isoformat(timespec="seconds"),
+        "source": "detail_api",
+        "detail_api": {k: v for k, v in detail_api.items() if v not in ("", None)},
+        "chat_start": chat_start,
+    }
+
+
+def _extract_detail_url_from_packet(packet: Any) -> str:
+    """Best-effort URL extraction for DrissionPage listener packets."""
+    try:
+        url = getattr(packet, "url", "") or ""
+        if url:
+            return str(url)
+    except Exception:
+        pass
+    try:
+        request = getattr(packet, "request", None)
+        return str(getattr(request, "url", "") or "")
+    except Exception:
+        return ""
+
+
+def _recent_detail_api_urls(*targets: Any) -> list[str]:
+    """Read recent candidate detail API URLs from browser performance entries."""
+    urls: list[str] = []
+    seen: set[str] = set()
+    js = r'''
+        return (function() {
+            try {
+                return JSON.stringify(
+                    performance.getEntriesByType('resource')
+                        .map(e => e && e.name || '')
+                        .filter(Boolean)
+                        .filter(u => u.indexOf('/wapi/zpjob/view/geek/info') >= 0)
+                        .slice(-50)
+                );
+            } catch (e) {
+                return '[]';
+            }
+        })()
+    '''
+    expanded_targets: list[Any] = []
+    for target in targets:
+        if not target:
+            continue
+        expanded_targets.append(target)
+        try:
+            expanded_targets.extend(target.eles("tag:iframe"))
+        except Exception:
+            pass
+    for target in expanded_targets:
+        try:
+            raw = target.run_js(js) or "[]"
+            for url in json.loads(raw):
+                if url and url not in seen:
+                    urls.append(url)
+                    seen.add(url)
+        except Exception:
+            continue
+    return urls
+
+
+def _clear_resource_timings(*targets: Any) -> None:
+    """Clear browser resource timing buffers before one detail-capture attempt."""
+    expanded_targets: list[Any] = []
+    for target in targets:
+        if not target:
+            continue
+        expanded_targets.append(target)
+        try:
+            expanded_targets.extend(target.eles("tag:iframe"))
+        except Exception:
+            pass
+    for target in expanded_targets:
+        try:
+            target.run_js("try { performance.clearResourceTimings(); } catch (e) {}", timeout=1)
+        except Exception:
+            continue
+
+
+def _click_candidate_card_for_detail(target: Any, geek_id: str) -> bool:
+    """Open a candidate detail panel by clicking the card body, avoiding action buttons."""
+    script = r'''
+        const card = document.querySelector('[data-geekid="' + arguments[0] + '"]');
+        if (!card) return false;
+        card.scrollIntoView({block: 'center', inline: 'nearest'});
+        const blocked = /(立即沟通|继续沟通|打招呼|聊天|联系|收藏|点赞|分享)/;
+        let opener = null;
+        const candidates = Array.from(card.querySelectorAll('*')).filter(el => {
+            const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+            const tag = (el.tagName || '').toLowerCase();
+            if (!text || blocked.test(text)) return false;
+            if (tag === 'button' || tag === 'a') return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width >= 40 && rect.height >= 16;
+        });
+        opener = candidates.find(el => /(name|info|content|title|text)/i.test(el.className || ''))
+              || candidates[0]
+              || card;
+        if (typeof opener.click === 'function') {
+            opener.click();
+        } else {
+            opener.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+        }
+        return true;
+    '''
+    try:
+        return bool(target.run_js(script, str(geek_id)))
+    except Exception:
+        return False
+
+
+def _close_detail_drawer(page: ChromiumPage) -> None:
+    """Close the candidate detail drawer after greet_context capture.
+
+    Two ESC strategies: (1) real browser-level key via CDP Actions, which
+    fires through the native event path and is more reliable than synthetic
+    events; (2) synthetic KeyboardEvent on document as fallback.
+    """
+    # Strategy 1: real browser-level ESC via CDP Actions.
+    try:
+        page.actions.key_down('Escape')
+        page.actions.key_up('Escape')
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+    # Strategy 2: synthetic ESC on document (original behaviour, fallback).
+    try:
+        iframe = get_iframe(page) or page
+        iframe.run_js(
+            "document.dispatchEvent(new KeyboardEvent('keydown', "
+            "{key:'Escape', code:'Escape', keyCode:27, bubbles:true}))"
+        )
+    except Exception:
+        pass
+
+
+def _capture_greet_context_from_list_page(
+    page: ChromiumPage,
+    geek_id: str,
+    stop_event=None,
+    timeout: float = 4.0,
+) -> tuple[dict[str, Any], str]:
+    """Open candidate detail from the recommendation list and capture greet_context.
+
+    This is a best-effort enrichment step. It must not be treated as required for
+    scanning or filtering because BOSS page structure and account state can drift.
+    """
+    if stop_event and stop_event.is_set():
+        return {}, "已停止"
+    try:
+        iframe = get_iframe(page)
+        target = iframe if iframe else page
+        card_css = _sel('candidate_card', 'card_by_id_css',
+                        'css:[data-geekid="{geek_id}"]').format(geek_id=geek_id)
+        card = target.ele(card_css, timeout=1)
+        if not card:
+            card = _find_card_by_scroll(target, card_css, stop_event=stop_event, max_scrolls=8)
+        if not card:
+            return {}, "未找到候选人卡片"
+
+        _clear_resource_timings(page)
+
+        if not _click_candidate_card_for_detail(target, geek_id):
+            return {}, "打开详情失败"
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if stop_event and stop_event.is_set():
+                break
+            for url in _recent_detail_api_urls(page):
+                context = _parse_greet_context_from_detail_url(url)
+                if context:
+                    return context, "成功"
+            time.sleep(0.25)
+        return {}, "未捕获详情接口"
+    except Exception as exc:
+        return {}, f"异常: {str(exc)[:50]}"
+    finally:
+        try:
+            _close_detail_drawer(page)
+        except Exception:
+            pass
+
+
+def enrich_greet_contexts_for_candidates(
+    page: ChromiumPage,
+    candidates: list[dict[str, Any]],
+    stop_event=None,
+    max_count: int | None = None,
+) -> int:
+    """Best-effort enrichment of saved greet_context for candidate records."""
+    enriched = 0
+    attempted = 0
+    for candidate in candidates:
+        if stop_event and stop_event.is_set():
+            raise StopRequested()
+        if candidate.get("greet_context", {}).get("chat_start"):
+            continue
+        geek_id = candidate.get("geek_id")
+        if not geek_id:
+            continue
+        if max_count is not None and attempted >= max_count:
+            break
+        attempted += 1
+        if attempted > 1 and (attempted - 1) % GREET_CONTEXT_BATCH_SIZE == 0:
+            pause = _human_delay(GREET_CONTEXT_BATCH_PAUSE_CENTER, GREET_CONTEXT_BATCH_PAUSE_SPREAD)
+            print(f"  已补抓 {attempted - 1} 人上下文，暂停 {int(pause)} 秒降低访问频率...")
+            time.sleep(pause)
+        context, msg = _capture_greet_context_from_list_page(page, str(geek_id), stop_event=stop_event)
+        if context:
+            candidate["greet_context"] = context
+            enriched += 1
+            print(f"  已保存 {candidate.get('name', '候选人')} 的打招呼上下文")
+        else:
+            print(f"  未保存 {candidate.get('name', '候选人')} 的打招呼上下文：{msg}")
+        time.sleep(_human_delay(GREET_CONTEXT_DELAY_CENTER, GREET_CONTEXT_DELAY_SPREAD))
+    return enriched
+
+
+def _ensure_zhipin_origin_for_fetch(page: ChromiumPage) -> tuple[bool, str]:
+    """Ensure browser JavaScript runs under zhipin.com so same-origin fetch works."""
+    try:
+        current_url = str(getattr(page, "url", "") or "")
+    except Exception:
+        current_url = ""
+    if "zhipin.com" in current_url.lower():
+        return True, ""
+    try:
+        page.get("https://www.zhipin.com/")
+        time.sleep(_human_delay(0.6, 0.3))
+        current_url = str(getattr(page, "url", "") or "")
+        if "zhipin.com" in current_url.lower():
+            return True, ""
+        return False, f"无法打开 BOSS 同源页面: {current_url or '未知页面'}"
+    except Exception as exc:
+        return False, f"无法打开 BOSS 同源页面: {str(exc)[:50]}"
+
+
+def send_greeting_with_context(
+    page: ChromiumPage,
+    greet_context: dict[str, Any],
+    stop_event=None,
+    captcha_callback=None,
+) -> tuple[bool, str]:
+    """Send a detail-context greeting through /wapi/zpjob/chat/start."""
+    if stop_event and stop_event.is_set():
+        return False, "已停止"
+    chat_start = (greet_context or {}).get("chat_start") or {}
+    required = ("jid", "lid", "securityId")
+    missing = [key for key in required if not chat_start.get(key)]
+    if missing:
+        return False, f"缺少打招呼上下文字段: {', '.join(missing)}"
+
+    origin_ok, origin_msg = _ensure_zhipin_origin_for_fetch(page)
+    if not origin_ok:
+        return False, origin_msg
+
+    payload = {
+        "jid": str(chat_start.get("jid") or ""),
+        "expectId": str(chat_start.get("expectId") or ""),
+        "lid": str(chat_start.get("lid") or ""),
+        "greet": str(chat_start.get("greet") or ""),
+        "securityId": str(chat_start.get("securityId") or ""),
+        "customGreetingGuide": str(chat_start.get("customGreetingGuide") or "-1"),
+    }
+    payload = {k: v for k, v in payload.items() if v != "" or k in {"greet", "customGreetingGuide"}}
+    body = urlencode(payload)
+    script = r'''
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/wapi/zpjob/chat/start', false);
+        xhr.withCredentials = true;
+        xhr.setRequestHeader('content-type', 'application/x-www-form-urlencoded; charset=UTF-8');
+        xhr.setRequestHeader('x-requested-with', 'XMLHttpRequest');
+        try {
+            xhr.send(arguments[0]);
+            var payload = null;
+            try { payload = JSON.parse(xhr.responseText || '{}'); } catch (e) { payload = {}; }
+            return JSON.stringify({
+                ok: xhr.status >= 200 && xhr.status < 300,
+                status: xhr.status,
+                code: payload && payload.code,
+                message: payload && (payload.message || payload.msg),
+                zpDataKeys: payload && payload.zpData && typeof payload.zpData === 'object'
+                    ? Object.keys(payload.zpData).slice(0, 50)
+                    : []
+            });
+        } catch (err) {
+            return JSON.stringify({ok:false, status:xhr.status || 0, error:String(err)});
+        }
+    '''
+    try:
+        raw = page.run_js(script, body, timeout=15)
+        result = json.loads(raw or "{}") if isinstance(raw, str) else (raw or {})
+    except Exception as exc:
+        return False, f"上下文打招呼异常: {str(exc)[:50]}"
+
+    if result.get("status") == 200 and result.get("code") == 0:
+        return True, "成功"
+
+    is_limited, limit_msg = _detect_limit_popup(page)
+    is_captcha, captcha_msg = _detect_captcha(page)
+    if is_limited:
+        return False, f"沟通次数已达上限: {limit_msg}"
+    if is_captcha:
+        print(f"\n   打招呼时检测到安全验证弹窗 ({captcha_msg})")
+        if _wait_for_captcha_resolution(page, stop_event, captcha_callback=captcha_callback, detail=captcha_msg, stage="greeting"):
+            return False, "安全验证已完成，请重新发起本次手工打招呼"
+        return False, f"安全验证未完成: {captcha_msg}"
+
+    message = result.get("message") or result.get("error") or "未知响应"
+    return False, f"上下文打招呼失败: HTTP {result.get('status')} code={result.get('code')} {message}"
 
 
 def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_callback=None):
@@ -2661,6 +3034,11 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
     # === 阶段 1: 滚动收集所有候选人 ===
     raw_candidates = extract_candidates_by_comprehensive_analysis(page, max_rounds=max_rounds, progress_callback=progress_callback, stop_event=stop_event, captcha_callback=captcha_callback, notice_callback=notice_callback, blocking_notice_callback=blocking_notice_callback, max_candidates=max_candidates, use_api_extraction=use_api_extraction, extraction_mode=extraction_mode)
     print(f"原始提取到 {len(raw_candidates)} 个唯一候选人")
+    existing_by_candidate_key = {
+        (str(c.get('geek_id')), c.get('job_name', '')): c
+        for c in candidates_all
+        if c.get('geek_id')
+    }
 
     if blacklisted_geek_ids:
         before_count = len(raw_candidates)
@@ -2763,6 +3141,11 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 "followup_status": "未沟通",
                 "greet_sent": False
             }
+            existing_record = existing_by_candidate_key.get((str(candidate['geek_id']), job_name.replace(" ", "")))
+            if existing_record and existing_record.get('greet_context'):
+                candidate_record['greet_context'] = existing_record['greet_context']
+                if existing_record.get('greet_context_updated_at'):
+                    candidate_record['greet_context_updated_at'] = existing_record['greet_context_updated_at']
             # 保留 API 结构化数据和画像供后续使用
             if structured:
                 candidate_record['structured'] = structured

@@ -9367,7 +9367,7 @@ class BossFilterGUI:
                                    f"确定要向 {name}（{candidate.get('recommend_level', '')}，{score}分）打招呼吗？\n\n"
                                    f"岗位：{job_name}"
                                    f"{risk_text}\n\n"
-                                   f"请确保浏览器已在该岗位的推荐牛人页面。",
+                                   f"如果候选人已保存打招呼上下文，将优先直接发送；否则需要浏览器仍在该岗位的推荐牛人页面。",
                                    parent=self.root):
             return
 
@@ -9396,7 +9396,7 @@ class BossFilterGUI:
                         return
                     self.append_log(f"[打招呼] ✅ 浏览器重连成功")
 
-                from bossmaster import send_greeting_on_list_page
+                from bossmaster import send_greeting_on_list_page, send_greeting_with_context
                 self.append_log(f"[打招呼] 正在向 {name} 打招呼...")
 
                 def captcha_callback(detail):
@@ -9424,10 +9424,24 @@ class BossFilterGUI:
                         done.wait(timeout=0.5)
                     return result[0]
 
-                success, msg = send_greeting_on_list_page(
-                    self.browser_page, geek_id, stop_event=self.stop_event,
-                    captcha_callback=captcha_callback
-                )
+                greet_context = candidate.get('greet_context') or {}
+                if greet_context.get('chat_start'):
+                    self.append_log(f"[打招呼] 使用已保存上下文发送，不依赖推荐牛人页面")
+                    success, msg = send_greeting_with_context(
+                        self.browser_page, greet_context, stop_event=self.stop_event,
+                        captcha_callback=captcha_callback
+                    )
+                    if not success:
+                        self.append_log(f"[打招呼] 上下文发送失败，尝试回退到推荐列表按钮：{msg}")
+                        success, msg = send_greeting_on_list_page(
+                            self.browser_page, geek_id, stop_event=self.stop_event,
+                            captcha_callback=captcha_callback
+                        )
+                else:
+                    success, msg = send_greeting_on_list_page(
+                        self.browser_page, geek_id, stop_event=self.stop_event,
+                        captcha_callback=captcha_callback
+                    )
                 if success:
                     self.append_log(f"[打招呼] ✅ {name} — {msg}")
                     # 更新 JSON 中的 greet_sent 状态

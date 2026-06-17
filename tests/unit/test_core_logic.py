@@ -42,6 +42,26 @@ def test_bossmaster_keeps_storage_compatibility_exports():
     assert bossmaster.save_candidates_all is save_candidates_all
 
 
+def test_parse_greet_context_from_detail_url_builds_chat_start_payload():
+    url = (
+        "https://www.zhipin.com/wapi/zpjob/view/geek/info/v2?"
+        "encryptJid=jid123&expectId=exp456&securityId=sec789&lid=lid000"
+        "&entrance=0&wayType=0&sourceType=3"
+    )
+    context = bossmaster._parse_greet_context_from_detail_url(url)
+
+    assert context["detail_api"]["endpoint"] == "/wapi/zpjob/view/geek/info/v2"
+    assert context["detail_api"]["encryptJid"] == "jid123"
+    assert context["chat_start"] == {
+        "jid": "jid123",
+        "expectId": "exp456",
+        "lid": "lid000",
+        "securityId": "sec789",
+        "greet": "",
+        "customGreetingGuide": "-1",
+    }
+
+
 def test_extract_job_salary_range_handles_numeric_and_negotiable_text():
     assert _extract_salary_range("薪资范围：12k-15k") == (12, 15)
     assert _extract_salary_range("月薪: 20K-30K") == (20, 30)

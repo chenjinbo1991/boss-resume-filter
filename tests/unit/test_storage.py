@@ -162,6 +162,25 @@ def test_dedupe_preserves_blacklist_from_new_to_old():
     assert result[0]["blacklist_reason"] == "性格不匹配"
 
 
+def test_dedupe_preserves_greet_context_from_old_to_new():
+    """高分新记录替换旧记录时，保留详情页打招呼上下文。"""
+    context = {"chat_start": {"jid": "jid123", "lid": "lid123", "securityId": "sec123"}}
+    result = _dedupe_candidates([
+        {
+            "geek_id": "g1",
+            "job_name": "Java",
+            "match_score": 70,
+            "greet_context": context,
+            "greet_context_updated_at": "2026-06-17T10:00:00",
+        },
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+    ])
+    assert len(result) == 1
+    assert result[0]["match_score"] == 80
+    assert result[0]["greet_context"] == context
+    assert result[0]["greet_context_updated_at"] == "2026-06-17T10:00:00"
+
+
 def test_dedupe_merges_greet_sent_from_new_to_old():
     """new 有 greet_sent=True → 直接替换。"""
     result = _dedupe_candidates([
