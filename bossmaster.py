@@ -244,6 +244,26 @@ def load_job_config() -> tuple[dict[str, Any], dict[str, Any]]:
 JOB_RULES = load_job_config()
 
 
+def _normalize_job_name_for_match(job_name: str) -> str:
+    """Normalize job names for selection matching while preserving configured keys."""
+    return re.sub(r'\s+', '', job_name or '').casefold()
+
+
+def _resolve_job_name(requested_job: str, job_rules: dict[str, Any]) -> str | None:
+    """Resolve a user-selected job name to the configured job key."""
+    if requested_job in job_rules:
+        return requested_job
+
+    requested_normalized = _normalize_job_name_for_match(requested_job)
+    matches = [
+        job_name for job_name in job_rules
+        if _normalize_job_name_for_match(job_name) == requested_normalized
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def extract_summary_info(text: str) -> dict[str, Any]:
     """从候选人摘要中提取结构化信息
 
@@ -338,10 +358,9 @@ def extract_summary_info(text: str) -> dict[str, Any]:
             break
     if not info['exp_years']:
         # DOM 格式：BOSS 直聘常见 "10年以上"、"9年"、"6年经验"、"3年工作"
-        # (?<!\d) 排除年份（2020年）、\d{1,2} 限制 1-2 位、(?!\s*[代份初底]) 排除年代/月份
-        exp_match = re.search(r'(?<!\d)(\d{1,2})\s*年(?!\s*[代份初底])', text)
-        if exp_match:
-            info['exp_years'] = exp_match.group(1)
+        parsed_exp = parse_experience_years(text)
+        if parsed_exp is not None:
+            info['exp_years'] = str(parsed_exp)
 
     # ---- 学历 ----
     edu_keywords = ['博士', '硕士', '本科', '大专', '高中', '中专']
@@ -3811,8 +3830,9 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         # 确定要运行的岗位列表
         jobs_to_run = []
         if args.job:
-            if args.job in job_rules:
-                jobs_to_run = [args.job]
+            resolved_job = _resolve_job_name(args.job, job_rules)
+            if resolved_job:
+                jobs_to_run = [resolved_job]
             else:
                 print(f"错误：未找到岗位 '{args.job}'")
                 print(f"可用岗位：{', '.join(job_rules.keys())}")

@@ -142,43 +142,61 @@ def _extract_city(text: str) -> str:
 def parse_experience_years(text: str) -> Optional[int]:
     """从文本中解析工作年限，支持阿拉伯数字和中文数字。"""
 
-    text = text.replace(' ', '')
+    if not text:
+        return None
 
-    # [^\S\n]* 匹配空白但不含换行，防止跨行匹配（如 "性别：0\n年龄" 中的 0+\n+年）
-    # 跳过 >50 的数值（毕业年份如 "2015年"），继续搜索后续匹配
-    for m in re.finditer(r'(\d+)[^\S\n]*年', text):
-        val = int(m.group(1))
-        if val <= 50:
-            return val
-
-    chinese_match = re.search(r'([零一二三四五六七八九十两]+(?:十[一二三四五六七八九两]?)?)[^\S\n]*年', text)
-    if chinese_match:
-        chinese_num = chinese_match.group(1)
-
+    def parse_chinese_num(chinese_num: str) -> Optional[int]:
         if chinese_num == '十':
             return 10
-        elif chinese_num.startswith('十') and len(chinese_num) > 1:
+        if chinese_num.startswith('十') and len(chinese_num) > 1:
             return 10 + CHINESE_NUMERALS.get(chinese_num[1], 0)
-        elif chinese_num.endswith('十') and len(chinese_num) > 1:
+        if chinese_num.endswith('十') and len(chinese_num) > 1:
             return CHINESE_NUMERALS.get(chinese_num[0], 0) * 10
-        elif len(chinese_num) == 2:
+        if len(chinese_num) == 2:
             first = CHINESE_NUMERALS.get(chinese_num[0], 0)
             second = CHINESE_NUMERALS.get(chinese_num[1], 0)
-            if first >= 2 and first <= 9:
+            if 2 <= first <= 9:
                 return first * 10 + second
-            else:
-                return first + second
-        elif chinese_num in CHINESE_NUMERALS:
+            return first + second
+        if chinese_num in CHINESE_NUMERALS:
             return CHINESE_NUMERALS[chinese_num]
 
         result = 0
         for char in chinese_num:
             if char in CHINESE_NUMERALS:
                 result += CHINESE_NUMERALS[char]
-        if result > 0:
-            return result
+        return result if result > 0 else None
 
-    return None
+    def parse_year_value(segment: str, allow_high_without_context: bool) -> Optional[int]:
+        # [^\S\n]* 匹配空白但不含换行，防止跨行匹配（如 "性别：0\n年龄" 中的 0+\n+年）
+        for m in re.finditer(r'(?<!\d)(\d{1,2})[^\S\n]*年(?!\s*[代份初底])', segment):
+            val = int(m.group(1))
+            context = segment[max(0, m.start() - 8):min(len(segment), m.end() + 8)]
+            has_exp_context = any(word in context for word in ('经验', '工作', '从业', '开发', '后端', '前端', '测试', '产品', '项目'))
+            if val <= 25 or allow_high_without_context or has_exp_context:
+                return val
+
+        chinese_pattern = r'([零一二三四五六七八九十两]+(?:十[一二三四五六七八九两]?)?)[^\S\n]*年'
+        for m in re.finditer(chinese_pattern, segment):
+            val = parse_chinese_num(m.group(1))
+            if val is None:
+                continue
+            context = segment[max(0, m.start() - 8):min(len(segment), m.end() + 8)]
+            has_exp_context = any(word in context for word in ('经验', '工作', '从业', '开发', '后端', '前端', '测试', '产品', '项目'))
+            if val <= 25 or allow_high_without_context or has_exp_context:
+                return val
+        return None
+
+    normalized = text.replace(' ', '')
+
+    # 优先解析明确标注的经验字段，API 摘要常见格式为 "经验：8年"。
+    for line in normalized.splitlines():
+        if re.search(r'(?:工作年限|工作经验|从业年限|经验)[：:]', line):
+            parsed = parse_year_value(line, allow_high_without_context=True)
+            if parsed is not None:
+                return parsed
+
+    return parse_year_value(normalized, allow_high_without_context=False)
 
 
 def _parse_candidate_salary_range(text: str) -> tuple[Optional[int], Optional[int]]:

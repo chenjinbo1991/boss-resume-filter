@@ -59,6 +59,20 @@ def test_parse_experience_years_arabic_takes_precedence():
     assert parse_experience_years("3年经验，工作过五年") == 3
 
 
+def test_parse_experience_years_does_not_treat_age_as_long_experience():
+    text = "12-16K\n谭听瑞\n26年\n本科\nAI Agent Java"
+    assert parse_experience_years(text) is None
+
+
+def test_parse_experience_years_prefers_labeled_experience_over_age_like_text():
+    text = "期望薪资：15-20K\n年龄：27岁\n学历：本科\n经验：8年\n个人优势：熟悉 AI Agent"
+    assert parse_experience_years(text) == 8
+
+
+def test_parse_experience_years_allows_high_years_with_explicit_context():
+    assert parse_experience_years("26年工作经验，熟悉 Java") == 26
+
+
 # ========== _extract_city ==========
 
 def test_extract_city_explicit_label():

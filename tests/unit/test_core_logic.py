@@ -42,6 +42,17 @@ def test_bossmaster_keeps_storage_compatibility_exports():
     assert bossmaster.save_candidates_all is save_candidates_all
 
 
+def test_resolve_job_name_ignores_whitespace_in_gui_selection():
+    job_rules = {
+        "中高级AI工程师": {},
+        "证券固收业务python分析师": {},
+        "AIAgent工程师": {},
+    }
+
+    assert bossmaster._resolve_job_name("AI Agent工程师", job_rules) == "AIAgent工程师"
+    assert bossmaster._resolve_job_name("ai agent工程师", job_rules) == "AIAgent工程师"
+
+
 def test_parse_greet_context_from_detail_url_builds_chat_start_payload():
     url = (
         "https://www.zhipin.com/wapi/zpjob/view/geek/info/v2?"
@@ -1216,6 +1227,13 @@ def test_extract_summary_info_negotiable_salary():
     from bossmaster import extract_summary_info
     info = extract_summary_info("面议\n本科，3 年经验")
     assert info['salary'] == '面议'
+
+
+def test_extract_summary_info_does_not_show_age_as_experience():
+    """无经验上下文的 26/27/28 年不应显示成工作年限。"""
+    from bossmaster import extract_summary_info
+    info = extract_summary_info("12-16K\n谭听瑞\n26年\n本科\nAI Agent Java")
+    assert info['exp_years'] == ''
 
 
 def test_extract_summary_info_empty_text():
