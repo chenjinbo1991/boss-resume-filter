@@ -128,6 +128,13 @@ boss-resume-filter/
 
 - StopRequested 异常 + threading.Event 穿透所有关键循环；停止时自动保存进度并导出 Excel
 
+### 打招呼上下文持久化（greet_context）
+
+- 阶段 1.6 在筛选完成后，从候选人详情页 API（`/wapi/zpjob/view/geek/info`）捕获 `jid/lid/securityId/expectId`，存为 `greet_context` 字段
+- GUI 手动打招呼时优先用 `send_greeting_with_context()` 直发 `/wapi/zpjob/chat/start`，失败回退 `send_greeting_on_list_page()`（列表按钮路径）
+- 阶段 1.6 仅对 `match_score >= GREET_CONTEXT_MIN_SCORE (60)` 且未打过招呼的候选人抓取，单轮硬上限 `GREET_CONTEXT_CAPTURE_LIMIT (30)` 人
+- `manual_review_required` 候选人**不跳过**上下文采集（采集与发送闸门解耦）；跨会话/去重合并时保留 `greet_context` 字段
+
 ### 浏览器自动检测
 
 - 运行页每 2 秒轮询 Chrome 连接状态；手动检测时自动启动 Chrome（动态端口 + 独立 profile，保留登录态）
@@ -138,8 +145,8 @@ boss-resume-filter/
 - **随机延迟**：`_human_delay(center, spread)` 所有 sleep 带随机抖动
 - **验证码检测**：`_detect_captcha()` 关键词 + CSS 选择器检测，暂停等待用户完成验证（5 分钟超时）
 - **API 熔断**：`ApiRiskBlocked` 异常，BOSS API 返回 403/412/429 时立即停止扫描，不降级 DOM
-- **API 读取限速**：API 直调默认约 5-8 秒随机间隔；单次最多读取 `API_CANDIDATE_LIMIT_DEFAULT`（默认 80）人，达到上限停止继续翻页
-- **打招呼限速**：每 `GREET_BATCH_SIZE` 人暂停随机间隔；每轮上限 `AUTO_GREET_RUN_LIMIT`（默认 20）
+- **API 读取限速**：API 直调默认约 5-8 秒随机间隔；单次最多读取 `API_CANDIDATE_LIMIT_DEFAULT`（默认 320，对应最多补全 16 页）人，达到上限停止继续翻页
+- **打招呼限速**：每 `GREET_BATCH_SIZE` 人暂停随机间隔；每轮上限 `AUTO_GREET_RUN_LIMIT`（默认 50）
 
 > **重要架构约束**：BOSS 直聘推荐页使用 `srcdoc` iframe（非 `src` URL），导致 `iframe.run_js('return location.href')` 始终返回 `about:srcdoc`。这意味着：
 > 
@@ -187,6 +194,7 @@ boss-resume-filter/
 - 人工反馈：`feedback_status`（合适/误推/误杀/放弃）、`feedback_note`、`feedback_updated_at`；去重时保留反馈字段
 - 跟进状态：`followup_status`（未沟通/已打招呼/已回复/待约面/已约面/不合适/已归档）、`followup_note`、`followup_updated_at`；去重时保留
 - 黑名单：`blacklisted`、`blacklist_reason`、`blacklisted_at`；按 `geek_id` 跨岗位屏蔽，后续扫描、统计和 Excel 导出跳过，清空候选人时保留
+- 打招呼上下文：`greet_context`、`greet_context_updated_at`；去重时保留（高分新记录覆盖其他字段时不丢失上下文）
 - 实现位置：`filtering.py:filter_candidate()`
 
 ### AI 辅助评估
@@ -213,6 +221,7 @@ boss-resume-filter/
 - 按岗位聚合，4 张汇总卡片 + 明细 Treeview；只统计 ≥55 分；支持时间范围过滤
 - 明细 Treeview 9 列精简展示：岗位名称、筛选分布（总数+强推/推荐/待定）、已打招呼(率)、已反馈、合适率、误推率、已回复(率)、已约面(率)、平均分
 - 合适率/误推率只按有效人工反馈计算（合适/误推/误杀/放弃）；已回复/已约面列内嵌百分比（按已打招呼及后续状态计算）
+- 明细 Treeview 与汇总卡片共用同一套日期过滤逻辑（`_get_result_date_filter`），口径一致
 
 ### 页面选择器配置（selectors.json）
 
