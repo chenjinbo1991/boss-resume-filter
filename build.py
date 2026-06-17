@@ -937,6 +937,49 @@ def _check_changelog_entry_quality(strict=False):
                         f"可能属于新功能开发附属变更"
                     )
 
+    # 规则 4: readme-style.md 写作规范（技术黑话 / 字段名 / 内部机制）
+    # 这些词在用户可见的 CHANGELOG 中不应出现（详见 CLAUDE.md「版本内容写作规范」）
+    STYLE_KEYWORDS = [
+        # 内部机制关键词
+        "listener", "API 兜底", "兜底预算", "闸门解耦", "持久化字段",
+        "结构化数据", "去重合并", "时间戳组", "阶段 1.", "阶段 2.",
+        "跨会话", "跨岗位", "风控面", "反馈环路",
+        # 技术黑话
+        "XML 1.0", "非法字符", "控制字符", "单元格", "校验失败",
+        "正则", "子串匹配", "单词边界", "OR 条件", "AND 条件",
+        "provider", "keyring", "DPI 缩放", "sha256", "SHA256",
+        "locale-data", "openpyxl", "srcdoc", "iframe",
+        # 内部文件名（用户不应接触）
+        "job_config.json", "api_config.json", "selectors.json",
+        "ui_config.json", "latest.json",
+        # 内部函数名（v2.12 相关，未来按需补充）
+        "parse_experience_years", "filter_candidate", "_extract_",
+        "_detect_", "_parse_", "_build_", "greet_context",
+    ]
+    # 反引号包裹的内容通常是字段名/变量名/文件路径，用户不该看到
+    BACKTICK_RE = re.compile(r"`[^`\s]+`")
+    for section_name, entries in sections.items():
+        for entry in entries:
+            m = re.match(r"-\s+\*\*(.+?)\*\*[：:]?(.*)", entry)
+            title_text = m.group(1) if m else ""
+            body_text = m.group(2) if m else entry
+            full_text = entry
+            for kw in STYLE_KEYWORDS:
+                if kw in full_text:
+                    warnings.append(
+                        f"  [{section_name}] {title_text} — 含技术黑话「{kw}」，"
+                        f"按 readme-style.md 改为用户视角表述"
+                    )
+                    break
+            else:
+                backticks = BACKTICK_RE.findall(full_text)
+                if backticks:
+                    warnings.append(
+                        f"  [{section_name}] {title_text} — 含反引号标识 "
+                        f"{'、'.join(backticks[:3])}（疑似字段名/变量名），"
+                        f"请删除或换通俗说法"
+                    )
+
     if warnings:
         level = "错误" if strict else "警告"
         print(f"[{level}] CHANGELOG 中发现可能不属于用户感知变更的条目：\n")
