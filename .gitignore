@@ -45,6 +45,13 @@ release_notes_cache.json
 .build_progress.json
 .build_state.json
 tests/manual/recon_output/
+tests/manual/build_greet_recovery_contract.py
+tests/manual/capture_manual_greet_network.py
+tests/manual/probe_candidate_recovery_strict.py
+tests/manual/probe_detail_api_refetch.py
+tests/manual/probe_existing_detail_credentials.py
+tests/manual/test_candidate_detail_recovery.py
+tests/manual/test_greet_context_capture.py
 
 # 孤儿文件（无引用，不纳入版本控制）
 input.txt
