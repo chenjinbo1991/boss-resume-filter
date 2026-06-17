@@ -4043,6 +4043,21 @@ class BossFilterGUI:
                 if selected_job != "全部岗位":
                     candidates = [c for c in candidates if c.get('job_name', '') == selected_job.replace(" ", "")]
 
+            # 日期过滤（与 refresh_results 保持一致）
+            date_start, date_end = self._get_result_date_filter() if hasattr(self, 'result_date_start_entry') else (None, None)
+            if date_start or date_end:
+                def _in_date_range(c):
+                    ts = c.get('batch_timestamp', '')
+                    if not ts or len(ts) < 8:
+                        return False
+                    d = ts[:8]
+                    if date_start and d < date_start:
+                        return False
+                    if date_end and d > date_end:
+                        return False
+                    return True
+                candidates = [c for c in candidates if _in_date_range(c)]
+
             # 根据类型筛选候选人
             if stat_type == 'passed':
                 # 通过筛选：强烈推荐 + 推荐
