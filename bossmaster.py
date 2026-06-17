@@ -596,13 +596,26 @@ def export_to_excel(candidates: list[dict[str, Any]], filename: str) -> bool:
             '是否需人工确认', '风险提示', '自动打招呼阻断原因',
             '批次', '详细信息',
         ]
+        # XML 1.0 合法字符集：#x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+        # BOSS API 的工作职责/个人优势字段偶尔混入垂直制表符 (\x0b) / 换页符 (\x0c) 等控制字符，
+        # 直接写 openpyxl 会触发 CellILLEGAL_CHARS 校验失败，整张 Excel 导出崩掉。
+        _ILLEGAL_XML_RE = re.compile(
+            '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f'
+            '\ud800-\udfff﷐-﷯￾￿]'
+        )
+
+        def _clean_cell(value):
+            if isinstance(value, str):
+                return _ILLEGAL_XML_RE.sub('', value)
+            return value
+
         def _write_rows(ws, header: list[str], sheet_rows: list) -> None:
             ws.append(header)
             for row in sheet_rows:
                 if isinstance(row, dict):
-                    ws.append([row.get(col, '') for col in header])
+                    ws.append([_clean_cell(row.get(col, '')) for col in header])
                 else:
-                    ws.append(row)
+                    ws.append([_clean_cell(cell) for cell in row])
 
         def _safe_sheet_name(job_name: str) -> str:
             return str(job_name).translate(str.maketrans({
@@ -1242,8 +1255,16 @@ def _merge_api_enrichment_into_existing(
     api_candidates: list[dict[str, Any]],
     all_candidates: list[dict[str, Any]],
     candidate_index_by_id: dict[str, int],
+    source_tag: str = '',
 ) -> int:
-    """Use API/listener data only to enrich candidates already discovered in DOM."""
+    """Use API/listener data only to enrich candidates already discovered in DOM.
+
+    Args:
+        source_tag: 可选来源标记（'listener' / 'api_fallback'），首次成功合并
+            structured 数据时写入候选人的 ``_enriched_by`` 字段，用于最终统计
+            listener 和 API 兜底各自的贡献比例。已存在标记的候选人不会被覆盖
+            （保持"首次写入者胜"语义）。
+    """
     updated = 0
     for item in api_candidates:
         geek_id = item.get('geek_id', '') or ''
@@ -1272,6 +1293,8 @@ def _merge_api_enrichment_into_existing(
                     merged_structured[key] = value
             if merged_structured != before_structured:
                 existing['structured'] = merged_structured
+                if source_tag and not existing.get('_enriched_by'):
+                    existing['_enriched_by'] = source_tag
                 changed = True
 
         if item.get('_api_profile') and not existing.get('_api_profile'):
@@ -1917,7 +1940,8 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
 
                 if pending_listener_candidates:
                     matched = _merge_api_enrichment_into_existing(
-                        pending_listener_candidates, all_candidates, candidate_index_by_id
+                        pending_listener_candidates, all_candidates, candidate_index_by_id,
+                        source_tag='listener',
                     )
                     print(
                         f"listener + refresh 合并: 返回 {len(pending_listener_candidates)} 条, "
@@ -1940,7 +1964,8 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                             f"返回 {len(api_candidates)} 条"
                         )
                     matched = _merge_api_enrichment_into_existing(
-                        api_candidates, all_candidates, candidate_index_by_id
+                        api_candidates, all_candidates, candidate_index_by_id,
+                        source_tag='listener',
                     )
                     if api_candidates or _api_url:
                         print(f"listener 滚动合并(第 {scroll_round + 1} 轮): 命中 DOM {matched} 条")
@@ -1984,7 +2009,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 pagination = _build_recommend_api_pagination_from_page(target)
             if pagination:
                 if max_candidates and max_candidates > 0:
-                    page_limit = min(10, max(5, (max_candidates + 19) // 20))
+                    page_limit = min(20, max(5, (max_candidates + 19) // 20))
                 else:
                     page_limit = 5
                 print(f"API 直调仅补全 DOM 已出现候选人，最多 {page_limit} 页")
@@ -1999,7 +2024,8 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         print(f"API 返回疑似风控状态码 {e.status}（第 {e.page_num} 页），停止 API 补全。")
                         break
                     matched = _merge_api_enrichment_into_existing(
-                        api_candidates, all_candidates, candidate_index_by_id
+                        api_candidates, all_candidates, candidate_index_by_id,
+                        source_tag='api_fallback',
                     )
                     print(
                         f"API 兜底第 {page_num} 页: 返回 {len(api_candidates)} 条, "
@@ -3271,6 +3297,30 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
         llm_count = sum(1 for c in passed_candidates if c.get('llm_evaluated'))
         print(f"AI 评估完成：{llm_count} 人已评估")
+
+    # === 阶段 1.6: 为可打招呼候选人补抓详情页打招呼上下文（最佳努力）===
+    # 注意：manual_review_required 不参与过滤。greet_context 是只读采集，
+    # 真正的发送闸门在自动打招呼（bossmaster.py:3326/3628）和 GUI 手动确认
+    # （gui_main.py:9362），确保人工核实通过后立即可用上下文发送。
+    context_candidates = [
+        c for c in passed_candidates
+        if c.get('geek_id') not in existing_ids_for_job_and_greeted
+        and not c.get('greet_context', {}).get('chat_start')
+        and c.get('match_score', 0) >= GREET_CONTEXT_MIN_SCORE
+    ]
+    if context_candidates and not list_candidates and hasattr(page, "listen"):
+        print(f"\n=== 阶段 1.6: 捕获打招呼上下文（共 {len(context_candidates)} 人，最佳努力）===")
+        context_candidates.sort(key=lambda x: raw_order_by_geek_id.get(str(x.get('geek_id')), len(raw_order_by_geek_id)))
+        enriched_count = enrich_greet_contexts_for_candidates(
+            page,
+            context_candidates,
+            stop_event=stop_event,
+            max_count=GREET_CONTEXT_CAPTURE_LIMIT,
+        )
+        for c in context_candidates:
+            if c.get('greet_context') and not c.get('greet_context_updated_at'):
+                c['greet_context_updated_at'] = datetime.now().isoformat(timespec="seconds")
+        print(f"打招呼上下文捕获完成：成功 {enriched_count}/{min(len(context_candidates), GREET_CONTEXT_CAPTURE_LIMIT)} 人")
 
     # === 仅列出候选人，不打招呼 ===
     if list_candidates and passed_candidates:
