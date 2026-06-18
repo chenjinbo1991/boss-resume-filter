@@ -7992,6 +7992,7 @@ class BossFilterGUI:
                         ai_text = "—"
 
                     edu, age, job_status, school, company = self._extract_extra_fields(c)
+                    c['_extra_fields'] = (edu, age, job_status, school, company)
                     item_id = self.result_tree.insert("", "end", values=(
                         c.get('name', ''),
                         exp,
@@ -8204,7 +8205,8 @@ class BossFilterGUI:
             full = cand.get('_full_status', '')
             show_tooltip = full.count('｜') >= 2
         elif cand and column_name in ('school', 'company'):
-            _, _, _, school, company = self._extract_extra_fields(cand)
+            extra = cand.get('_extra_fields') or ('', '', '', '', '')
+            school, company = extra[3], extra[4]
             full = school if column_name == 'school' else company
             show_tooltip = len(full) > (8 if column_name == 'school' else 10)
         else:
