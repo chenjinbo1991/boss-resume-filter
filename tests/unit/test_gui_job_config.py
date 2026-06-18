@@ -70,3 +70,111 @@ def test_candidate_detail_groups_api_resume_sections():
     assert "【技能标签】" in detail
     assert "Python、SQL、ETL" in detail
     assert "【候选人摘要】" in detail
+
+
+class _FakeRoot:
+    def __init__(self, state="normal", width=1500, height=950):
+        self._state = state
+        self._width = width
+        self._height = height
+
+    def state(self):
+        return self._state
+
+    def winfo_width(self):
+        return self._width
+
+    def winfo_height(self):
+        return self._height
+
+    def winfo_screenwidth(self):
+        return 1920
+
+    def winfo_screenheight(self):
+        return 1080
+
+
+class _FakeTree:
+    def __init__(self, width):
+        self._width = width
+        self.displaycolumns = "#all"
+        self.column_options = {}
+
+    def winfo_width(self):
+        return self._width
+
+    def cget(self, key):
+        assert key == "displaycolumns"
+        return self.displaycolumns
+
+    def configure(self, **kwargs):
+        self.displaycolumns = kwargs["displaycolumns"]
+
+    def column(self, column, **kwargs):
+        self.column_options[column] = kwargs
+
+
+def test_result_tree_columns_expand_only_when_space_is_available():
+    gui = BossFilterGUI.__new__(BossFilterGUI)
+    gui.root = _FakeRoot()
+    gui.result_tree = _FakeTree(1600)
+    gui._update_result_tree_columns()
+    assert len(gui.result_tree.displaycolumns) == 8
+
+    gui.root = _FakeRoot(state="zoomed", width=1920, height=1040)
+    gui.result_tree = _FakeTree(1400)
+    gui._update_result_tree_columns()
+    assert len(gui.result_tree.displaycolumns) == 11
+
+    gui.result_tree = _FakeTree(1500)
+    gui._update_result_tree_columns()
+    assert len(gui.result_tree.displaycolumns) == 13
+    assert gui.result_tree.displaycolumns[-2:] == ("school", "company")
+    assert gui.result_tree.column_options["school"]["width"] > 150
+    assert gui.result_tree.column_options["company"]["width"] > 170
+    assert gui.result_tree.column_options["level"]["width"] < 110
+    assert gui.result_tree.column_options["education"]["width"] == 140
+    assert gui.result_tree.column_options["age"]["width"] == 110
+    assert gui.result_tree.column_options["skills"]["width"] < 140
+    assert gui.result_tree.column_options["name"]["stretch"] is False
+    assert gui.result_tree.column_options["education"]["stretch"] is False
+    assert gui.result_tree.column_options["skills"]["stretch"] is False
+    assert gui.result_tree.column_options["school"]["stretch"] is False
+    assert gui.result_tree.column_options["company"]["stretch"] is False
+    assert sum(
+        options["width"] for options in gui.result_tree.column_options.values()
+    ) == 1498
+
+    gui.root = _FakeRoot()
+    gui.result_tree = _FakeTree(1500)
+    gui._update_result_tree_columns()
+    assert all(
+        options["stretch"] is True
+        for options in gui.result_tree.column_options.values()
+    )
+    assert gui.result_tree.column_options["skills"]["width"] == 85
+
+
+def test_latest_history_value_uses_latest_end_date_not_list_order():
+    entries = [
+        {"school": "较早学校", "end": "2018.06"},
+        {"school": "最近学校", "end": "2022.06"},
+    ]
+
+    value = BossFilterGUI._latest_history_value(entries, "school", "", "教育经历：")
+
+    assert value == "最近学校"
+
+
+def test_latest_history_value_treats_present_as_latest_and_falls_back_to_summary():
+    works = [
+        {"company": "上一家公司", "end": "2024.01"},
+        {"company": "当前公司", "end": "至今"},
+    ]
+    assert BossFilterGUI._latest_history_value(
+        works, "company", "", "工作经历："
+    ) == "当前公司"
+
+    assert BossFilterGUI._latest_history_value(
+        [], "company", "工作经历：摘要公司 高级工程师 2022 至今", "工作经历："
+    ) == "摘要公司"

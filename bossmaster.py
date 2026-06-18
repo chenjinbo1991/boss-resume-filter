@@ -2032,6 +2032,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 else:
                     page_limit = 5
                 print(f"API 直调仅补全 DOM 已出现候选人，最多 {page_limit} 页")
+                consecutive_misses = 0
                 for page_num in range(1, page_limit + 1):
                     if stop_event and stop_event.is_set():
                         raise StopRequested()
@@ -2050,6 +2051,13 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         f"API 兜底第 {page_num} 页: 返回 {len(api_candidates)} 条, "
                         f"命中 DOM {matched} 条"
                     )
+                    if matched == 0:
+                        consecutive_misses += 1
+                        if consecutive_misses >= 3:
+                            print(f"API 兜底连续 {consecutive_misses} 页无新增命中，提前停止")
+                            break
+                    else:
+                        consecutive_misses = 0
                     missing_ids = {
                         c.get('geek_id') for c in all_candidates
                         if c.get('geek_id') and not c.get('structured')

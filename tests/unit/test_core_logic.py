@@ -489,10 +489,52 @@ def test_api_enrichment_uses_page_cap_and_random_delay():
             FakeFrame(), max_rounds=1, extraction_mode="api", max_candidates=20
         )
 
+    # API pages return geek_ids not in DOM → matched=0 each time.
+    # New logic: 3 consecutive misses → early stop (pages 4-5 never fetched).
     assert [c["geek_id"] for c in candidates] == ["g-dom-missing"]
-    assert mock_fetch.call_count == 5
-    assert mock_sleep.call_count >= 4
+    assert mock_fetch.call_count == 3
+    assert mock_sleep.call_count >= 2
     mock_dom_extract.assert_called_once()
+
+
+def test_api_enrichment_stops_after_consecutive_misses():
+    """API 兜底连续 3 页无 DOM 命中时提前停止，不浪费后续请求。"""
+    class FakeFrame:
+        def run_js(self, script):
+            if script == 'return location.href':
+                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+            return None
+
+    # Page 1 hits (g-dom-1 in DOM), pages 2-4 miss → stop at page 4, page 5 never fetched.
+    api_pages = [
+        ([{"geek_id": "g-dom-1", "name": "命中", "summary": "本科，5年", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-1", "name": "外部1", "summary": "本科，5年", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-2", "name": "外部2", "summary": "本科，5年", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-3", "name": "外部3", "summary": "本科，5年", "structured": {"exp_years": 5}}], True),
+        ([{"geek_id": "g-extra-4", "name": "外部4", "summary": "本科，5年", "structured": {"exp_years": 5}}], True),
+    ]
+    dom_batch = [
+        {"geek_id": "g-dom-1", "name": "命中", "text": "本科，5年"},
+        {"geek_id": "g-dom-2", "name": "李四", "text": "本科，3年"},
+    ]
+
+    with patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener', return_value=None), \
+            patch('bossmaster._fetch_api_page_result', side_effect=api_pages) as mock_fetch, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch):
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
+            FakeFrame(), max_rounds=1, extraction_mode="api", max_candidates=20
+        )
+
+    # Page 1 hit, pages 2-4 missed → stopped at page 4, page 5 never fetched.
+    assert mock_fetch.call_count == 4
+    # DOM candidates preserved (not dropped by API enrichment).
+    ids = [c["geek_id"] for c in candidates]
+    assert "g-dom-1" in ids
+    assert "g-dom-2" in ids
 
 
 def test_default_scan_uses_dom_with_listener_enrichment():

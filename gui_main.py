@@ -26,8 +26,6 @@ from urllib.parse import urlparse
 import icons
 
 logger = logging.getLogger(__name__)
-from security import save_api_key, get_api_key, delete_api_key
-import updater
 from constants import (
     API_CANDIDATE_LIMIT_DEFAULT,
     SCORE_THRESHOLD_PASS,
@@ -54,6 +52,24 @@ FOLLOWUP_STATUS_OPTIONS = ["未沟通", "已打招呼", "已回复", "待约面"
 
 # 首次运行时确保配置文件存在
 ensure_config_files(BASE_DIR)
+
+
+def get_api_key(provider: str, base_url: str | None = None) -> str | None:
+    """按需加载系统钥匙串，避免 GUI 冷启动时初始化 keyring。"""
+    from security import get_api_key as _get_api_key
+    return _get_api_key(provider, base_url)
+
+
+def save_api_key(provider: str, api_key: str, base_url: str | None = None) -> bool:
+    """按需加载系统钥匙串并保存 API Key。"""
+    from security import save_api_key as _save_api_key
+    return _save_api_key(provider, api_key, base_url)
+
+
+def delete_api_key(provider: str, base_url: str | None = None) -> bool:
+    """按需加载系统钥匙串并删除 API Key。"""
+    from security import delete_api_key as _delete_api_key
+    return _delete_api_key(provider, base_url)
 
 
 class TextDateEntry(ttk.Entry):
@@ -767,7 +783,6 @@ class BossFilterGUI:
         self._required_list_fingerprint = None
         self._api_ui_config_mtime = None
         self._api_key_resolve_thread = None
-        self._page_prewarm_after_ids = []
         self._pending_idle_tasks = set()
         self._page_width_policy_after_id = None
 
@@ -807,11 +822,27 @@ class BossFilterGUI:
         if _NEED_COCOA_SCROLL_HOOK:
             self.root.after(500, self._setup_cocoa_scroll_hook)
 
-        # 启动时自动检查更新（延迟执行，避开 GUI 初始化和 PyInstaller 释放窗口）
-        updater.auto_check_on_startup(self.root, delay_ms=12000, gui=self)
-        if getattr(sys, 'frozen', False):
-            self.root.after(1000, updater.mark_update_success_and_cleanup)
-            self.root.after(2500, lambda: updater.notify_previous_update_failure(self.root))
+        # 更新模块含 requests 等重型依赖，延迟并在后台导入，避免阻塞 GUI 冷启动。
+        self.root.after(12000, self._load_startup_updater)
+
+    def _load_startup_updater(self):
+        """后台加载更新模块，再回到 Tk 主线程启动更新检查。"""
+        def _worker():
+            try:
+                import updater
+            except Exception as exc:
+                logger.warning("加载自动更新模块失败：%s", exc)
+                return
+
+            def _start():
+                updater.auto_check_on_startup(self.root, delay_ms=0, gui=self)
+                if getattr(sys, 'frozen', False):
+                    updater.mark_update_success_and_cleanup()
+                    updater.notify_previous_update_failure(self.root)
+
+            self.run_on_ui(_start)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _setup_macos_reopen_handler(self):
         """点击 macOS Dock 图标时恢复主窗口。"""
@@ -1119,7 +1150,6 @@ class BossFilterGUI:
 
         # 默认显示首页（current_page_index 在 show_page_home 中已设置为 0）
         self.show_page_home()
-        self._schedule_page_prewarm()
 
     def _defer_ui_work(self, key, callback):
         """Run non-urgent UI work after the current redraw, coalescing duplicates."""
@@ -1135,50 +1165,6 @@ class BossFilterGUI:
                 return
 
         self.root.after_idle(_run)
-
-    def _schedule_page_prewarm(self):
-        """首屏显示后分批创建隐藏页面，降低首次点击重页面的卡顿。"""
-        prewarm_steps = [
-            (900, self._prewarm_config_page),
-            (1500, self._prewarm_run_page),
-            (2300, self._prewarm_result_page),
-            (3200, self._prewarm_stats_page),
-            (3700, self._prewarm_api_page),
-        ]
-        for delay_ms, callback in prewarm_steps:
-            try:
-                after_id = self.root.after(delay_ms, callback)
-                self._page_prewarm_after_ids.append(after_id)
-            except tk.TclError:
-                return
-
-    def _prewarm_config_page(self):
-        if self.config_page is None:
-            self.create_config_page()
-
-    def _prewarm_run_page(self):
-        if self.run_page is None:
-            self.create_run_page()
-
-    def _prewarm_result_page(self):
-        if self.result_page is None:
-            self.create_result_page()
-
-    def _prewarm_stats_page(self):
-        if self.stats_page is None:
-            self.create_stats_page()
-
-    def _prewarm_api_page(self):
-        if self.api_config_page is None:
-            self.create_api_config_page()
-
-    def _cancel_page_prewarm(self):
-        for after_id in self._page_prewarm_after_ids:
-            try:
-                self.root.after_cancel(after_id)
-            except tk.TclError:
-                pass
-        self._page_prewarm_after_ids.clear()
 
     def _create_result_date_entry(self, parent, **kwargs):
         """创建结果页日期控件；只在结果页构建时加载 tkcalendar。"""
@@ -1241,6 +1227,86 @@ class BossFilterGUI:
             self._update_model_list_height()
         elif current_page == 1:
             self._update_config_page_dynamic_heights()
+        elif current_page == 3:
+            self._update_result_tree_columns()
+
+    def _is_window_maximized(self) -> bool:
+        """Return True when the main window is maximized or effectively fullscreen."""
+        try:
+            if self.root.state() == "zoomed":
+                return True
+            return (
+                self.root.winfo_width() >= self.root.winfo_screenwidth() * 0.9
+                and self.root.winfo_height() >= self.root.winfo_screenheight() * 0.85
+            )
+        except (tk.TclError, ValueError):
+            return False
+
+    def _update_result_tree_columns(self):
+        """Show 8, 11, or 13 columns according to maximized state and table width."""
+        if not hasattr(self, 'result_tree'):
+            return
+
+        base_columns = ("name", "exp", "salary", "skills", "score", "ai_eval", "level", "status")
+        extra_columns = ("education", "age", "job_status")
+        wide_columns = ("school", "company")
+        display_columns = base_columns
+        if self._is_window_maximized():
+            display_columns += extra_columns
+            try:
+                tree_width = int(self.result_tree.winfo_width())
+            except (tk.TclError, ValueError):
+                tree_width = 0
+            if tree_width >= 1500:
+                display_columns += wide_columns
+        self._apply_result_tree_column_widths(display_columns)
+        if tuple(self.result_tree.cget("displaycolumns")) != display_columns:
+            self.result_tree.configure(displaycolumns=display_columns)
+
+    def _apply_result_tree_column_widths(self, display_columns):
+        """Balance visible columns while keeping education and age readable."""
+        base_widths = {
+            "name": 80, "exp": 85, "salary": 85, "skills": 85,
+            "score": 70, "ai_eval": 70, "level": 80, "status": 180,
+            "education": 140, "age": 110, "job_status": 120,
+            "school": 150, "company": 170,
+        }
+        min_widths = {
+            "name": 60, "exp": 70, "salary": 70, "skills": 70,
+            "score": 60, "ai_eval": 60, "level": 70, "status": 150,
+            "education": 115, "age": 90, "job_status": 80,
+            "school": 120, "company": 130,
+        }
+
+        wide_mode = "company" in display_columns
+        widths = {column: base_widths[column] for column in display_columns}
+        if wide_mode:
+            try:
+                available_width = max(0, int(self.result_tree.winfo_width()) - 2)
+            except (tk.TclError, ValueError):
+                available_width = 0
+            compact_columns = {"education", "age"}
+            flexible_columns = [
+                column for column in display_columns
+                if column not in compact_columns
+            ]
+            compact_width = sum(widths[column] for column in compact_columns)
+            flexible_base_width = sum(widths[column] for column in flexible_columns)
+            flexible_available = max(0, available_width - compact_width)
+            if flexible_available > flexible_base_width:
+                scale = flexible_available / flexible_base_width
+                for column in flexible_columns:
+                    widths[column] = int(widths[column] * scale)
+                rounding_gap = available_width - sum(widths.values())
+                widths["company"] += rounding_gap
+
+        for column in display_columns:
+            self.result_tree.column(
+                column,
+                width=widths[column],
+                minwidth=min_widths[column],
+                stretch=not wide_mode,
+            )
 
     def _is_tall_window(self) -> bool:
         """Return True if the window height exceeds 85% of screen height (min 1000px)."""
@@ -2576,10 +2642,7 @@ class BossFilterGUI:
                     self.api_key_var.set(current_key)
                 self._update_ai_eval_status()
 
-            try:
-                self.root.after(0, _apply)
-            except tk.TclError:
-                return
+            self.run_on_ui(_apply)
 
         self._api_key_resolve_thread = threading.Thread(target=_worker, daemon=True)
         self._api_key_resolve_thread.start()
@@ -3059,8 +3122,16 @@ class BossFilterGUI:
         table_container.pack(fill="both", expand=True, pady=int(8 * self.dpi_scale * self.zoom_factor))
 
         # 表格
-        columns = ("name", "exp", "salary", "skills", "score", "ai_eval", "level", "status")
-        self.result_tree = ttk.Treeview(table_container, columns=columns, show="headings", height=4)
+        columns = ("name", "exp", "salary", "skills", "score", "ai_eval", "level", "status",
+                   "education", "age", "job_status", "school", "company")
+        base_display_columns = ("name", "exp", "salary", "skills", "score", "ai_eval", "level", "status")
+        self.result_tree = ttk.Treeview(
+            table_container,
+            columns=columns,
+            displaycolumns=base_display_columns,
+            show="headings",
+            height=4,
+        )
 
         self.result_tree.heading("name", text="姓名")
         self.result_tree.heading("exp", text="工作年限")
@@ -3070,16 +3141,26 @@ class BossFilterGUI:
         self.result_tree.heading("ai_eval", text="AI评估")
         self.result_tree.heading("level", text="推荐指数")
         self.result_tree.heading("status", text="状态")
+        self.result_tree.heading("education", text="学历")
+        self.result_tree.heading("age", text="年龄")
+        self.result_tree.heading("job_status", text="求职状态")
+        self.result_tree.heading("school", text="毕业学校")
+        self.result_tree.heading("company", text="最近公司")
 
-        # 设置列宽
+        # 普通窗口 8 列；最大化显示 11 列；表格足够宽时再显示学校和公司。
         self.result_tree.column("name", width=80, minwidth=60, anchor='center')
-        self.result_tree.column("exp", width=100, minwidth=80, anchor='center')
-        self.result_tree.column("salary", width=100, minwidth=80, anchor='center')
-        self.result_tree.column("skills", width=180, minwidth=120, anchor='center')
+        self.result_tree.column("exp", width=85, minwidth=70, anchor='center')
+        self.result_tree.column("salary", width=85, minwidth=70, anchor='center')
+        self.result_tree.column("skills", width=85, minwidth=70, anchor='center')
         self.result_tree.column("score", width=70, minwidth=60, anchor='center')
         self.result_tree.column("ai_eval", width=70, minwidth=60, anchor='center')
-        self.result_tree.column("level", width=110, minwidth=90, anchor='center')
+        self.result_tree.column("level", width=80, minwidth=70, anchor='center')
         self.result_tree.column("status", width=180, minwidth=150, anchor='center')
+        self.result_tree.column("education", width=140, minwidth=115, anchor='center')
+        self.result_tree.column("age", width=110, minwidth=90, anchor='center')
+        self.result_tree.column("job_status", width=120, minwidth=80, anchor='center')
+        self.result_tree.column("school", width=150, minwidth=120, anchor='center')
+        self.result_tree.column("company", width=170, minwidth=130, anchor='center')
 
         # 设置表格字体和样式
         style = ttk.Style()
@@ -3087,10 +3168,22 @@ class BossFilterGUI:
         style.configure("Result.Treeview.Heading", font=(FONT_FAMILY, int(12 * self.font_scale), 'bold'))
         self.result_tree.configure(style="Result.Treeview")
 
+        self._update_result_tree_columns()
+
         tree_scroll = ttk.Scrollbar(table_container, orient="vertical", command=self.result_tree.yview)
         self.result_tree.configure(yscrollcommand=tree_scroll.set)
 
-        self.result_tree.pack(side="left", fill="both", expand=True, padx=int(20 * self.dpi_scale * self.zoom_factor), pady=int(12 * self.dpi_scale * self.zoom_factor))
+        pad_x = int(20 * self.dpi_scale * self.zoom_factor)
+        pad_y = int(12 * self.dpi_scale * self.zoom_factor)
+        self.result_tree.pack(
+            side="left", fill="both", expand=True,
+            padx=pad_x, pady=pad_y,
+        )
+        self.result_tree.bind(
+            "<Configure>",
+            lambda _event: self._schedule_page_width_policy(),
+            add="+",
+        )
         tree_scroll.pack(side="right", fill="y", pady=int(10 * self.dpi_scale * self.zoom_factor))
 
         # 操作按钮 - 放在表格下方
@@ -7754,7 +7847,6 @@ class BossFilterGUI:
 
     def on_closing(self):
         """窗口关闭处理 - 安全等待工作线程结束"""
-        self._cancel_page_prewarm()
         if self.is_running:
             if messagebox.askokcancel("退出", "程序正在运行，确定要强行退出吗？\n未保存的进度可能会丢失。"):
                 self.is_running = False
@@ -7899,6 +7991,7 @@ class BossFilterGUI:
                     else:
                         ai_text = "—"
 
+                    edu, age, job_status, school, company = self._extract_extra_fields(c)
                     item_id = self.result_tree.insert("", "end", values=(
                         c.get('name', ''),
                         exp,
@@ -7907,7 +8000,12 @@ class BossFilterGUI:
                         score,
                         ai_text,
                         level,
-                        status
+                        status,
+                        edu,
+                        age,
+                        job_status,
+                        school,
+                        company,
                     ), tags=(tag,))
                     self._item_to_candidate[item_id] = c
 
@@ -7935,7 +8033,12 @@ class BossFilterGUI:
             "level": "推荐指数",
             "ai_eval": "AI评估",
             "status": "状态",
-            "skills": "技能匹配"
+            "skills": "技能匹配",
+            "education": "学历",
+            "age": "年龄",
+            "job_status": "求职状态",
+            "school": "毕业学校",
+            "company": "最近公司",
         }
         columns = self.result_tree['columns']
         for col in columns:
@@ -8072,6 +8175,81 @@ class BossFilterGUI:
         """绑定 Treeview 右键菜单和双击"""
         self.result_tree.bind('<Button-3>', self._show_context_menu)
         self.result_tree.bind('<Double-Button-1>', self._on_tree_double_click)
+        # 状态列 tooltip（截断时显示完整状态）
+        self._tooltip = None
+        self._tooltip_after_id = None
+        self._tooltip_item = None
+        self.result_tree.bind('<Motion>', self._on_tree_motion)
+        self.result_tree.bind('<Leave>', self._hide_tooltip)
+
+    def _on_tree_motion(self, event):
+        """Treeview 鼠标移动：长状态、学校和公司显示完整 tooltip。"""
+        item = self.result_tree.identify_row(event.y)
+        column_id = self.result_tree.identify_column(event.x)
+        if not item or not column_id:
+            self._hide_tooltip()
+            return
+
+        try:
+            display_columns = tuple(self.result_tree.cget("displaycolumns"))
+            column_index = int(column_id[1:]) - 1
+            column_name = display_columns[column_index]
+        except (IndexError, TypeError, ValueError):
+            self._hide_tooltip()
+            return
+
+        cand = self._item_to_candidate.get(item)
+        full = ''
+        if cand and column_name == 'status':
+            full = cand.get('_full_status', '')
+            show_tooltip = full.count('｜') >= 2
+        elif cand and column_name in ('school', 'company'):
+            _, _, _, school, company = self._extract_extra_fields(cand)
+            full = school if column_name == 'school' else company
+            show_tooltip = len(full) > (8 if column_name == 'school' else 10)
+        else:
+            show_tooltip = False
+
+        if not full or not show_tooltip:
+            self._hide_tooltip()
+            return
+
+        tooltip_key = (item, column_name)
+        if tooltip_key == self._tooltip_item and self._tooltip and self._tooltip.winfo_exists():
+            return
+        self._tooltip_item = tooltip_key
+        if self._tooltip_after_id:
+            self.root.after_cancel(self._tooltip_after_id)
+        x = self.root.winfo_pointerx() + 15
+        y = self.root.winfo_pointery() + 10
+        self._tooltip_after_id = self.root.after(
+            300, lambda: self._show_tooltip(full, x, y, tooltip_key)
+        )
+
+    def _show_tooltip(self, text, x, y, tooltip_key=None):
+        """显示 tooltip 窗口。"""
+        self._hide_tooltip()
+        tip = tk.Toplevel(self.root)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f'+{x}+{y}')
+        label = tk.Label(
+            tip, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
+            font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
+            padx=6, pady=3
+        )
+        label.pack()
+        self._tooltip = tip
+        self._tooltip_item = tooltip_key
+
+    def _hide_tooltip(self, event=None):
+        """隐藏 tooltip 窗口。"""
+        if self._tooltip_after_id:
+            self.root.after_cancel(self._tooltip_after_id)
+            self._tooltip_after_id = None
+        if self._tooltip:
+            self._tooltip.destroy()
+            self._tooltip = None
+        self._tooltip_item = None
 
     def _on_tree_double_click(self, event):
         """双击候选人查看详情"""
@@ -8143,19 +8321,82 @@ class BossFilterGUI:
                 return c
         return None
 
+    def _extract_extra_fields(self, candidate):
+        """提取最大化结果表使用的学历、年龄、状态、学校和公司字段。"""
+        structured = candidate.get('structured') or {}
+        edu = structured.get('degree', '')
+        age = structured.get('age', '')
+        job_status = structured.get('job_status', '')
+        api_profile = candidate.get('_api_profile') or {}
+        school = self._latest_history_value(
+            api_profile.get('educations'), 'school',
+            candidate.get('summary', ''), '教育经历：',
+        )
+        company = self._latest_history_value(
+            api_profile.get('works'), 'company',
+            candidate.get('summary', ''), '工作经历：',
+        )
+        # 有缺失时统一 fallback 到文本解析（只调一次）
+        if not edu or not age or not job_status:
+            from bossmaster import extract_summary_info
+            info = extract_summary_info(candidate.get('summary', ''))
+            if not edu:
+                edu = info.get('education', '')
+            if not age:
+                age = info.get('age', '')
+            if not job_status:
+                job_status = info.get('job_status', '')
+        if age:
+            age = f"{age}岁"
+        return edu, age, job_status, school, company
+
+    @staticmethod
+    def _latest_history_value(entries, field, summary, summary_prefix):
+        """按结束时间取最近一段经历的字段，缺失时从摘要对应行降级提取。"""
+        valid_entries = [
+            entry for entry in (entries or [])
+            if isinstance(entry, dict) and str(entry.get(field, '')).strip()
+        ]
+        if valid_entries:
+            def _date_key(entry):
+                end = str(entry.get('end', '')).strip()
+                if any(marker in end for marker in ('至今', '现在', '今')):
+                    return (2, 99999999)
+                digits = re.sub(r'\D', '', end)
+                if digits:
+                    return (1, int(digits[:8]))
+                return (0, 0)
+
+            dated_entries = [entry for entry in valid_entries if _date_key(entry)[0] > 0]
+            latest = max(dated_entries, key=_date_key) if dated_entries else valid_entries[0]
+            return str(latest.get(field, '')).strip()
+
+        for line in str(summary or '').splitlines():
+            stripped = line.strip()
+            if stripped.startswith(summary_prefix):
+                value = stripped[len(summary_prefix):].strip()
+                return value.split()[0] if value else ''
+        return ''
+
     def _format_candidate_status(self, candidate):
-        """生成结果表中的候选人状态文本。"""
+        """生成结果表中的候选人状态文本。超过 3 段且列未拉伸时截断，完整文本存 _full_status。"""
         followup_status = candidate.get('followup_status')
         if not followup_status:
             followup_status = "已打招呼" if candidate.get('greet_sent', False) else "未沟通"
         status_parts = [followup_status]
+        # 未打招呼但有打招呼上下文 → 可直接 API 发送，不依赖浏览器停留在推荐页
+        if (not candidate.get('greet_sent')
+                and (candidate.get('greet_context') or {}).get('chat_start')):
+            status_parts.append("可直发")
         if candidate.get('manual_review_required'):
             status_parts.append("需人工确认")
         if candidate.get('feedback_status'):
             status_parts.append(candidate.get('feedback_status'))
         if candidate.get('blacklisted'):
             status_parts.append("已屏蔽")
-        return "｜".join(status_parts)
+        full = "｜".join(status_parts)
+        candidate['_full_status'] = full
+        return full
 
     def _open_blacklist_reason_dialog(self, candidate, parent, on_confirm):
         """打开加入黑名单原因弹窗。"""
@@ -9407,6 +9648,26 @@ class BossFilterGUI:
                         self.root.after(0, lambda: messagebox.showwarning(
                             "浏览器未连接",
                             "无法连接到 Chrome 浏览器。\n请切换到「运行控制」页点击「检测/连接浏览器」。",
+                            parent=self.root))
+                        return
+                    self.append_log(f"[打招呼] ✅ 浏览器重连成功")
+
+                # 检查 page 连接是否还活着（标签页可能已关闭或切换导致引用失效）
+                try:
+                    self.browser_page.run_js('return 1')
+                except Exception:
+                    self.append_log(f"[打招呼] 浏览器连接已断开，正在尝试重连...")
+                    def _revert_stale():
+                        try:
+                            self.result_tree.set(item, 'status', '未沟通')
+                        except Exception:
+                            pass
+                    if not self._try_reconnect_browser():
+                        self.append_log(f"[打招呼] ❌ 浏览器重连失败，请先在「运行控制」页连接浏览器")
+                        self.root.after(0, _revert_stale)
+                        self.root.after(0, lambda: messagebox.showwarning(
+                            "浏览器连接断开",
+                            "浏览器连接已断开且无法自动重连。\n请切换到「运行控制」页点击「检测/连接浏览器」。",
                             parent=self.root))
                         return
                     self.append_log(f"[打招呼] ✅ 浏览器重连成功")
