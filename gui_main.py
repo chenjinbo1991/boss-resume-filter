@@ -2872,7 +2872,7 @@ class BossFilterGUI:
                                         foreground=self.colors['text_secondary'],
                                         background=self.colors['bg_card'])
         self.ai_status_label.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
-        # 后台查询 keyring，完成后更新 UI
+        # 页面先完成绘制，再后台查询 keyring，避免导入 keyring 与 Tk 控件创建争抢主线程。
         def _check_run_page_key_bg():
             _provider = self.api_config.get("api_provider", "")
             if not _provider:
@@ -2887,7 +2887,10 @@ class BossFilterGUI:
                     self.api_config["api_key"] = _key
                 self._update_ai_eval_status()
             self.run_on_ui(_apply)
-        threading.Thread(target=_check_run_page_key_bg, daemon=True).start()
+        self.root.after(
+            150,
+            lambda: threading.Thread(target=_check_run_page_key_bg, daemon=True).start(),
+        )
         # 备注：+- 分色显示
         _note_prefix = "(对通过筛选的候选人进行 LLM 二次评分，"
         _note_suffix = "10分调整)"
@@ -4057,6 +4060,7 @@ class BossFilterGUI:
                 menu.tk_popup(event.x_root, event.y_root)
 
             tree.bind('<Button-3>', on_detail_right_click)
+            self._bind_detail_tree_tooltip(tree, filtered_ref)
 
             def on_detail_double_click(event):
                 clicked_item = tree.identify_row(event.y)
@@ -4433,6 +4437,7 @@ class BossFilterGUI:
                 menu.tk_popup(event.x_root, event.y_root)
 
             tree.bind('<Button-3>', on_result_detail_right_click)
+            self._bind_detail_tree_tooltip(tree, filtered_ref)
 
             def on_result_detail_double_click(event):
                 clicked_item = tree.identify_row(event.y)
@@ -8247,10 +8252,10 @@ class BossFilterGUI:
             300, lambda: self._show_tooltip(full, x, y, tooltip_key)
         )
 
-    def _show_tooltip(self, text, x, y, tooltip_key=None):
+    def _show_tooltip(self, text, x, y, tooltip_key=None, parent=None):
         """显示 tooltip 窗口。"""
         self._hide_tooltip()
-        tip = tk.Toplevel(self.root)
+        tip = tk.Toplevel(parent or self.root)
         tip.wm_overrideredirect(True)
         tip.wm_geometry(f'+{x}+{y}')
         label = tk.Label(
@@ -8264,13 +8269,75 @@ class BossFilterGUI:
 
     def _hide_tooltip(self, event=None):
         """隐藏 tooltip 窗口。"""
-        if self._tooltip_after_id:
-            self.root.after_cancel(self._tooltip_after_id)
+        after_id = getattr(self, '_tooltip_after_id', None)
+        if after_id:
+            self.root.after_cancel(after_id)
             self._tooltip_after_id = None
-        if self._tooltip:
-            self._tooltip.destroy()
+        tip = getattr(self, '_tooltip', None)
+        if tip:
+            tip.destroy()
             self._tooltip = None
         self._tooltip_item = None
+
+    def _bind_detail_tree_tooltip(self, tree, filtered_ref):
+        """为明细窗口 Treeview 绑定状态列 tooltip（截断时显示完整状态）。"""
+        _state = {'key': None, 'after_id': None}
+
+        def _cancel_pending():
+            """仅取消待执行的延迟，不清除已显示的 tooltip。"""
+            if _state['after_id']:
+                tree.after_cancel(_state['after_id'])
+                _state['after_id'] = None
+
+        def _hide_all():
+            """取消延迟 + 隐藏已显示的 tooltip + 重置状态。"""
+            _cancel_pending()
+            self._hide_tooltip()
+            _state['key'] = None
+
+        def on_motion(event):
+            item = tree.identify_row(event.y)
+            column_id = tree.identify_column(event.x)
+            if not item or not column_id:
+                _hide_all()
+                return
+            try:
+                display_columns = tuple(tree["columns"])
+                column_index = int(column_id[1:]) - 1
+                column_name = display_columns[column_index]
+            except (IndexError, TypeError, ValueError):
+                _hide_all()
+                return
+            if column_name != 'status':
+                _hide_all()
+                return
+            values = tree.item(item, 'values')
+            full = ''
+            for c in filtered_ref[0]:
+                if c.get('name') == values[0]:
+                    full = c.get('_full_status', '')
+                    break
+            if not full or full.count('｜') < 2:
+                _hide_all()
+                return
+            # 同一行同一列：已显示就保持，有待显示就保持
+            tooltip_key = (item, column_name)
+            if tooltip_key == _state['key']:
+                tip = getattr(self, '_tooltip', None)
+                if (tip and tip.winfo_exists()) or _state['after_id']:
+                    return
+            # 新目标：隐藏旧的，调度新的
+            _hide_all()
+            _state['key'] = tooltip_key
+            x = tree.winfo_pointerx() + 15
+            y = tree.winfo_pointery() + 10
+            _parent = tree.winfo_toplevel()
+            _state['after_id'] = tree.after(
+                300, lambda: self._show_tooltip(full, x, y, tooltip_key, parent=_parent)
+            )
+
+        tree.bind('<Motion>', on_motion)
+        tree.bind('<Leave>', lambda e: _hide_all())
 
     def _on_tree_double_click(self, event):
         """双击候选人查看详情"""
@@ -8357,10 +8424,9 @@ class BossFilterGUI:
             api_profile.get('works'), 'company',
             candidate.get('summary', ''), '工作经历：',
         )
-        # 有缺失时统一 fallback 到文本解析（只调一次）
+        # 有缺失时使用本地轻量正则兜底，避免仅为列表展示导入完整自动化模块。
         if not edu or not age or not job_status:
-            from bossmaster import extract_summary_info
-            info = extract_summary_info(candidate.get('summary', ''))
+            info = self._extract_summary_display_fields(candidate.get('summary', ''))
             if not edu:
                 edu = info.get('education', '')
             if not age:
@@ -8370,6 +8436,22 @@ class BossFilterGUI:
         if age:
             age = f"{age}岁"
         return edu, age, job_status, school, company
+
+    @staticmethod
+    def _extract_summary_display_fields(summary):
+        """从摘要提取结果表需要的学历、年龄和求职状态。"""
+        text = str(summary or '')
+        education = next(
+            (value for value in ('博士', '硕士', '本科', '大专', '高中', '中专') if value in text),
+            '',
+        )
+        age_match = re.search(r'年龄[：:]\s*(\d+)|(\d+)\s*岁', text)
+        status_match = re.search(r'(?:求职状态[：:]\s*)?(离职|在职|在校|应届)', text)
+        return {
+            'education': education,
+            'age': next((group for group in age_match.groups() if group), '') if age_match else '',
+            'job_status': status_match.group(1) if status_match else '',
+        }
 
     @staticmethod
     def _latest_history_value(entries, field, summary, summary_prefix):
