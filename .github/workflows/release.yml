@@ -127,20 +127,3 @@ jobs:
             dist/BOSS_ResumeFilter_mac.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload current platform assets to Gitee Release
-        shell: bash
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
-          if [ -z "$GITEE_TOKEN" ]; then
-            echo "::error::Repository Secret GITEE_TOKEN is not configured"
-            exit 1
-          fi
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            .venv-ci/Scripts/python build.py --ci --gitee-upload-local "$VERSION"
-          else
-            .venv-ci/bin/python build.py --ci --gitee-upload-local "$VERSION"
-          fi

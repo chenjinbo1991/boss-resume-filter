@@ -45,30 +45,30 @@ Release 页面最终包含：
 配置文件：`.github/workflows/release.yml`
 
 **CI 说明：**
-- **CI 构建完成后直接把当前平台产物上传 GitHub Release 和 Gitee Release**
+- **CI 构建完成后上传当前平台产物到 GitHub Release；Gitee 由本地发布机同步**
 - macOS 使用 `macos-latest`（Apple Silicon M1）runner，生成的 .app 兼容 Apple Silicon Mac；Intel Mac 用户建议从源码运行
 - 虚拟环境（`.venv-ci`）按 `requirements.txt` hash 缓存，依赖不变时跳过安装
 - 支持 `workflow_dispatch` 手动触发
 - 覆盖发布时自动触发对端重建，无需手动删除产物
 
-### Gitee Release 上传（构建端直传）
+### Gitee Release 上传（本地并行中转）
 
-本地发布和 GitHub Actions 都需要 `GITEE_TOKEN`。本地令牌使用环境变量；CI 令牌配置为 GitHub Repository Secret `GITEE_TOKEN`（在 https://gitee.com/profile/personal_access_tokens 生成，勾选 projects 权限）。
+本地发布需要 `GITEE_TOKEN` 环境变量（在 https://gitee.com/profile/personal_access_tokens 生成，勾选 projects 权限）。GitHub 托管的 macOS runner 到 Gitee 的大文件上传链路实测会长时间阻塞，因此不在 CI 上传 Gitee。
 
 **上传流程（`build.py --release` 自动执行）：**
 
 1. 上传当前平台产物到 GitHub Release
 2. 触发 CI 构建对端产物
 3. 从本地 `dist/` 上传当前平台产物到 Gitee Release
-4. CI 将对端产物直接上传 GitHub Release 和 Gitee Release
-5. 本地轮询等待 GitHub/Gitee 对端附件就绪，不下载中转
+4. CI 将对端产物上传 GitHub Release
+5. 本地以最多两路并发下载对端产物并上传 Gitee
 6. 更新 `latest.json` 的 `downloads_cn` 字段并自动提交推送
 
 **传输策略**：macOS ZIP/DMG 最多 2 路并发上传；小文件最多 3 路并发。所有 GitHub/Gitee 上传超时为 600 秒，失败按现有重试策略处理。
 
 **平台顺序**：
-- Windows 本地发布：本地上传 `BOSS_ResumeFilter.exe`，macOS CI 直接上传 ZIP/DMG。
-- macOS 本地发布：本地上传 ZIP/DMG，Windows CI 直接上传 EXE。
+- Windows 本地发布：本地上传 EXE；macOS CI 上传 GitHub 后，本地并行同步 ZIP/DMG 到 Gitee。
+- macOS 本地发布：本地上传 ZIP/DMG；Windows CI 上传 GitHub 后，本地同步 EXE 到 Gitee。
 
 **增量上传**：上传前先比较远端附件和本地产物。能证明内容一致时直接跳过，否则删除旧附件并重传。
 

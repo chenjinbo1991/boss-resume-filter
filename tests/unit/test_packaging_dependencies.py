@@ -40,9 +40,9 @@ def test_release_workflow_rebuilds_macos_when_dmg_is_missing():
     assert "BOSS_ResumeFilter\\.dmg" in workflow
 
 
-def test_release_workflow_uploads_current_platform_directly_to_gitee():
-    """The runner that built an artifact should upload it to Gitee without local relay."""
+def test_release_workflow_does_not_upload_to_gitee_from_github_runner():
+    """GitHub-hosted macOS runners are too slow for reliable Gitee large-file uploads."""
     workflow = (BASE_DIR / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
-    assert "GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}" in workflow
-    assert '--gitee-upload-local "$VERSION"' in workflow
+    assert "GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}" not in workflow
+    assert '--gitee-upload-local "$VERSION"' not in workflow

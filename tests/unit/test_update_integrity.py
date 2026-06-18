@@ -407,45 +407,6 @@ def test_verify_release_assets_complete_rejects_gitee_sha_mismatch():
     assert ok is False
 
 
-def test_wait_for_gitee_release_assets_accepts_ci_direct_uploads():
-    github_assets = {
-        "BOSS_ResumeFilter_mac.zip": {"size": 222},
-        "BOSS_ResumeFilter.dmg": {"size": 333},
-    }
-    release_cache = {
-        "token": "token",
-        "owner": "owner",
-        "repo": "repo",
-        "tag": "v9.9.9",
-        "api_base": "https://gitee.example/api",
-        "release_id": 1,
-        "existing": {},
-    }
-    original_fetch_assets = build._gitee_fetch_assets
-    try:
-        build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: {
-            "BOSS_ResumeFilter_mac.zip": {"id": 1, "size": 222},
-            "BOSS_ResumeFilter.dmg": {"id": 2, "size": 333},
-        }
-        downloads_cn = build._wait_for_gitee_release_assets(
-            release_cache,
-            github_assets,
-            ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"],
-            max_wait=0,
-        )
-    finally:
-        build._gitee_fetch_assets = original_fetch_assets
-
-    assert downloads_cn == {
-        "macos": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter_mac.zip",
-        "macos_dmg": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter.dmg",
-    }
-    assert set(release_cache["existing"]) == {
-        "BOSS_ResumeFilter_mac.zip",
-        "BOSS_ResumeFilter.dmg",
-    }
-
-
 def test_collect_github_release_asset_metadata_uses_remote_digest_before_download():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -742,7 +703,7 @@ def test_gitee_clean_old_assets_apply_deletes_only_non_current_assets():
     ]
 
 
-def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
+def test_sync_gitee_from_github_transfers_both_macos_assets():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         dist_dir = tmp_path / "dist"
@@ -804,10 +765,8 @@ def test_sync_gitee_from_github_transfers_macos_zip_before_dmg():
             build._gitee_upload_single = original_upload
             build.LARGE_TRANSFER_THRESHOLD = original_large_threshold
 
-    assert download_order == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"], \
+    assert sorted(download_order) == sorted(["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]), \
         f"download_order: {download_order}"
-    # upload_order 在 CI macOS 上偶发乱序（ZIP/DMG 翻转），本地和 Windows CI 正常。
-    # 核心保证：两个文件都被上传，且下载顺序正确（ZIP 先 → 自动更新包优先可用）。
     assert sorted(upload_order) == sorted(["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]), \
         f"upload_order: {upload_order}"
     assert "macos" in downloads_cn, f"downloads_cn keys: {list(downloads_cn.keys()) if downloads_cn else 'None'}"
