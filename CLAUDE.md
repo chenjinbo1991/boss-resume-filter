@@ -71,9 +71,10 @@ boss-resume-filter/
   3. `README.md` 顶部版本标识 + 版本历史段落（只保留最近 2-3 个版本，更早版本由 CHANGELOG.md 承载）+ gui_main.py 注释
   4. `CLAUDE.md` 和 `AGENTS.md` 项目结构中的 gui_main.py 注释
 - **版本内容写作规范**（必须遵守，详见 memory/readme-style.md）：
-  - 判断标准：一个非技术用户（运营、HR）能否理解？不能就换通俗说法
-  - **允许**：AI、API、API Key、浏览器、Chrome、Excel、配置文件、JSON、智能体、大模型
-  - **禁止**：变量名 / 函数名 / 字段名（用反引号包裹的标识）、纯内部机制（正则 / keyring / DPI / sha256 / locale-data / listener / srcdoc）、开发者黑话（OR/AND 条件、provider+base_url、阶段 1.6、闸门解耦、风控面）
+  - 目标：简洁专业、对普通用户友好（不是大白话，避免过度通俗化）
+  - **保留**：用户日常接触（AI、API、API Key、浏览器、Chrome、Excel、配置文件、JSON、智能体、大模型）+ 行业通用词（参数、持久化、覆盖率、解析、过滤、字段、格式）
+  - **禁止**：变量名 / 函数名 / 字段名（反引号标识）、纯内部机制（正则 / keyring / DPI / sha256 / locale-data / listener / srcdoc）、开发者黑话（OR/AND 条件、provider+base_url、阶段 1.6、闸门解耦、风控面）
+  - 避免自造怪词（如把「参数」翻成「联系凭证」反而更不专业）
   - 分类基准：问题修复仅指上一版本已存在、用户可感知、非本次开发引入的缺陷
   - `build.py --check` 自动扫描规则 4（STYLE_KEYWORDS + 反引号）；`--strict-changelog` 升级为硬门禁
 - 发布前 `build.py --check` 验证一致性
@@ -86,7 +87,7 @@ boss-resume-filter/
 - `python build.py`：自动打包（Windows EXE / macOS .app+ZIP+DMG），`IS_MAC`/`IS_WIN` 自动检测
 - `python build.py --release [--auto] [--version X.Y]`：打包→提交→tag→推送确认→GitHub Release 上传→Gitee 同步
 - **发布前必须先执行 `/neat-freak` skill**，完成文档与代码的洁癖级审查同步，再进入 `build.py --release`
-- **发布前必须对 CHANGELOG 当前版本段落做「用户视角润色」**：逐条对照 memory/readme-style.md 检查技术黑话、字段名、内部机制描述，改为用户能感知的通俗说法；`build.py --check` 规则 4 会自动扫描常见违规
+- **发布前必须对 CHANGELOG 当前版本段落做润色**：逐条对照 memory/readme-style.md 删技术黑话和字段名，保持简洁专业（不是大白话）；`build.py --check` 规则 4 会自动扫描常见违规
 - `__version__` 在 `gui_main.py` 中定义，唯一版本号来源；`build.py` 通过 AST 解析提取
 - 智能跳过打包：`.build_state.json` 构建指纹未变时复用产物，`--force-build` 强制重建
 - 打包命令：Windows `--onefile --noconsole --runtime-tmpdir %LOCALAPPDATA%`；macOS `--onedir --windowed`；DMG 用 `dmgbuild`

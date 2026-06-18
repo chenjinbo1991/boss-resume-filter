@@ -968,7 +968,7 @@ def _check_changelog_entry_quality(strict=False):
                 if kw in full_text:
                     warnings.append(
                         f"  [{section_name}] {title_text} — 含技术黑话「{kw}」，"
-                        f"按 readme-style.md 改为用户视角表述"
+                        f"按 readme-style.md 换简洁专业的表述"
                     )
                     break
             else:
@@ -977,7 +977,7 @@ def _check_changelog_entry_quality(strict=False):
                     warnings.append(
                         f"  [{section_name}] {title_text} — 含反引号标识 "
                         f"{'、'.join(backticks[:3])}（疑似字段名/变量名），"
-                        f"请删除或换通俗说法"
+                        f"请删除或换准确说法"
                     )
 
     if warnings:
