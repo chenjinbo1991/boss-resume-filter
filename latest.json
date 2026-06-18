@@ -1,29 +1,29 @@
 {
-  "version": "2.12",
-  "release_date": "2026-06-17",
+  "version": "2.12.1",
+  "release_date": "2026-06-18",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12/BOSS_ResumeFilter.dmg"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
-      "size": 38216674,
-      "sha256": "ae4c153d0e48ad989c418879f95c8a364fd1ab5f71ff5493ff34a7dd44a88e87"
+      "size": 38231999,
+      "sha256": "8ddc59784fba4c21a19d44120cda6f5ab790091b8b353dd09b1ce2e5e2938079"
     },
     "macos_dmg": {
-      "size": 33053541,
-      "sha256": "962e667024520883958ca01de9297375f19875dabe59d01da9eca5fba492626b"
+      "size": 33087453,
+      "sha256": "2af5f8c52ce27ef5f84a60ade0cdcbcc3f1eaf8a2a619ecfbdbfa4673d79e710"
     },
     "macos": {
-      "size": 33906251,
-      "sha256": "2083181879dd8608cb62b3238b4af3199ffb5f2a6423e7ecc4ae31ed3e61d02b"
+      "size": 33920687,
+      "sha256": "291eb04aeed7971e9605a9a90367971ae33c096a50723d8e8b3669558690bdec"
     }
   },
-  "release_notes": "### 新增功能\n\n- **打招呼上下文持久化**：筛选阶段自动保存候选人的详情页打招呼参数（持久化到候选人库）；之后在图形界面手动打招呼时，优先用已保存的参数直接发送，不再要求浏览器仍停留在推荐牛人页面；发送失败时自动回退到列表按钮路径，确保打招呼不中断\n- **跨会话复用**：打招呼上下文跟随候选人数据持久化保存，重启程序后仍可继续用上下文直接发送；去重合并时保留上下文字段，不会因高分新记录覆盖而丢失\n\n### 体验优化\n\n- **阶段 1.6 上下文捕获更聚焦**：只对评估分 60 及以上、单轮最多 30 人的候选人开详情页抓上下文，避免把风控面浪费在低价值候选人上\n- **人工核实候选人也能拿到上下文**：上下文采集与发送闸门解耦，标记\"需人工确认\"的候选人仍会在阶段 1.6 抓取上下文；用户核实通过后点\"打招呼\"立即可用，不再依赖浏览器位置\n- **API 兜底预算上调**：API 直调补全预算从 160 提高到 320，对应默认最多补全 16 页；硬上限从 10 页提到 20 页，缓解深页候选人覆盖率随扫描深度衰减的问题\n- **覆盖率日志更透明**：最终覆盖率日志拆分 listener 和 API 兜底两条路径的贡献人数，便于判断补全策略的实际价值\n- **Excel 导出更稳**：写入单元格前统一清洗 XML 1.0 非法字符，避免 BOSS 接口返回的工作职责文本里夹杂的控制字符让整张 Excel 导出崩溃\n\n### 问题修复\n\n- **统计看板明细与汇总日期一致性修复**：数据统计页下方明细 Treeview 现在按所选日期范围过滤，与上方 4 张汇总卡片口径一致，避免\"汇总数字和明细行数对不上\"的错觉\n- **岗位名匹配容错**：GUI/CLI 选择岗位时容忍空格与大小写差异，避免参数与 `job_config.json` 键不完全一致时静默空跑\n- **工作年限解析鲁棒性**：`parse_experience_years` 重写，避免跨行误匹配（如 \"性别：0\\n年龄\" 把 0 当年限）和毕业年份干扰（>50 的数值）",
+  "release_notes": "### 新增功能\n\n- **筛选结果表自动适配窗口**：普通窗口显示 8 列，最大化时显示 11 列（新增学历、年龄、求职状态），窗口够宽时显示 13 列（新增学校、公司）\n- **Excel 导出文件名更直观**：选中导出以候选人姓名命名，全量导出以岗位名称和日期范围命名\n\n### 体验优化\n\n- **程序启动更快**：减少启动等待时间，界面更快可用\n- **表格悬停更流畅**：优化信息显示逻辑，鼠标滑过表格行时不再卡顿\n- **扫描更高效**：减少不必要的网络请求，节省接口调用额度",
   "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12/BOSS_ResumeFilter.exe",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12/BOSS_ResumeFilter.dmg"
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.exe",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.dmg"
   }
 }
