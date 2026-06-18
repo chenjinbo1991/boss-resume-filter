@@ -2851,17 +2851,8 @@ class BossFilterGUI:
         row_ai.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
         ttk.Label(row_ai, text="AI 评估:", font=self.font_label, width=12,
                  background=self.colors['bg_card']).pack(side="left")
-        # 检测 API Key 是否已配置，据此设置默认值。
-        # 启动时 load_api_config(resolve_keys=False) 跳过了 keyring 查询，
-        # 这里按需补查一次，避免运行控制页始终显示"未配置"。
-        if not self.api_config.get("api_key"):
-            _provider = self.api_config.get("api_provider", "")
-            if _provider:
-                _key = get_api_key(_provider, self.api_config.get("base_url", ""))
-                if _key:
-                    self.api_config["api_key"] = _key
-        has_api_key = bool(self.api_config.get("api_key"))
-        self.ai_eval_var = tk.BooleanVar(value=has_api_key)
+        # API Key 状态：先显示"检测中"，后台查 keyring 后更新（避免主线程阻塞）
+        self.ai_eval_var = tk.BooleanVar(value=False)
         # 大 indicator + 文字一体，用父容器 anchor 做垂直居中
         _cb_style = ttk.Style()
         _indicator_size = int(32 * self.dpi_scale * self.zoom_factor)
@@ -2875,17 +2866,28 @@ class BossFilterGUI:
                                    variable=self.ai_eval_var,
                                    style='AIEval.TCheckbutton')
         ai_check.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
-        # API Key 状态标签
+        # API Key 状态标签（先显示检测中，后台查询完毕后由 _update_ai_eval_status 更新）
         _status_font = (FONT_FAMILY, int(11 * self.font_scale))
-        if has_api_key:
-            self.ai_status_label = tk.Label(row_ai, text="✓ 已配置", font=_status_font,
-                                            foreground=self.colors['success'],
-                                            background=self.colors['bg_card'])
-        else:
-            self.ai_status_label = tk.Label(row_ai, text="⚠ 未配置", font=_status_font,
-                                            foreground=self.colors['warning'],
-                                            background=self.colors['bg_card'])
+        self.ai_status_label = tk.Label(row_ai, text="⏳ 检测中...", font=_status_font,
+                                        foreground=self.colors['text_secondary'],
+                                        background=self.colors['bg_card'])
         self.ai_status_label.pack(side="left", padx=int(5 * self.dpi_scale * self.zoom_factor))
+        # 后台查询 keyring，完成后更新 UI
+        def _check_run_page_key_bg():
+            _provider = self.api_config.get("api_provider", "")
+            if not _provider:
+                self.run_on_ui(self._update_ai_eval_status)
+                return
+            try:
+                _key = get_api_key(_provider, self.api_config.get("base_url", ""))
+            except Exception:
+                _key = None
+            def _apply():
+                if _key and not self.api_config.get("api_key"):
+                    self.api_config["api_key"] = _key
+                self._update_ai_eval_status()
+            self.run_on_ui(_apply)
+        threading.Thread(target=_check_run_page_key_bg, daemon=True).start()
         # 备注：+- 分色显示
         _note_prefix = "(对通过筛选的候选人进行 LLM 二次评分，"
         _note_suffix = "10分调整)"
@@ -3001,7 +3003,7 @@ class BossFilterGUI:
         self.result_job_combo.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor))
         self.result_job_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_results())
 
-        # 日期过滤（日历控件）。结果页会在首屏后后台预加载，避免用户点击时卡顿。
+        # 日期过滤（日历控件）
         ttk.Label(filter_frame, text="日期:", font=self.font_label,
                  background=self.colors['bg_main']).pack(side="left", padx=int(20 * self.dpi_scale * self.zoom_factor))
         _cal_font = (FONT_FAMILY, int(11 * self.font_scale))
@@ -4029,15 +4031,21 @@ class BossFilterGUI:
                             if c.get('name') == sv[0]:
                                 selected_data.append(c)
                                 break
+                    if not selected_data:
+                        return
+                    from bossmaster import export_to_excel
+                    if len(selected_data) == 1:
+                        init_name = f"{selected_data[0].get('name', '候选人')}.xlsx"
+                    else:
+                        init_name = f"{selected_data[0].get('name', '候选人')}等{len(selected_data)}人_{datetime.now().strftime('%Y%m%d')}.xlsx"
                     file_path = filedialog.asksaveasfilename(
                         title="保存选中的候选人",
-                        defaultextension=".json",
-                        filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
-                        initialfile=f"selected_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                        defaultextension=".xlsx",
+                        filetypes=[("Excel 文件", "*.xlsx")],
+                        initialfile=init_name
                     )
                     if file_path:
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            json.dump(selected_data, f, ensure_ascii=False, indent=2)
+                        export_to_excel(selected_data, file_path)
                         messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
 
                 menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
@@ -4399,15 +4407,21 @@ class BossFilterGUI:
                             if c.get('name') == sv[0]:
                                 selected_data.append(c)
                                 break
+                    if not selected_data:
+                        return
+                    from bossmaster import export_to_excel
+                    if len(selected_data) == 1:
+                        init_name = f"{selected_data[0].get('name', '候选人')}.xlsx"
+                    else:
+                        init_name = f"{selected_data[0].get('name', '候选人')}等{len(selected_data)}人_{datetime.now().strftime('%Y%m%d')}.xlsx"
                     file_path = filedialog.asksaveasfilename(
                         title="保存选中的候选人",
-                        defaultextension=".json",
-                        filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
-                        initialfile=f"selected_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                        defaultextension=".xlsx",
+                        filetypes=[("Excel 文件", "*.xlsx")],
+                        initialfile=init_name
                     )
                     if file_path:
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            json.dump(selected_data, f, ensure_ascii=False, indent=2)
+                        export_to_excel(selected_data, file_path)
                         messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
 
                 menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
@@ -9895,18 +9909,25 @@ class BossFilterGUI:
                     selected_data.append(c)
                     break
 
-        # 导出到文件
+        if not selected_data:
+            return
+
+        # 导出到 Excel
+        from bossmaster import export_to_excel
+        if len(selected_data) == 1:
+            init_name = f"{selected_data[0].get('name', '候选人')}.xlsx"
+        else:
+            init_name = f"{selected_data[0].get('name', '候选人')}等{len(selected_data)}人_{datetime.now().strftime('%Y%m%d')}.xlsx"
         file_path = filedialog.asksaveasfilename(
             title="保存选中的候选人",
-            defaultextension=".json",
-            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
-            initialfile=f"selected_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            defaultextension=".xlsx",
+            filetypes=[("Excel 文件", "*.xlsx")],
+            initialfile=init_name
         )
 
         if file_path:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(selected_data, f, ensure_ascii=False, indent=2)
-            messagebox.showinfo("成功", f"已导出 {len(selected_data)} 个候选人")
+            export_to_excel(selected_data, file_path)
+            messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
 
     def export_excel(self):
         """导出 Excel"""
@@ -9917,12 +9938,24 @@ class BossFilterGUI:
                     candidates = json.load(f)
                 candidates = [c for c in candidates if not c.get('blacklisted')]
 
+                # 构建文件名：岗位 + 日期范围
+                job_name = self.result_job_var.get() if hasattr(self, 'result_job_var') else "全部岗位"
+                start_str, end_str = self._get_result_date_filter() if hasattr(self, 'result_date_start_entry') else (None, None)
+                if start_str and end_str:
+                    date_part = f"{start_str}_{end_str}"
+                elif start_str:
+                    date_part = f"{start_str}起"
+                elif end_str:
+                    date_part = f"至{end_str}"
+                else:
+                    date_part = datetime.now().strftime('%Y%m%d')
+
                 # 弹出文件保存对话框
                 file_path = filedialog.asksaveasfilename(
                     title="保存 Excel 文件",
                     defaultextension=".xlsx",
                     filetypes=[("Excel 文件", "*.xlsx")],
-                    initialfile=f"candidates_all_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    initialfile=f"{job_name}_{date_part}.xlsx"
                 )
 
                 if file_path:
