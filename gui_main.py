@@ -4657,6 +4657,11 @@ class BossFilterGUI:
         if not hasattr(self, 'ai_status_label'):
             return  # UI 尚未创建完成
         has_key = bool(self.api_config.get("api_key"))
+        # 首次检测到已配置 Key 时自动启用 AI 评估，后续不覆盖用户手动取消
+        if not getattr(self, '_ai_eval_auto_done', False):
+            self._ai_eval_auto_done = True
+            if has_key:
+                self.ai_eval_var.set(True)
         if has_key:
             self.ai_status_label.config(text="✓ 已配置", foreground=self.colors['success'])
         else:
