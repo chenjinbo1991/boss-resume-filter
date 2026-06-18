@@ -139,6 +139,7 @@ boss-resume-filter/
 
 - 运行页每 2 秒轮询 Chrome 连接状态；手动检测时自动启动 Chrome（动态端口 + 独立 profile，保留登录态）
 - `_browser_check_running` 互斥标志防重复启动；端口预检防止自动启动
+- GUI 手动打招呼前检测 page 连接有效性，断开时自动重连，重连失败弹窗提醒
 
 ### 反爬对抗
 
@@ -178,6 +179,8 @@ boss-resume-filter/
 > **为什么不用 API 监听/直调？** BOSS 直聘推荐页使用 `srcdoc` iframe，`iframe.run_js('return location.href')` 始终返回 `about:srcdoc`，无法获取 jobId 参数。同时页面数据由服务端渲染嵌入 HTML，无客户端 API 调用可供监听。代码中保留了 `_start_recommend_api_listener()` 和 `_build_recommend_api_pagination_from_page()` 等函数，但在当前 BOSS 页面结构下均无效。
 
 `filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
+
+API 兜底翻页连续 3 页无 DOM 命中时提前停止，避免无效请求浪费 API 配额。
 
 ### 滚动提前终止
 
@@ -227,6 +230,11 @@ boss-resume-filter/
 
 - 所有 DOM 交互选择器集中配置，带 `{geek_id}` 占位符；浏览器连接后自动健康检查
 
+### 筛选结果表
+
+- 普通窗口 8 列；最大化显示 11 列（+学历/年龄/求职状态）；表格宽度 ≥1500px 时显示 13 列（+学校/公司），列宽按比例分配
+- 状态列显示多段标记（跟进状态/可直发/需人工确认/反馈/屏蔽）；状态、学校、公司列支持 tooltip 显示完整内容
+
 ## AI 模型配置
 
 ### 支持的服务商
@@ -248,7 +256,7 @@ boss-resume-filter/
 
 ## 自动更新
 
-- 启动时延迟 3 秒检查，**自适应冷却**（发现新版本 24h / 无更新 4h / 失败 15min 指数退避）；Gitee 优先 → GitHub fallback（Gitee "无更新"时 GitHub 复核防漏报）
+- 启动时延迟 12 秒检查（updater 模块延迟加载避免阻塞冷启动），**自适应冷却**（发现新版本 24h / 无更新 4h / 失败 15min 指数退避）；Gitee 优先 → GitHub fallback（Gitee "无更新"时 GitHub 复核防漏报）
 - **Gitee 源**（8s 超时）：`latest.json`；**GitHub 源**（10s 超时）：GitHub Releases API
 - 下载链接：`latest.json` 的 `downloads_cn` 优先（国内快）；弹窗支持「立即更新」和「稍后提醒」
 - **Windows**：下载 EXE → 校验 SHA256 → `update.bat` 替换重启；脚本须清理 `_PYI_*` 环境变量 + `PYINSTALLER_RESET_ENVIRONMENT=1` 防 DLL 缺失
