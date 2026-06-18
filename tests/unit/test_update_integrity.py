@@ -267,7 +267,7 @@ def test_ensure_github_release_asset_matches_local_reuploads_until_digest_matche
     assert calls["assets"] >= 2
 
 
-def test_verify_release_assets_complete_accepts_github_and_gitee_assets():
+def test_verify_release_assets_complete_uses_size_without_downloading_gitee_assets():
     github_assets = {
         "BOSS_ResumeFilter.exe": {
             "name": "BOSS_ResumeFilter.exe",
@@ -308,12 +308,7 @@ def test_verify_release_assets_complete_accepts_github_and_gitee_assets():
         build._get_github_release_assets = lambda tag: github_assets
         build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: gitee_assets
 
-        def fake_remote_sha(url, token=None):
-            downloaded.append((url, token))
-            name = Path(url).name
-            return build._asset_digest_sha256(github_assets[name])
-
-        build._remote_file_sha256 = fake_remote_sha
+        build._remote_file_sha256 = lambda url, token=None: downloaded.append((url, token))
 
         ok = build._verify_release_assets_complete(
             "v9.9.9",
@@ -327,11 +322,7 @@ def test_verify_release_assets_complete_accepts_github_and_gitee_assets():
 
     assert ok is True
     assert release_cache["existing"] == gitee_assets
-    assert sorted(Path(url).name for url, _token in downloaded) == [
-        "BOSS_ResumeFilter.dmg",
-        "BOSS_ResumeFilter.exe",
-        "BOSS_ResumeFilter_mac.zip",
-    ]
+    assert downloaded == []
 
 
 def test_verify_release_assets_complete_rejects_missing_github_asset():
@@ -406,6 +397,7 @@ def test_verify_release_assets_complete_rejects_gitee_sha_mismatch():
             "v9.9.9",
             release_cache=release_cache,
             report=lambda _message: None,
+            verify_gitee_sha256=True,
         )
     finally:
         build._get_github_release_assets = original_get_assets
@@ -413,6 +405,45 @@ def test_verify_release_assets_complete_rejects_gitee_sha_mismatch():
         build._remote_file_sha256 = original_remote_sha
 
     assert ok is False
+
+
+def test_wait_for_gitee_release_assets_accepts_ci_direct_uploads():
+    github_assets = {
+        "BOSS_ResumeFilter_mac.zip": {"size": 222},
+        "BOSS_ResumeFilter.dmg": {"size": 333},
+    }
+    release_cache = {
+        "token": "token",
+        "owner": "owner",
+        "repo": "repo",
+        "tag": "v9.9.9",
+        "api_base": "https://gitee.example/api",
+        "release_id": 1,
+        "existing": {},
+    }
+    original_fetch_assets = build._gitee_fetch_assets
+    try:
+        build._gitee_fetch_assets = lambda api_base, token, release_id, retry_fn=None: {
+            "BOSS_ResumeFilter_mac.zip": {"id": 1, "size": 222},
+            "BOSS_ResumeFilter.dmg": {"id": 2, "size": 333},
+        }
+        downloads_cn = build._wait_for_gitee_release_assets(
+            release_cache,
+            github_assets,
+            ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"],
+            max_wait=0,
+        )
+    finally:
+        build._gitee_fetch_assets = original_fetch_assets
+
+    assert downloads_cn == {
+        "macos": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter_mac.zip",
+        "macos_dmg": "https://gitee.com/owner/repo/releases/download/v9.9.9/BOSS_ResumeFilter.dmg",
+    }
+    assert set(release_cache["existing"]) == {
+        "BOSS_ResumeFilter_mac.zip",
+        "BOSS_ResumeFilter.dmg",
+    }
 
 
 def test_collect_github_release_asset_metadata_uses_remote_digest_before_download():
@@ -881,6 +912,48 @@ def test_transfer_batch_runs_small_files_before_large_files():
 
     assert order[0] == "README.md"
     assert order[1:] == ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
+
+
+def test_transfer_batch_can_upload_two_large_files_concurrently():
+    import threading
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        zip_path = tmp_path / "BOSS_ResumeFilter_mac.zip"
+        dmg_path = tmp_path / "BOSS_ResumeFilter.dmg"
+        zip_path.write_bytes(b"large")
+        dmg_path.write_bytes(b"large")
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        active = 0
+        max_active = 0
+
+        original_large_threshold = build.LARGE_TRANSFER_THRESHOLD
+        try:
+            build.LARGE_TRANSFER_THRESHOLD = 1
+
+            def worker(path):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                barrier.wait(timeout=2)
+                with lock:
+                    active -= 1
+                return path.name
+
+            build._run_transfer_batch(
+                [zip_path, dmg_path],
+                "测试并发传输",
+                worker,
+                lambda item, result: None,
+                lambda item, error: (_ for _ in ()).throw(error),
+                large_workers=2,
+            )
+        finally:
+            build.LARGE_TRANSFER_THRESHOLD = original_large_threshold
+
+    assert max_active == 2
 
 
 def test_update_latest_json_requires_complete_auto_update_metadata():

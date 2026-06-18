@@ -45,32 +45,34 @@ Release 页面最终包含：
 配置文件：`.github/workflows/release.yml`
 
 **CI 说明：**
-- **CI 只负责构建和上传 GitHub Release，不上传 Gitee**
+- **CI 构建完成后直接把当前平台产物上传 GitHub Release 和 Gitee Release**
 - macOS 使用 `macos-latest`（Apple Silicon M1）runner，生成的 .app 兼容 Apple Silicon Mac；Intel Mac 用户建议从源码运行
 - 虚拟环境（`.venv-ci`）按 `requirements.txt` hash 缓存，依赖不变时跳过安装
 - 支持 `workflow_dispatch` 手动触发
 - 覆盖发布时自动触发对端重建，无需手动删除产物
 
-### Gitee Release 上传（本地校验中转）
+### Gitee Release 上传（构建端直传）
 
-Gitee 上传从 CI 移到本地执行，解决跨境网络上传慢的问题。需要 `GITEE_TOKEN` 环境变量（在 https://gitee.com/profile/personal_access_tokens 生成，勾选 projects 权限）。
+本地发布和 GitHub Actions 都需要 `GITEE_TOKEN`。本地令牌使用环境变量；CI 令牌配置为 GitHub Repository Secret `GITEE_TOKEN`（在 https://gitee.com/profile/personal_access_tokens 生成，勾选 projects 权限）。
 
 **上传流程（`build.py --release` 自动执行）：**
 
 1. 上传当前平台产物到 GitHub Release
 2. 触发 CI 构建对端产物
 3. 从本地 `dist/` 上传当前平台产物到 Gitee Release
-4. 等待 CI 构建完毕，从 GitHub Release 下载对端产物到本地
-5. 从本地上传对端产物到 Gitee Release
+4. CI 将对端产物直接上传 GitHub Release 和 Gitee Release
+5. 本地轮询等待 GitHub/Gitee 对端附件就绪，不下载中转
 6. 更新 `latest.json` 的 `downloads_cn` 字段并自动提交推送
 
-**传输策略**：超过 20MB 的 EXE/ZIP/DMG 视为大文件，串行下载/上传；`job_config.json`、`README.md` 等小文件最多 3 路并发。所有 GitHub/Gitee 上传下载超时为 600 秒，失败按现有重试策略处理。
+**传输策略**：macOS ZIP/DMG 最多 2 路并发上传；小文件最多 3 路并发。所有 GitHub/Gitee 上传超时为 600 秒，失败按现有重试策略处理。
 
 **平台顺序**：
-- Windows 本地发布：先上传 `BOSS_ResumeFilter.exe` 到 GitHub/Gitee；CI 构建完成后，按 `BOSS_ResumeFilter_mac.zip` → `BOSS_ResumeFilter.dmg` 的顺序下载并同步到 Gitee。
-- macOS 本地发布：先上传 `BOSS_ResumeFilter_mac.zip`、`BOSS_ResumeFilter.dmg` 到 GitHub/Gitee；CI 构建完成后，下载并同步 `BOSS_ResumeFilter.exe` 到 Gitee。
+- Windows 本地发布：本地上传 `BOSS_ResumeFilter.exe`，macOS CI 直接上传 ZIP/DMG。
+- macOS 本地发布：本地上传 ZIP/DMG，Windows CI 直接上传 EXE。
 
-**增量上传**：上传前先比较远端附件和本地产物。GitHub 资产优先使用 Release API 返回的 `digest`；Gitee 资产优先结合 `latest.json` 的 `size`/`sha256` 与 GitHub Release 元数据判断是否可复用。能证明内容一致时直接跳过，证据不足时才下载、校验、删除旧附件并重传。
+**增量上传**：上传前先比较远端附件和本地产物。能证明内容一致时直接跳过，否则删除旧附件并重传。
+
+**完整性校验**：发布主流程只校验 Gitee 附件齐全且 size 与 GitHub 一致，避免发布后再次回下载三个大文件。需要逐文件 SHA256 审计时运行 `python build.py --verify-gitee-integrity X.Y.Z`。
 
 **覆盖发布**：重新发布同一版本时，增量比对后只重传有变化的文件；同时同步 Release 标题和正文（均以 CHANGELOG 为准）。
 

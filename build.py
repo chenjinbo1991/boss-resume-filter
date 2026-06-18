@@ -9,6 +9,8 @@ BOSS 简历筛选器 - 打包脚本
   python build.py --ci --release       CI 模式：跳过 venv/git，由 GitHub Actions 调用
   python build.py --github-upload X.Y.Z 手动补传产物到 GitHub Release
   python build.py --gitee-upload X.Y.Z 手动补传产物到 Gitee Release
+  python build.py --gitee-upload-local X.Y.Z 仅上传当前平台产物到 Gitee
+  python build.py --verify-gitee-integrity X.Y.Z 严格回下载校验 Gitee SHA256
 """
 import argparse
 import ast
@@ -1700,8 +1702,9 @@ def _is_large_transfer_item(item, remote_assets=None):
     return Path(_transfer_item_name(item)).suffix.lower() in {".exe", ".dmg", ".zip"}
 
 
-def _run_transfer_batch(items, label, worker, on_success, on_failure, remote_assets=None):
-    """Run small transfers concurrently before serial large transfers."""
+def _run_transfer_batch(items, label, worker, on_success, on_failure,
+                        remote_assets=None, large_workers=1):
+    """Run small transfers concurrently, then large transfers with bounded concurrency."""
     if not items:
         return
 
@@ -1720,13 +1723,25 @@ def _run_transfer_batch(items, label, worker, on_success, on_failure, remote_ass
                 except Exception as e:
                     on_failure(item, e)
 
-    for item in large:
-        name = _transfer_item_name(item)
-        print(f"  {label} 大文件串行: {name}")
-        try:
-            on_success(item, worker(item))
-        except Exception as e:
-            on_failure(item, e)
+    if large_workers > 1 and len(large) > 1:
+        workers = min(large_workers, len(large))
+        print(f"  {label} 大文件并发: {len(large)} 个 (workers={workers})")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(worker, item): item for item in large}
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    on_success(item, future.result())
+                except Exception as e:
+                    on_failure(item, e)
+    else:
+        for item in large:
+            name = _transfer_item_name(item)
+            print(f"  {label} 大文件串行: {name}")
+            try:
+                on_success(item, worker(item))
+            except Exception as e:
+                on_failure(item, e)
 
 
 def _github_asset_matches_local(tag, local_path, remote_asset):
@@ -1871,8 +1886,9 @@ def _verify_github_release_assets_complete(tag, report=None):
     return assets
 
 
-def _verify_gitee_release_assets_complete(tag, github_assets, release_cache, report=None):
-    """Verify Gitee Release mirrors GitHub release assets and binary digests."""
+def _verify_gitee_release_assets_complete(tag, github_assets, release_cache,
+                                           report=None, verify_sha256=False):
+    """Verify Gitee mirrors GitHub; optionally download assets for SHA256 audit."""
     report = report or (lambda msg: print(f"  {msg}"))
     token = release_cache["token"]
     owner = release_cache["owner"]
@@ -1906,27 +1922,32 @@ def _verify_gitee_release_assets_complete(tag, github_assets, release_cache, rep
             report(f"[错误] Gitee {name} 大小不一致 (GitHub {github_size} vs Gitee {gitee_size})")
             return False
 
-        expected_sha = _asset_digest_sha256(github_asset)
-        if not expected_sha:
-            report(f"[错误] GitHub {name} 缺少 SHA256，无法校验 Gitee 镜像")
-            return False
-        try:
-            gitee_sha = _remote_file_sha256(
-                _gitee_asset_url(owner, repo, tag, name),
-                token=token,
-            )
-        except requests.exceptions.RequestException as e:
-            report(f"[错误] Gitee {name} SHA256 校验失败: {e}")
-            return False
-        if gitee_sha != expected_sha:
-            report(f"[错误] Gitee {name} SHA256 不一致")
-            return False
+        if verify_sha256:
+            expected_sha = _asset_digest_sha256(github_asset)
+            if not expected_sha:
+                report(f"[错误] GitHub {name} 缺少 SHA256，无法校验 Gitee 镜像")
+                return False
+            try:
+                gitee_sha = _remote_file_sha256(
+                    _gitee_asset_url(owner, repo, tag, name),
+                    token=token,
+                )
+            except requests.exceptions.RequestException as e:
+                report(f"[错误] Gitee {name} SHA256 校验失败: {e}")
+                return False
+            if gitee_sha != expected_sha:
+                report(f"[错误] Gitee {name} SHA256 不一致")
+                return False
 
-    report("[OK] Gitee Release 附件齐全，三个更新包 size/SHA256 与 GitHub 一致")
+    if verify_sha256:
+        report("[OK] Gitee Release 附件齐全，size/SHA256 与 GitHub 一致")
+    else:
+        report("[OK] Gitee Release 附件齐全，size 与 GitHub 一致（未回下载大文件）")
     return True
 
 
-def _verify_release_assets_complete(tag, release_cache=None, report=None):
+def _verify_release_assets_complete(tag, release_cache=None, report=None,
+                                    verify_gitee_sha256=False):
     """Verify final release asset completeness before declaring release success."""
     report = report or (lambda msg: print(f"  {msg}"))
     github_assets = _verify_github_release_assets_complete(tag, report=report)
@@ -1940,6 +1961,7 @@ def _verify_release_assets_complete(tag, release_cache=None, report=None):
         github_assets,
         release_cache,
         report=report,
+        verify_sha256=verify_gitee_sha256,
     )
 
 
@@ -2665,7 +2687,7 @@ def _gh_release(version, release_title, release_notes, progress=None,
     """创建/更新 GitHub Release 并上传资源文件
 
     ci_already_triggered: 如果 CI 已在 PyInstaller 打包前提前触发，跳过内部 CI 触发逻辑，
-    但仍等待 CI 完成并同步对端产物到 Gitee。
+    但仍等待 CI 完成并确认对端产物已直传 GitHub/Gitee。
     """
     import time
     tag = f"v{version}"
@@ -2842,35 +2864,35 @@ def _gh_release(version, release_title, release_notes, progress=None,
     if ci_already_triggered:
         need_ci = True
 
-    # --- 等待 CI 完成 + 同步对端产物到 Gitee ‖ GitHub 校验 ---
+    # --- 等待 CI 将对端产物直接上传 GitHub/Gitee ---
     if enable_ci_sync and release_cache:
+        opposite_assets = (
+            ["BOSS_ResumeFilter.exe"]
+            if IS_MAC
+            else ["BOSS_ResumeFilter_mac.zip", "BOSS_ResumeFilter.dmg"]
+        )
         if need_ci:
-            _sub('等待 CI 完成并同步对端产物到 Gitee...')
-        else:
-            _sub('同步对端产物到 Gitee...')
-
-        # GitHub 校验只检查 GitHub 产物，不依赖 Gitee sync → 可并行
-        from concurrent.futures import ThreadPoolExecutor as _Pool
-        with _Pool(max_workers=2) as pool:
-            gh_verify_future = pool.submit(
-                _verify_release_assets_complete, tag,
-                release_cache=None, report=_sub)  # release_cache=None → 只校验 GitHub
-            gitee_sync = None
-            try:
-                gitee_sync = _sync_gitee_from_github(version, release_title, release_notes,
-                                                      need_wait=need_ci, release_cache=release_cache)
-                if gitee_sync:
-                    downloads_cn = downloads_cn or {}
-                    downloads_cn.update(gitee_sync)
-            except Exception as e:
-                _sub(f'[警告] Gitee 对端产物同步失败: {e}')
-
-            gh_ok = gh_verify_future.result()
-            if not gh_ok:
-                _sub('[错误] GitHub Release 附件校验失败')
+            _sub('等待 CI 完成并直传对端产物到 GitHub/Gitee...')
+            if not _wait_for_github_release_assets(tag, opposite_assets):
+                _sub('[错误] 等待 GitHub CI 对端产物超时')
                 sys.exit(1)
+        else:
+            _sub('确认 CI 对端产物已直传 Gitee...')
 
-        # Gitee 校验（sync 已完成，可以安全校验）
+        github_assets = _verify_github_release_assets_complete(tag, report=_sub)
+        if github_assets is None:
+            sys.exit(1)
+        gitee_direct = _wait_for_gitee_release_assets(
+            release_cache,
+            github_assets,
+            opposite_assets,
+        )
+        if not gitee_direct:
+            _sub('[错误] Gitee 未收到 CI 对端产物')
+            sys.exit(1)
+        downloads_cn = downloads_cn or {}
+        downloads_cn.update(gitee_direct)
+
         _sub('校验 Gitee Release 附件完整性...')
         if not _verify_release_assets_complete(tag, release_cache=release_cache, report=_sub):
             sys.exit(1)
@@ -3560,12 +3582,12 @@ def _gitee_upload_local(version, release_title, release_notes, release_cache=Non
     existing = release_cache['existing']
 
     if IS_MAC:
-        # 第一批：自动更新用 ZIP + 配置（优先）
+        # ZIP/DMG 均已在当前 runner 构建完成，最多两路并发上传。
         batch1 = [
             DIST_DIR / "BOSS_ResumeFilter_mac.zip",
+            DIST_DIR / "BOSS_ResumeFilter.dmg",
         ]
-        # 第二批：安装包 DMG（放最后）
-        batch2 = [DIST_DIR / "BOSS_ResumeFilter.dmg"]
+        batch2 = []
     else:
         batch1 = [
             DIST_DIR / "BOSS_ResumeFilter.exe",
@@ -3617,10 +3639,11 @@ def _gitee_upload_local(version, release_title, release_notes, release_cache=Non
                 lambda f: _gitee_upload_single(f, api_base, token, release_id),
                 _upload_success,
                 _upload_failure,
+                large_workers=2 if IS_MAC else 1,
             )
 
         _process_and_upload(batch1, "上传本地产物到 Gitee")
-        _process_and_upload(batch2, "上传 macOS 安装包到 Gitee")
+        _process_and_upload(batch2, "上传补充产物到 Gitee")
 
         if failed:
             print(f"\n{'!'*60}")
@@ -3694,6 +3717,58 @@ def _wait_for_github_release_assets(tag, asset_names, max_wait=600, poll_interva
         elapsed += poll_interval
     print(f"  [警告] 等待 GitHub Release 产物超时，缺少: {', '.join(missing)}")
     return False
+
+
+def _wait_for_gitee_release_assets(release_cache, github_assets, asset_names,
+                                   max_wait=600, poll_interval=10):
+    """Wait for CI to upload assets directly to Gitee and verify their sizes."""
+    api_base = release_cache["api_base"]
+    token = release_cache["token"]
+    release_id = release_cache["release_id"]
+    owner = release_cache["owner"]
+    repo = release_cache["repo"]
+    tag = release_cache["tag"]
+    elapsed = 0
+
+    while elapsed <= max_wait:
+        try:
+            gitee_assets = _gitee_fetch_assets(api_base, token, release_id)
+            release_cache["existing"] = gitee_assets
+            pending = []
+            for name in asset_names:
+                github_asset = github_assets.get(name)
+                gitee_asset = gitee_assets.get(name)
+                if not github_asset or not gitee_asset:
+                    pending.append(name)
+                    continue
+                try:
+                    if int(github_asset.get("size") or 0) != int(gitee_asset.get("size") or 0):
+                        pending.append(name)
+                except (TypeError, ValueError):
+                    pending.append(name)
+
+            if not pending:
+                return {
+                    _downloads_cn_key(name): _gitee_asset_url(owner, repo, tag, name)
+                    for name in asset_names
+                }
+        except requests.exceptions.RequestException as e:
+            pending = list(asset_names)
+            print(f"  [Gitee] 附件查询失败: {e}")
+
+        if elapsed >= max_wait:
+            break
+        print(
+            f"  等待 Gitee CI 直传... {elapsed}s / {max_wait}s，"
+            f"未就绪: {', '.join(pending)}"
+        )
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+        if elapsed >= 60:
+            poll_interval = 30
+
+    print(f"  [错误] 等待 Gitee CI 直传超时，未就绪: {', '.join(pending)}")
+    return None
 
 
 def _collect_github_release_asset_metadata(version, existing_metadata=None):
@@ -3923,6 +3998,10 @@ def main():
                         help="CI 模式：跳过虚拟环境切换和 git 操作，用于 GitHub Actions")
     parser.add_argument("--gitee-upload", type=str, default=None, metavar="X.Y.Z",
                         help="手动补传产物到 Gitee Release（需要 GITEE_TOKEN）")
+    parser.add_argument("--gitee-upload-local", type=str, default=None, metavar="X.Y.Z",
+                        help="仅上传当前平台产物到 Gitee（供构建 runner 使用）")
+    parser.add_argument("--verify-gitee-integrity", type=str, default=None, metavar="X.Y.Z",
+                        help="回下载 Gitee Release 产物并逐文件校验 SHA256")
     parser.add_argument("--gitee-clean-old-assets", type=str, default=None, metavar="X.Y.Z",
                         help="清理 Gitee 旧版本附件，仅保留指定版本产物；默认只预览")
     parser.add_argument("--github-upload", type=str, default=None, metavar="X.Y.Z",
@@ -3973,6 +4052,38 @@ def main():
     if args.gitee_clean_old_assets:
         version = args.gitee_clean_old_assets
         _gitee_clean_old_assets(version, apply=args.apply)
+        return
+
+    if args.gitee_upload_local:
+        version = args.gitee_upload_local.lstrip("v")
+        _validate_version_format(version)
+        release_title, release_notes = _extract_changelog_release(version)
+        print(f"\n>>> 上传当前平台产物到 Gitee Release v{version}")
+        downloads_cn = _gitee_upload_local(version, release_title, release_notes)
+        expected_keys = {
+            _downloads_cn_key(name)
+            for name in _current_platform_update_artifact_names()
+        }
+        if not downloads_cn or not expected_keys.issubset(downloads_cn):
+            print(f"[错误] 当前平台 Gitee 产物上传不完整: {sorted(expected_keys)}")
+            sys.exit(1)
+        print(f"  [OK] 当前平台 Gitee 产物已就绪: {', '.join(sorted(expected_keys))}")
+        return
+
+    if args.verify_gitee_integrity:
+        version = args.verify_gitee_integrity.lstrip("v")
+        _validate_version_format(version)
+        release_title, release_notes = _extract_changelog_release(version)
+        release_cache = _gitee_get_release_cache(version, release_title, release_notes)
+        if release_cache is None:
+            sys.exit(1)
+        print(f"\n>>> 严格校验 Gitee Release v{version}")
+        if not _verify_release_assets_complete(
+            f"v{version}",
+            release_cache=release_cache,
+            verify_gitee_sha256=True,
+        ):
+            sys.exit(1)
         return
 
     if args.gitee_upload:
