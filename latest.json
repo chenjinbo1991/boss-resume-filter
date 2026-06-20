@@ -1,29 +1,29 @@
 {
-  "version": "2.12.1",
-  "release_date": "2026-06-18",
+  "version": "2.12.2",
+  "release_date": "2026-06-20",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.dmg"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
-      "size": 38383293,
-      "sha256": "2ed8b22c8fa66a1e2cbff4db98660f82d3a03a9b69e15546c81a519f3d52eefd"
+      "size": 38390781,
+      "sha256": "5a69997c0d8095ff28b4095b4da4bb88f9d586af41b2bee6baeaa895f0fe1e41"
     },
     "macos_dmg": {
-      "size": 33075495,
-      "sha256": "e0b8ba960a23feb82ebf4042826a738e2856123e2f18f7f5d65edebfa6bb494e"
+      "size": 33077628,
+      "sha256": "0146022c54e85f3e6514111c8da71ae03d1bcffc9ba8415b5f2be08013133b39"
     },
     "macos": {
-      "size": 33925323,
-      "sha256": "6295dba71e59b9f147192329dd0ee7a94fa3251d77cb622cffefc6645d5cdd91"
+      "size": 33932679,
+      "sha256": "e8fad6488cc3bda0ca5fa72c26f25c58fed4432f97950059edb4f7169b7f746f"
     }
   },
-  "release_notes": "### 新增功能\r\n\r\n- **筛选结果表自动适配窗口**：普通窗口显示 8 列，最大化时显示 11 列（新增学历、年龄、求职状态），窗口够宽时显示 13 列（新增学校、公司）\r\n- **Excel 导出文件名更直观**：选中导出以候选人姓名命名，全量导出以岗位名称和日期范围命名\r\n- **选中导出改为 Excel 格式**：不再导出 JSON，直接生成 Excel 文件，方便查看和分享\r\n- **明细窗口状态提示**：点击统计数字打开的明细窗口中，状态内容过长时鼠标悬停可查看完整信息\r\n\r\n### 体验优化\r\n\r\n- **配置大模型后自动启用 AI 评估**：启动时检测到已配置模型，自动勾选 AI 评估选项，无需手动开启\r\n- **程序启动更快**：减少启动等待时间，界面更快可用\r\n- **表格悬停更流畅**：优化信息显示逻辑，鼠标滑过表格行时不再卡顿\r\n- **扫描更高效**：减少不必要的网络请求，节省接口调用额度",
+  "release_notes": "### 新增功能\n\n- **候选人明细支持完整操作菜单**：首页和统计明细窗口可按姓名、匹配分查看详情，支持导入简历做二次评估、更新跟进、标记反馈、手动打招呼、加入黑名单、移除或导出候选人\n\n### 体验优化\n\n- **筛选结果统计更直观**：统计卡片改为强烈推荐、推荐、待定、已打招呼四类，首页和数据统计页统一使用“通过筛选”口径和图标\n- **打招呼准备更充分**：优先为待定、需人工确认和超出单轮自动沟通上限的候选人保存发送所需信息，后续手动沟通更顺畅\n- **状态提示更易理解**：结果表只展示业务状态；需要切换推荐页面时会说明原因，点击“确定”后继续，不再暴露内部技术信息\n\n### 问题修复\n\n- **修复打招呼成功后状态偶尔丢失**：发送成功后立即保存本地状态，并在扫描结束或中断时合并最新数据，避免旧数据覆盖新状态\n- **修复浏览器连接并发冲突**：自动检测和手动沟通同时连接浏览器时改为串行处理，避免偶发连接异常\n- **修复未打开运行页时日志处理异常**：运行日志控件尚未创建时保留待显示内容，不再报错或丢失日志",
   "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.exe",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.1/BOSS_ResumeFilter.dmg"
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.exe",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.dmg"
   }
 }
