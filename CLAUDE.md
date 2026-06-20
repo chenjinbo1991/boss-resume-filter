@@ -141,7 +141,7 @@ boss-resume-filter/
 - 阶段 1.6 在筛选完成后，从候选人详情页 API（`/wapi/zpjob/view/geek/info`）捕获 `jid/lid/securityId/expectId`，存为 `greet_context` 字段
 - GUI 手动打招呼时优先用 `send_greeting_with_context()` 直发 `/wapi/zpjob/chat/start`，失败回退 `send_greeting_on_list_page()`（列表按钮路径）
 - 阶段 1.6 仅对 `match_score >= GREET_CONTEXT_MIN_SCORE (55)` 且未打过招呼的候选人抓取，单轮硬上限 `GREET_CONTEXT_CAPTURE_LIMIT (30)` 人
-- `manual_review_required` 候选人**不跳过**上下文采集（采集与发送闸门解耦）；跨会话/去重合并时保留 `greet_context` 字段
+- `qualification_status == "manual_review"` 的候选人**不跳过**上下文采集，但禁止自动打招呼；跨会话/去重合并时保留 `greet_context` 字段
 
 ### 浏览器自动检测
 
@@ -157,11 +157,7 @@ boss-resume-filter/
 - **API 读取限速**：API 直调默认约 5-8 秒随机间隔；单次最多读取 `API_CANDIDATE_LIMIT_DEFAULT`（默认 320，对应最多补全 16 页）人，达到上限停止继续翻页
 - **打招呼限速**：每 `GREET_BATCH_SIZE` 人暂停随机间隔；每轮上限 `AUTO_GREET_RUN_LIMIT`（默认 50）
 
-> **重要架构约束**：BOSS 直聘推荐页使用 `srcdoc` iframe（非 `src` URL），导致 `iframe.run_js('return location.href')` 始终返回 `about:srcdoc`。这意味着：
-> 
-> - Listener 监听 (`page.listen`) 无法捕获 API 调用（数据嵌在服务端渲染的 HTML 中，无客户端请求）
-> - API 直调 (`_build_recommend_api_pagination_from_page()`) 无法从 iframe URL 读取 `jobId`
-> - 实际有效的数据提取方式是 **纯 DOM 滚动提取** (`_extract_cards_batch()`)
+> **重要架构约束**：候选人集合必须以推荐页 DOM 滚动提取结果为准。Listener 和 API 直调可以补全结构化字段，但只能增强已经在 DOM 中出现、且 `geek_id` 一致的候选人，不能把接口额外返回的人直接加入筛选或打招呼队列。`srcdoc` iframe 无法稳定提供岗位 URL，因此接口分页地址优先来自 listener 捕获结果，缺失时再尝试页面身份信息。
 
 ### 去重机制
 
@@ -184,7 +180,7 @@ boss-resume-filter/
 4. 去重合并到候选人列表
 5. 重复直到触底或达到轮次上限
 
-> **为什么不用 API 监听/直调？** BOSS 直聘推荐页使用 `srcdoc` iframe，`iframe.run_js('return location.href')` 始终返回 `about:srcdoc`，无法获取 jobId 参数。同时页面数据由服务端渲染嵌入 HTML，无客户端 API 调用可供监听。代码中保留了 `_start_recommend_api_listener()` 和 `_build_recommend_api_pagination_from_page()` 等函数，但在当前 BOSS 页面结构下均无效。
+> **为什么仍以 DOM 为准？** Listener/API 返回结果可能与虚拟列表当前已渲染卡片不同步。系统因此先由 DOM 建立唯一候选人集合，再按 `geek_id` 合并 listener/API 的经验、年龄、薪资、城市等结构化字段；接口中未出现在 DOM 的候选人一律忽略。
 
 `filter_candidate()` 接受可选 `structured_fields` 参数，优先使用结构化值，fallback 到正则文本解析。薪资正则 `[kK]?` 末尾 K 可选，兼容 "15-25" 无后缀格式。
 

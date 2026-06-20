@@ -23,11 +23,14 @@ candidates_all.xlsx    # Excel 导出（覆盖）
 | 批次 | 本次运行的时间戳 |
 | 详细信息 | 候选人摘要 |
 
-**风险提示字段**（疑似非统招本科等场景时生成）：
+**资格审查与风险提示字段**：
 
 | 字段 | 说明 |
 |------|------|
-| risk_flags | 风险标记列表（如"学历形式待确认：疑似非统招本科"） |
+| qualification_status | 资格状态：qualified / manual_review / rejected |
+| qualification_reasons | 资格结论原因列表 |
+| qualification_evidence | 资格结论对应的原文证据 |
+| risk_flags | 需要人工确认的风险标记列表 |
 | manual_review_required | 是否需人工确认（True/False） |
 | auto_greet_blocked_reason | 自动打招呼阻断原因 |
 
@@ -38,8 +41,10 @@ candidates_all.xlsx    # Excel 导出（覆盖）
 | rule_score | 原始规则评分（LLM 调整前） |
 | llm_evaluated | LLM 是否评估成功 |
 | llm_adjustment | LLM 调整值（-10 ~ +10） |
-| llm_reason | LLM 评估理由（50 字以内） |
+| llm_reason | 完整 LLM 评估理由；运行日志只显示单行摘要 |
 | llm_model | 使用的 LLM 模型名称 |
+| llm_hard_condition_verdict | LLM 对硬条件的结构化结论 |
+| llm_hard_condition_findings | LLM 提供的硬条件原文证据；只有经规则复核后才执行淘汰 |
 
 **评分可解释字段**（所有候选人均包含）：
 
@@ -91,7 +96,7 @@ candidates_all.xlsx    # Excel 导出（覆盖）
 ## 运行参数
 
 ```bash
-# 增量跑批（自动过滤当前岗位已匹配且打过招呼的候选人，对≥65 分的新候选人打招呼）
+# 增量跑批（过滤当前岗位已打过招呼的候选人，对本轮合格且未沟通的人打招呼）
 python bossmaster.py --greet
 
 # 指定岗位
