@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any, Optional
 
 from constants import (
@@ -25,6 +26,13 @@ from constants import (
 
 _major_cities_set = set(MAJOR_CITIES)
 _PREFERRED_BONUS_MAX = 10
+QUALIFIED = "qualified"
+REJECTED = "rejected"
+MANUAL_REVIEW = "manual_review"
+_EXPLICIT_NON_REGULAR_EDU = (
+    "自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
+    "电大", "远程教育", "成人高考", "成人教育", "业余",
+)
 
 
 _CERT_ALIASES = {
@@ -169,7 +177,7 @@ def parse_experience_years(text: str) -> Optional[int]:
 
     def parse_year_value(segment: str, allow_high_without_context: bool) -> Optional[int]:
         # [^\S\n]* 匹配空白但不含换行，防止跨行匹配（如 "性别：0\n年龄" 中的 0+\n+年）
-        for m in re.finditer(r'(?<!\d)(\d{1,2})[^\S\n]*年(?!\s*[代份初底])', segment):
+        for m in re.finditer(r'(?<!\d)(\d{1,2})[^\S\n]*年(?!\s*(?:[代份初底]|应届))', segment):
             val = int(m.group(1))
             context = segment[max(0, m.start() - 8):min(len(segment), m.end() + 8)]
             has_exp_context = any(word in context for word in ('经验', '工作', '从业', '开发', '后端', '前端', '测试', '产品', '项目'))
@@ -197,6 +205,55 @@ def parse_experience_years(text: str) -> Optional[int]:
                 return parsed
 
     return parse_year_value(normalized, allow_high_without_context=False)
+
+
+def parse_experience_months(text: str) -> Optional[int]:
+    """解析明确工作经验月数；无法确认时返回 None。"""
+    if not text:
+        return None
+    normalized = re.sub(r'\s+', '', text)
+    if re.search(r'(?:应届(?:生|毕业生)?|在校生|无工作经验|暂无工作经验)', normalized):
+        return 0
+
+    year_month = re.search(r'(\d{1,2})年(?:零)?(\d{1,2})个月', normalized)
+    if year_month:
+        return int(year_month.group(1)) * 12 + int(year_month.group(2))
+    half_year = re.search(r'(\d{1,2})年半', normalized)
+    if half_year:
+        return int(half_year.group(1)) * 12 + 6
+    months = re.search(r'(?<!\d)(\d{1,3})个?月(?:工作|开发|从业|实习)?经验', normalized)
+    if months:
+        return int(months.group(1))
+
+    years = parse_experience_years(text)
+    if years is not None:
+        return years * 12
+
+    # 仅在存在明确“工作经历”时间段时计算累计月份；合并重叠月份，实习经历不计入。
+    intervals: list[tuple[int, int]] = []
+    current_month = date.today().year * 12 + date.today().month
+    for line in text.splitlines():
+        if not line.strip().startswith("工作经历：") or "实习" in line:
+            continue
+        dates = re.findall(r'(20\d{2})[./-](\d{1,2})', line)
+        if not dates:
+            continue
+        start = int(dates[0][0]) * 12 + int(dates[0][1])
+        end = current_month
+        if len(dates) >= 2:
+            end = int(dates[1][0]) * 12 + int(dates[1][1])
+        if end >= start:
+            intervals.append((start, end))
+    if not intervals:
+        return None
+    intervals.sort()
+    merged: list[list[int]] = []
+    for start, end in intervals:
+        if not merged or start > merged[-1][1] + 1:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    return sum(end - start + 1 for start, end in merged)
 
 
 def _parse_candidate_salary_range(text: str) -> tuple[Optional[int], Optional[int]]:
@@ -273,13 +330,17 @@ def _has_non_regular_edu_risk(text: str) -> bool:
     return any(ne in text for ne in NON_REGULAR_EDU)
 
 
-def _add_risk_flag(details: dict[str, Any], flag: str) -> None:
+def _add_risk_flag(details: dict[str, Any], flag: str, blocked_reason: str = "需要人工确认") -> None:
     """Attach a manual-review risk flag to filter details."""
     risk_flags = details.setdefault('risk_flags', [])
     if flag not in risk_flags:
         risk_flags.append(flag)
     details['manual_review_required'] = True
-    details['auto_greet_blocked_reason'] = "学历形式待确认"
+    details['qualification_status'] = MANUAL_REVIEW
+    reasons = details.setdefault('qualification_reasons', [])
+    if flag not in reasons:
+        reasons.append(flag)
+    details['auto_greet_blocked_reason'] = blocked_reason
 
 
 def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_fields: dict[str, Any] | None = None) -> tuple[bool, int, dict[str, Any]]:
@@ -302,7 +363,10 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
             'keyword_evidence': [],
             'risk_flags': [],
             'manual_review_required': False,
-            'auto_greet_blocked_reason': ''
+            'auto_greet_blocked_reason': '',
+            'qualification_status': QUALIFIED,
+            'qualification_reasons': [],
+            'qualification_evidence': [],
         }
         hard_checks: list[str] = []
 
@@ -320,7 +384,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
                 if candidate_edu_level >= 5:
                     # 硕士/博士直接通过学历等级，但仍需检查非统招风险
                     if has_non_regular_risk:
-                        _add_risk_flag(details, "学历形式待确认：疑似非统招硕士/博士")
+                        _add_risk_flag(details, "学历形式待确认：疑似非统招硕士/博士", "学历形式待确认")
                         hard_checks.append("学历：硕士/博士等级通过，学历形式待人工确认")
                     else:
                         hard_checks.append(f"学历：通过，要求{rule.get('edu')}")
@@ -329,12 +393,12 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
                         if re.search(r'(统招|全日制)\s*本科', candidate_text):
                             pass
                         else:
-                            _add_risk_flag(details, "学历形式待确认：疑似非统招本科")
+                            _add_risk_flag(details, "学历形式待确认：疑似非统招本科", "学历形式待确认")
                             hard_checks.append("学历：本科等级通过，学历形式待人工确认")
                     else:
                         hard_checks.append(f"学历：通过，要求{rule.get('edu')}")
                 elif has_non_regular_risk:
-                    _add_risk_flag(details, "学历形式待确认：疑似非统招本科")
+                    _add_risk_flag(details, "学历形式待确认：疑似非统招本科", "学历形式待确认")
                     hard_checks.append("学历：疑似本科路径，学历形式待人工确认")
                 else:
                     return False, 0, {"reason": "学历不足：要求本科"}
@@ -349,18 +413,25 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
         min_exp = rule.get("min_exp", 0)
         if min_exp > 0:
             # 优先使用 API 提供的结构化经验字段，fallback 到正则解析
-            exp_years = None
+            exp_months = None
             if structured_fields and 'exp_years' in structured_fields:
-                exp_years = structured_fields['exp_years']
+                try:
+                    exp_months = int(float(structured_fields['exp_years']) * 12)
+                except (TypeError, ValueError):
+                    exp_months = None
             else:
-                exp_years = parse_experience_years(candidate_text)
-            if exp_years is not None:
-                if min_exp > exp_years:
-                    return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{exp_years}年"}
+                exp_months = parse_experience_months(candidate_text)
+            if exp_months is not None:
+                if min_exp * 12 > exp_months:
+                    actual = f"{exp_months}个月" if exp_months < 12 else f"{exp_months / 12:g}年"
+                    return False, 0, {"reason": f"经验不足：要求{min_exp}年，实际{actual}", "qualification_status": REJECTED}
+                exp_years = exp_months // 12
                 details['exp_bonus'] = min((exp_years - min_exp) * SCORE_EXP_MULTIPLIER, SCORE_EXP_MAX)
                 hard_checks.append(f"经验：通过，要求{min_exp}年，实际{exp_years}年，超额加分{details['exp_bonus']}")
             else:
-                hard_checks.append(f"经验：未识别明确年限，要求{min_exp}年")
+                flag = f"工作经验待确认：未识别明确年限（要求≥{min_exp}年）"
+                _add_risk_flag(details, flag, "工作经验待确认")
+                hard_checks.append(f"经验：未识别明确年限，转人工确认，要求{min_exp}年")
         else:
             hard_checks.append("经验：未设置硬性要求")
 
@@ -437,7 +508,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
             if '暂不考虑' in job_status or '不考虑' in job_status:
                 return False, 0, {"reason": f"求职状态不符：{job_status}"}
             if '在职' in job_status and '离职' not in job_status:
-                _add_risk_flag(details, f"在职状态：{job_status}")
+                _add_risk_flag(details, f"在职状态：{job_status}", "在职状态待确认")
                 hard_checks.append(f"求职状态：{job_status}，在职中")
             else:
                 hard_checks.append(f"求职状态：{job_status}，通过")
@@ -447,7 +518,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
             if not cond_result['passed']:
                 return False, 0, {"reason": cond_result['reason']}
             for flag in cond_result.get('risk_flags', []):
-                _add_risk_flag(details, flag)
+                _add_risk_flag(details, flag, "学历形式待确认")
             hard_checks.append(f"必要条件：通过，{condition}")
         details['required_conditions_matched'] = True
 
@@ -553,25 +624,20 @@ def check_required_condition(candidate_text: str, condition: str | dict[str, Any
     """检查单个必要条件。"""
     if isinstance(condition, str):
         if condition == "统招本科":
-            if "硕士" in candidate_text or "博士" in candidate_text:
-                return {"passed": True, "reason": ""}
             if re.search(r'(统招|全日制)\s*本科', candidate_text):
                 return {"passed": True, "reason": ""}
 
-            has_regular_mark = "985" in candidate_text or "211" in candidate_text
             has_bachelor = "本科" in candidate_text
-            is_non_regular = _has_non_regular_edu_risk(candidate_text)
-            if has_regular_mark and has_bachelor and not is_non_regular:
-                return {"passed": True, "reason": ""}
-            if is_non_regular:
+            is_explicit_non_regular = any(term in candidate_text for term in _EXPLICIT_NON_REGULAR_EDU)
+            if is_explicit_non_regular:
+                return {"passed": False, "reason": "学历不符：明确为非统招本科"}
+            if has_bachelor or "硕士" in candidate_text or "博士" in candidate_text or "专升本" in candidate_text:
                 return {
                     "passed": True,
                     "reason": "",
-                    "risk_flags": ["学历形式待确认：疑似非统招本科"],
+                    "risk_flags": ["学历形式待确认：未发现明确统招本科证据"],
                     "manual_review_required": True,
                 }
-            if has_bachelor:
-                return {"passed": True, "reason": ""}
             return {"passed": False, "reason": f"必要条件不满足：{condition}"}
 
         if not _condition_item_found(candidate_text, condition):

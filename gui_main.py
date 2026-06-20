@@ -754,6 +754,8 @@ class BossFilterGUI:
         self._selectors_auto_checked = False  # 连接后选择器是否已自动检查
         self._pending_manual_check = False  # 待处理的手动检测请求
         self._pending_chrome_restart = False  # 待处理的 Chrome 重启请求
+        self._browser_non_target_checks = 0  # 连续未命中推荐页次数，过滤页面刷新时的 URL 抖动
+        self._browser_connection_failures = 0  # 连续页面连接失败次数，避免把短断误报为 Chrome 未启动
         # DrissionPage 4.1.1.2 的 Chromium 单例初始化不是完整原子的：
         # 并发构造 ChromiumPage 时，后一个线程可能拿到尚无 _dl_mgr 的半初始化对象。
         self._browser_connection_lock = threading.Lock()
@@ -7052,6 +7054,16 @@ class BossFilterGUI:
         except Exception:
             return None
 
+    def _should_defer_browser_navigation_warning(self, silent: bool) -> bool:
+        """自动轮询首次读到非推荐页时暂缓告警，过滤页面刷新产生的瞬时 URL。"""
+        self._browser_non_target_checks = getattr(self, '_browser_non_target_checks', 0) + 1
+        return silent and self._browser_non_target_checks < 2
+
+    def _should_defer_browser_connection_failure(self, silent: bool) -> bool:
+        """自动轮询首次连接失败时暂缓报错，给页面连接一次自恢复机会。"""
+        self._browser_connection_failures = getattr(self, '_browser_connection_failures', 0) + 1
+        return silent and self._browser_connection_failures < 2
+
     def check_browser_connection(self, silent=False):
         """检测浏览器连接状态
 
@@ -7095,17 +7107,23 @@ class BossFilterGUI:
                         if page_url_exception[0] is not None:
                             raise page_url_exception[0]
                         current_url = page_url_result[0] or ''
+                        self._browser_connection_failures = 0
                         if 'zhipin.com/web/chat/recommend' in current_url.lower():
+                            self._browser_non_target_checks = 0
                             self.browser_connected = True
                             self.set_browser_ui("🟢 已连接", self.colors['success'], "已连接到 BOSS 直聘推荐牛人页面", "normal")
                             if prev_help != "已连接到 BOSS 直聘推荐牛人页面":
                                 self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                         elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
+                            if self._should_defer_browser_navigation_warning(silent):
+                                return
                             self.browser_connected = False
                             self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
                             if prev_help != "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面":
                                 self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                         else:
+                            if self._should_defer_browser_navigation_warning(silent):
+                                return
                             self.browser_connected = False
                             self.set_browser_ui("🟡 需导航", self.colors['warning'], "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面", "disabled")
                             if prev_help != "浏览器已连接，请导航到 BOSS 直聘推荐牛人页面":
@@ -7270,8 +7288,9 @@ class BossFilterGUI:
                             self.browser_connected = False
                             self.browser_page = None
                             self._selectors_auto_checked = False
-                            self.set_browser_ui("🔴 未连接", self.colors['danger'], "未检测到 Chrome 浏览器", "disabled")
-                            self.append_log(f"❌ 未检测到 Chrome 浏览器：{e}")
+                            self.set_browser_ui("🔴 未连接", self.colors['danger'], "Chrome 已启动，但页面连接失败", "disabled")
+                            error_text = str(e).splitlines()[0] if str(e) else type(e).__name__
+                            self.append_log(f"❌ Chrome 已启动，但页面连接失败：{error_text}")
                         return
                     else:
                         self.set_browser_ui(help_text="未检测到 Chrome，请确保浏览器已启动")
@@ -7311,6 +7330,7 @@ class BossFilterGUI:
                     current_url = url_result[0]
                     if not current_url:
                         current_url = ''
+                    self._browser_connection_failures = 0
 
                     # Chrome 进程还在但窗口已关闭时，page.url 可能是 about:blank
                     # 直接在现有进程里导航到 BOSS 直聘，不杀进程不重启
@@ -7350,6 +7370,7 @@ class BossFilterGUI:
                         return
 
                     if 'zhipin.com/web/chat/recommend' in current_url.lower():
+                        self._browser_non_target_checks = 0
                         prev_connected = self.browser_connected
                         self.browser_connected = True
                         self.browser_page = page
@@ -7358,6 +7379,8 @@ class BossFilterGUI:
                         if not silent or not prev_connected:
                             self.append_log("✅ 已连接到 BOSS 直聘推荐牛人页面")
                     elif 'zhipin.com' in current_url.lower() or 'boss' in current_url.lower():
+                        if self._should_defer_browser_navigation_warning(silent):
+                            return
                         prev_state = self._browser_status_text
                         self.browser_connected = False
                         self.browser_page = page
@@ -7366,6 +7389,8 @@ class BossFilterGUI:
                         if not silent or prev_state != "🟡 需导航":
                             self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
                     else:
+                        if self._should_defer_browser_navigation_warning(silent):
+                            return
                         prev_state = self._browser_status_text
                         self.browser_connected = False
                         self.browser_page = page
@@ -7375,13 +7400,26 @@ class BossFilterGUI:
                             self.append_log("⚠️ 浏览器已连接，请导航到 BOSS 直聘推荐牛人页面")
 
                 except Exception as e:
+                    if self._should_defer_browser_connection_failure(silent):
+                        self.browser_connected = False
+                        self.browser_page = None
+                        self._selectors_auto_checked = False
+                        self.set_browser_ui(
+                            "🟡 重连中",
+                            self.colors['warning'],
+                            "页面连接短暂中断，正在自动重连...",
+                            "disabled",
+                        )
+                        return
+
                     prev_state = self._browser_status_text
                     self.browser_connected = False
                     self.browser_page = None  # 清理失效的 page 对象
                     self._selectors_auto_checked = False
-                    self.set_browser_ui("🔴 未连接", self.colors['danger'], "未检测到 Chrome 浏览器", "disabled")
+                    self.set_browser_ui("🔴 未连接", self.colors['danger'], "浏览器页面连接失败", "disabled")
                     if not silent or prev_state != "🔴 未连接":
-                        self.append_log(f"❌ 未检测到 Chrome 浏览器：{e}")
+                        error_text = str(e).splitlines()[0] if str(e) else type(e).__name__
+                        self.append_log(f"❌ 浏览器页面连接失败：{error_text}")
 
                     # 手动点击时，尝试杀掉彻底挂掉的调试 Chrome 进程并重启
                     if not silent:

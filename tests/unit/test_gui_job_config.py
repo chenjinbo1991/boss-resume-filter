@@ -235,6 +235,23 @@ def test_update_log_waits_until_lazy_run_page_creates_log_widget():
     assert gui.root.scheduled == [(100, gui.update_log)]
 
 
+def test_browser_auto_check_debounces_one_transient_navigation_miss():
+    gui = BossFilterGUI.__new__(BossFilterGUI)
+    gui._browser_non_target_checks = 0
+
+    assert gui._should_defer_browser_navigation_warning(silent=True) is True
+    assert gui._should_defer_browser_navigation_warning(silent=True) is False
+
+
+def test_browser_auto_check_debounces_one_transient_connection_failure():
+    gui = BossFilterGUI.__new__(BossFilterGUI)
+    gui._browser_connection_failures = 0
+
+    assert gui._should_defer_browser_connection_failure(silent=True) is True
+    assert gui._should_defer_browser_connection_failure(silent=True) is False
+    assert gui._should_defer_browser_connection_failure(silent=False) is False
+
+
 def test_result_page_stats_show_greeted_after_pending():
     """结果页依次展示强烈推荐、推荐、待定、已打招呼。"""
     source = Path("gui_main.py").read_text(encoding="utf-8")

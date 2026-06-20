@@ -19,6 +19,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+def test_rescan_log_describes_candidates_as_pending_evaluation_not_new():
+    source = Path(bossmaster.__file__).read_text(encoding="utf-8")
+    assert "过滤当前岗位已打招呼候选人" in source
+    assert "本轮待评估" in source
+    assert "新增 {len(raw_candidates)} 个" not in source
+
+
 def test_parse_experience_years_supports_arabic_and_chinese_numbers():
     cases = {
         "3 年经验": 3,
@@ -162,25 +169,39 @@ def test_context_refresh_overwrites_old_value_only_after_success():
         "greet_context_updated_at": "2026-06-18T10:00:00",
     }
 
+    output = io.StringIO()
     with patch.object(
         bossmaster,
         "_capture_greet_context_from_list_page",
         side_effect=[(None, "失败"), (new_context, "成功")],
-    ), patch.object(bossmaster.time, "sleep"):
-        first = bossmaster.enrich_greet_contexts_for_candidates(
-            object(), [candidate], max_count=1
-        )
+    ), patch.object(bossmaster.time, "sleep"), contextlib.redirect_stdout(output):
+        first = bossmaster.enrich_greet_contexts_for_candidates(object(), [candidate], max_count=1)
         assert first == 0
         assert candidate["greet_context"] == old_context
         assert candidate["greet_context_updated_at"] == "2026-06-18T10:00:00"
-
-        second = bossmaster.enrich_greet_contexts_for_candidates(
-            object(), [candidate], max_count=1
-        )
+        second = bossmaster.enrich_greet_contexts_for_candidates(object(), [candidate], max_count=1)
 
     assert second == 1
     assert candidate["greet_context"] == new_context
     assert candidate["greet_context_updated_at"] > "2026-06-18T10:00:00"
+    assert "已刷新 候选人 的打招呼上下文" in output.getvalue()
+
+
+def test_context_first_capture_logs_saved():
+    candidate = {"geek_id": "g-new", "name": "新候选人"}
+    context = {"chat_start": {"jid": "new"}}
+    output = io.StringIO()
+    with patch.object(
+        bossmaster, "_capture_greet_context_from_list_page",
+        return_value=(context, "成功"),
+    ), patch.object(bossmaster.time, "sleep"), contextlib.redirect_stdout(output):
+        result = bossmaster.enrich_greet_contexts_for_candidates(
+            object(), [candidate], max_count=1
+        )
+
+    assert result == 1
+    assert candidate["greet_context"] == context
+    assert "已保存 新候选人 的打招呼上下文" in output.getvalue()
 
 
 def test_extract_job_salary_range_handles_numeric_and_negotiable_text():
@@ -214,8 +235,8 @@ def test_education_bonus_tiers_are_stable():
 def test_required_conditions_support_string_or_and():
     assert check_required_condition("统招本科，5 年 Java", "统招本科")["passed"] is True
     risky_result = check_required_condition("成教本科，5 年 Java", "统招本科")
-    assert risky_result["passed"] is True
-    assert "学历形式待确认：疑似非统招本科" in risky_result["risk_flags"]
+    assert risky_result["passed"] is False
+    assert "非统招本科" in risky_result["reason"]
 
     workflow = {"type": "or", "items": ["activiti", "camunda", "flowable"]}
     assert check_required_condition("有 Camunda 项目经验", workflow)["passed"] is True

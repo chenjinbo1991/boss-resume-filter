@@ -9,6 +9,7 @@ from filtering import (
     check_required_condition,
     evaluate_candidate,
     filter_candidate,
+    parse_experience_months,
     parse_experience_years,
 )
 from constants import SCORE_BASE, SCORE_SKILL_MAX, SCORE_EXP_MAX
@@ -180,12 +181,11 @@ def test_check_required_condition_regular_bachelor():
     assert check_required_condition("全日制本科，5 年 Java", "统招本科")["passed"] is True
 
 
-def test_check_required_condition_non_regular_requires_manual_review():
+def test_check_required_condition_explicit_non_regular_is_rejected():
     for text in ["成教本科，5 年 Java", "自考本科，5 年 Java"]:
         result = check_required_condition(text, "统招本科")
-        assert result["passed"] is True
-        assert result["manual_review_required"] is True
-        assert "学历形式待确认：疑似非统招本科" in result["risk_flags"]
+        assert result["passed"] is False
+        assert "非统招本科" in result["reason"]
 
 
 def test_check_required_condition_master_satisfies_bachelor():
@@ -351,6 +351,29 @@ def test_filter_candidate_experience_insufficient():
     assert "经验不足" in details["reason"]
 
 
+def test_parse_experience_months_handles_fractional_and_entry_level_cases():
+    assert parse_experience_months("1年半 Java 开发经验") == 18
+    assert parse_experience_months("仅有2个月实习经验") == 2
+    assert parse_experience_months("2026届应届生") == 0
+
+
+def test_filter_candidate_unknown_experience_requires_manual_review():
+    rule = {"min_exp": 4, "edu": "不限", "keywords": ["Java"]}
+    passed, _, details = filter_candidate("Java 开发，未提供工作年限", rule)
+    assert passed is True
+    assert details["qualification_status"] == "manual_review"
+    assert details["manual_review_required"] is True
+    assert details["auto_greet_blocked_reason"] == "工作经验待确认"
+
+
+def test_filter_candidate_entry_level_experience_is_rejected():
+    rule = {"min_exp": 4, "edu": "不限", "keywords": ["Java"]}
+    passed, _, details = filter_candidate("2026届应届生，2个月实习经验，Java", rule)
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "经验不足" in details["reason"]
+
+
 def test_filter_candidate_non_regular_bachelor_requires_manual_review():
     rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
     passed, _, details = filter_candidate("专升本，5 年 Java", rule)
@@ -364,6 +387,17 @@ def test_filter_candidate_fulltime_bachelor_passes():
     rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
     passed, _, _ = filter_candidate("全日制本科，5 年 Java", rule)
     assert passed is True
+
+
+def test_regular_bachelor_requires_evidence_and_explicit_non_regular_fails():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, details = filter_candidate("本科，5年 Java", rule)
+    assert passed is True
+    assert details["qualification_status"] == "manual_review"
+
+    passed, _, details = filter_candidate("自考本科，5年 Java", rule)
+    assert passed is False
+    assert "非统招本科" in details["reason"]
 
 
 def test_filter_candidate_tech_conditions_or():

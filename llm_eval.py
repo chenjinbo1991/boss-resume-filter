@@ -29,6 +29,7 @@ _BACKOFF_DELAYS = (5, 15, 30)
 
 # resume prompt 构建时的额外字符缓冲（JSON 结构、format() 占位符等）
 _RESUME_PROMPT_OVERHEAD_BUFFER = 200
+_AI_LOG_REASON_LIMIT = 80
 
 
 @dataclass
@@ -38,12 +39,17 @@ class LLMEvalResult:
     adjustment: int = 0       # -10 ~ +10
     reason: str = ""          # ≤50 chars
     model: str = ""
+    hard_condition_verdict: str = "unknown"
+    hard_condition_findings: list[dict[str, Any]] | None = None
 
 
 _SYSTEM_PROMPT = (
     "你是一个资深技术招聘助手。根据岗位需求评估候选人的匹配程度。\n"
     "返回严格的 JSON 对象（不要包含其他文字）：\n"
-    '{"adjustment": 整数(-10到+10), "reason": "100字以内评估理由"}\n'
+    '{"adjustment": 整数(-10到+10), "hard_condition_verdict": "pass|fail|unknown", '
+    '"hard_condition_findings": [{"condition":"条件","verdict":"fail","evidence":"候选人原文","confidence":"high|medium|low"}], '
+    '"reason": "100字以内评估理由"}\n'
+    "硬条件结论必须引用候选人原文；推测、大概率、疑似只能返回 unknown，不能返回 fail。\n"
     "评分标准：\n"
     "+8~+10: 高度匹配，有明显优势\n"
     "+3~+7: 较为匹配，有加分项\n"
@@ -97,6 +103,23 @@ def _truncate_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "..."
+
+
+def _format_ai_log_summary(candidate: dict[str, Any], reason: str, score: int) -> str:
+    """Return a compact one-line AI result for the runtime log."""
+    if candidate.get('qualification_status') == 'rejected' or score < SCORE_THRESHOLD_PASS:
+        conclusion = "淘汰"
+    elif candidate.get('qualification_status') == 'manual_review' or candidate.get('manual_review_required'):
+        conclusion = "待确认"
+    else:
+        conclusion = "通过"
+
+    compact_reason = re.sub(r'\s+', ' ', reason or '').strip()
+    if not compact_reason:
+        compact_reason = "未提供评估理由"
+    if len(compact_reason) > _AI_LOG_REASON_LIMIT:
+        compact_reason = compact_reason[:_AI_LOG_REASON_LIMIT].rstrip() + "…"
+    return f"{conclusion}：{compact_reason}"
 
 
 def _build_llm_summary_from_api_profile(candidate: dict, profile: dict, max_chars: int) -> str:
@@ -309,7 +332,7 @@ def _build_prompt(job_requirement: str, candidate_summary: str, hard_conditions:
 
 
 def _parse_response(text: str) -> dict:
-    """Parse LLM response text into {adjustment, reason} dict.
+    """Parse LLM response text into a normalized evaluation dict.
 
     Handles: plain JSON, markdown code blocks, Chinese punctuation.
     Clamps adjustment to [-10, +10].
@@ -358,7 +381,64 @@ def _parse_response(text: str) -> dict:
     if len(reason) > 200:
         reason = reason[:200]
 
-    return {'adjustment': adjustment, 'reason': reason}
+    verdict = str(data.get('hard_condition_verdict', 'unknown')).lower()
+    if verdict not in {'pass', 'fail', 'unknown'}:
+        verdict = 'unknown'
+    raw_findings = data.get('hard_condition_findings', [])
+    findings = []
+    if isinstance(raw_findings, list):
+        for item in raw_findings[:10]:
+            if not isinstance(item, dict):
+                continue
+            item_verdict = str(item.get('verdict', 'unknown')).lower()
+            confidence = str(item.get('confidence', 'low')).lower()
+            findings.append({
+                'condition': str(item.get('condition', '')).strip()[:100],
+                'verdict': item_verdict if item_verdict in {'pass', 'fail', 'unknown'} else 'unknown',
+                'evidence': str(item.get('evidence', '')).strip()[:300],
+                'confidence': confidence if confidence in {'high', 'medium', 'low'} else 'low',
+            })
+
+    return {
+        'adjustment': adjustment,
+        'reason': reason,
+        'hard_condition_verdict': verdict,
+        'hard_condition_findings': findings,
+    }
+
+
+def _validated_hard_failures(
+    candidate: dict[str, Any],
+    findings: list[dict[str, Any]] | None,
+    hard_conditions: str,
+) -> list[dict[str, Any]]:
+    """Validate high-confidence LLM findings with deterministic text rules."""
+    from filtering import parse_experience_months
+
+    summary = str(candidate.get('summary') or '')
+    compact_summary = re.sub(r'\s+', '', summary)
+    min_exp_match = re.search(r'经验：≥(\d+)年', hard_conditions)
+    requires_regular_bachelor = '统招本科' in hard_conditions
+    explicit_non_regular = (
+        "自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
+        "电大", "远程教育", "成人高考", "成人教育", "业余",
+    )
+    validated = []
+    for finding in findings or []:
+        if finding.get('verdict') != 'fail' or finding.get('confidence') != 'high':
+            continue
+        evidence = str(finding.get('evidence') or '').strip()
+        if not evidence or re.sub(r'\s+', '', evidence) not in compact_summary:
+            continue
+        condition = str(finding.get('condition') or '')
+        if '经验' in condition and min_exp_match:
+            months = parse_experience_months(evidence)
+            if months is not None and months < int(min_exp_match.group(1)) * 12:
+                validated.append(finding)
+        elif ('学历' in condition or '统招' in condition) and requires_regular_bachelor:
+            if any(term in evidence for term in explicit_non_regular):
+                validated.append(finding)
+    return validated
 
 
 def _call_llm_api(messages: list, api_config: dict, api_key: str,
@@ -422,6 +502,8 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
                         adjustment=parsed['adjustment'],
                         reason=parsed['reason'],
                         model=model,
+                        hard_condition_verdict=parsed['hard_condition_verdict'],
+                        hard_condition_findings=parsed['hard_condition_findings'],
                     )
                 elif response.status_code == 429:
                     # Rate limited — respect Retry-After header, fallback to 5/15/30s
@@ -468,7 +550,9 @@ def _recalc_recommend_level(score: int) -> str:
         return "强烈推荐"
     elif score >= SCORE_THRESHOLD_RECOMMEND:
         return "推荐"
-    return "待定"
+    if score >= SCORE_THRESHOLD_PASS:
+        return "待定"
+    return "已淘汰"
 
 
 def _evaluate_single(index: int, candidate: dict, job_requirement: str,
@@ -573,10 +657,28 @@ def evaluate_batch(
                     candidate['llm_adjustment'] = result.adjustment
                     candidate['llm_reason'] = clean_reason
                     candidate['llm_model'] = result.model
+                    candidate['llm_hard_condition_verdict'] = result.hard_condition_verdict
+                    candidate['llm_hard_condition_findings'] = result.hard_condition_findings or []
+                    validated_failures = _validated_hard_failures(
+                        candidate, result.hard_condition_findings, hard_conditions
+                    )
+                    if validated_failures:
+                        candidate['qualification_status'] = 'rejected'
+                        candidate['qualification_reasons'] = [
+                            f"AI发现并经规则复核：{item.get('condition')}"
+                            for item in validated_failures
+                        ]
+                        candidate['qualification_evidence'] = validated_failures
+                        candidate['manual_review_required'] = False
+                        candidate['auto_greet_blocked_reason'] = "硬条件不符合"
+                        candidate['recommend_level'] = "已淘汰"
 
                     sign = "+" if result.adjustment > 0 else ""
-                    print(f"  [{idx+1}/{total}] {name}: {rule_score} → {new_score} ({sign}{result.adjustment})")
-                    print(f"    {clean_reason}")
+                    log_summary = _format_ai_log_summary(candidate, clean_reason, new_score)
+                    print(
+                        f"  [{idx+1}/{total}] {name}：{rule_score} → {new_score} "
+                        f"（{sign}{result.adjustment}）｜{log_summary}"
+                    )
                 else:
                     candidate['llm_evaluated'] = False
                     print(f"  [{idx+1}/{total}] {name}: 评估失败 ({result.reason})，保留原始分数 {rule_score}")

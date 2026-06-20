@@ -30,6 +30,9 @@ _FEEDBACK_FIELDS = (
     'risk_flags',
     'manual_review_required',
     'auto_greet_blocked_reason',
+    'qualification_status',
+    'qualification_reasons',
+    'qualification_evidence',
     'resume_file',
     'resume_imported_at',
     'resume_eval_adjustment',
@@ -125,6 +128,7 @@ def save_candidates_all(candidates_all: list[dict[str, Any]], path: Optional[str
         unique_candidates = [
             c for c in unique_candidates
             if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS
+            and c.get('qualification_status') != 'rejected'
             or c.get('feedback_status')
             or c.get('blacklisted')
         ]

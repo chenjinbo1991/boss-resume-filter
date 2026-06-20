@@ -522,6 +522,18 @@ def test_save_then_load_roundtrip():
     assert loaded[0]["greet_sent"] is True
 
 
+def test_save_excludes_high_score_rejected_candidate():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = os.path.join(tmpdir, "candidates_all.json")
+        save_candidates_all([{
+            "geek_id": "rejected",
+            "job_name": "Java",
+            "match_score": 90,
+            "qualification_status": "rejected",
+        }], target)
+        assert load_candidates_all(target) == []
+
+
 # ========== load_candidates_all 边界场景 ==========
 
 def test_load_happy_path_from_valid_file():

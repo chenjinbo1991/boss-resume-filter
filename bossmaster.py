@@ -2442,12 +2442,14 @@ def enrich_greet_contexts_for_candidates(
             pause = _human_delay(GREET_CONTEXT_BATCH_PAUSE_CENTER, GREET_CONTEXT_BATCH_PAUSE_SPREAD)
             print(f"  已补抓 {attempted - 1} 人上下文，暂停 {int(pause)} 秒降低访问频率...")
             time.sleep(pause)
+        had_context = bool(candidate.get("greet_context"))
         context, msg = _capture_greet_context_from_list_page(page, str(geek_id), stop_event=stop_event)
         if context:
             candidate["greet_context"] = context
             candidate["greet_context_updated_at"] = datetime.now().isoformat(timespec="seconds")
             enriched += 1
-            print(f"  已更新 {candidate.get('name', '候选人')} 的打招呼上下文")
+            action = "已刷新" if had_context else "已保存"
+            print(f"  {action} {candidate.get('name', '候选人')} 的打招呼上下文")
         else:
             print(f"  未更新 {candidate.get('name', '候选人')} 的打招呼上下文：{msg}")
         time.sleep(_human_delay(GREET_CONTEXT_DELAY_CENTER, GREET_CONTEXT_DELAY_SPREAD))
@@ -3063,6 +3065,7 @@ def _select_greet_context_candidates(
         if c.get('geek_id') not in existing_greeted_ids
         and c.get('geek_id') not in planned_ids
         and c.get('match_score', 0) >= GREET_CONTEXT_MIN_SCORE
+        and c.get('qualification_status') != 'rejected'
     ]
 
 
@@ -3165,11 +3168,14 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         if skipped_count:
             print(f"过滤黑名单候选人：{before_count} -> {len(raw_candidates)} (已屏蔽 {skipped_count} 人)")
 
-    # 过滤当前岗位已匹配且打过招呼的候选人
+    # 过滤当前岗位已打过招呼的候选人；其余候选人进入本轮重新评估。
     if existing_ids_for_job_and_greeted:
         before_count = len(raw_candidates)
         raw_candidates = [c for c in raw_candidates if c['geek_id'] not in existing_ids_for_job_and_greeted]
-        print(f"过滤当前岗位已匹配且打过招呼的候选人：{before_count} -> {len(raw_candidates)} (新增 {len(raw_candidates)} 个)")
+        print(
+            f"过滤当前岗位已打招呼候选人：{before_count} → {len(raw_candidates)} "
+            f"（本轮待评估 {len(raw_candidates)} 人）"
+        )
 
     # 筛选所有候选人（暂不打招呼）
     print("\n=== 阶段 1: 筛选候选人 ===")
@@ -3254,6 +3260,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 "risk_flags": details.get('risk_flags', []),
                 "manual_review_required": bool(details.get('manual_review_required')),
                 "auto_greet_blocked_reason": details.get('auto_greet_blocked_reason', ''),
+                "qualification_status": details.get('qualification_status', 'qualified'),
+                "qualification_reasons": details.get('qualification_reasons', []),
+                "qualification_evidence": details.get('qualification_evidence', []),
                 "recommend_level": recommend_level,
                 "batch_timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
                 "followup_status": "未沟通",
@@ -3318,7 +3327,15 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
     # 按分数从高到低排序，保持结果展示和 AI 评估优先级不变。
     passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
 
-    print(f"\n筛选完成：通过 {len(passed_candidates)}/{len(raw_candidates)} 个")
+    qualified_count = sum(
+        1 for c in passed_candidates if c.get('qualification_status', 'qualified') == 'qualified'
+    )
+    manual_review_count = sum(
+        1 for c in passed_candidates if c.get('qualification_status') == 'manual_review'
+    )
+    print(f"\n规则筛选完成：候选池 {len(passed_candidates)}/{len(raw_candidates)} 个")
+    print(f"  - 明确合格：{qualified_count} 人")
+    print(f"  - 待人工确认：{manual_review_count} 人")
     if failed_reasons:
         total_failed = sum(failed_reasons.values())
         print(f"淘汰原因（共 {total_failed} 人）:")
@@ -3349,6 +3366,8 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         if accounted != len(raw_candidates):
             print(f"⚠️  数量不一致：通过({len(passed_candidates)}) + 淘汰({total_failed}) = {accounted} ≠ 原始({len(raw_candidates)})")
 
+    ai_removed_count = 0
+    ai_evaluated_count = 0
     # === 阶段 1.5: AI 辅助评估（可选）===
     if ai_eval and api_config and api_key and passed_candidates:
         from llm_eval import evaluate_batch
@@ -3379,6 +3398,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             hard_parts.append(f"- 必要条件：{'、'.join(cond_names)}")
         hard_conditions = "## 筛选硬条件\n" + "\n".join(hard_parts) + "\n\n" if hard_parts else ""
 
+        rule_pool_count = len(passed_candidates)
         passed_candidates = evaluate_batch(
             passed_candidates, job_requirement, api_config, api_key,
             hard_conditions=hard_conditions,
@@ -3388,7 +3408,34 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         # 重新排序（分数可能变化）
         passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
         llm_count = sum(1 for c in passed_candidates if c.get('llm_evaluated'))
+        ai_evaluated_count = llm_count
         print(f"AI 评估完成：{llm_count} 人已评估")
+        ai_hard_rejected = sum(
+            1 for c in passed_candidates if c.get('qualification_status') == 'rejected'
+        )
+        ai_score_rejected = sum(
+            1 for c in passed_candidates
+            if c.get('qualification_status') != 'rejected'
+            and c.get('match_score', 0) < SCORE_THRESHOLD_PASS
+        )
+        ai_removed_count = ai_hard_rejected + ai_score_rejected
+        passed_candidates = [
+            c for c in passed_candidates
+            if c.get('qualification_status') != 'rejected'
+            and c.get('match_score', 0) >= SCORE_THRESHOLD_PASS
+        ]
+        final_qualified = sum(
+            1 for c in passed_candidates if c.get('qualification_status', 'qualified') == 'qualified'
+        )
+        final_manual = sum(
+            1 for c in passed_candidates if c.get('qualification_status') == 'manual_review'
+        )
+        print("最终评估结果：")
+        print(f"  - 明确合格：{final_qualified} 人")
+        print(f"  - 待人工确认：{final_manual} 人")
+        print(f"  - AI复核硬条件淘汰：{ai_hard_rejected} 人")
+        print(f"  - 分数降至{SCORE_THRESHOLD_PASS}分以下：{ai_score_rejected} 人")
+        print(f"  - 最终保留：{len(passed_candidates)}/{rule_pool_count} 人")
 
     # === 阶段 1.6: 为后续可能补打招呼的候选人捕获上下文（最佳努力）===
     # 本轮确定会自动发送的候选人无需提前抓取；被模式、人工确认或单轮上限
@@ -3587,10 +3634,9 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         stats['raw_count'] = len(raw_candidates)
         stats['passed_count'] = len(passed_candidates)
         stats['greeted_count'] = sum(1 for c in passed_candidates if c.get('greet_sent'))
-        if ai_eval and passed_candidates:
-            evaluated = [c for c in passed_candidates if c.get('llm_evaluated')]
-            stats['ai_eval_count'] = len(evaluated)
-            stats['ai_downgraded'] = sum(1 for c in evaluated if c.get('match_score', 0) < SCORE_THRESHOLD_PASS)
+        if ai_eval:
+            stats['ai_eval_count'] = ai_evaluated_count
+            stats['ai_downgraded'] = ai_removed_count
 
     return passed_candidates
 
@@ -3984,8 +4030,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         if progress_callback:
             msg = f"[完成] 筛选完成：通过 {total_passed}/{total_raw} 个"
             if total_ai_evaluated > 0 and total_ai_downgraded > 0:
-                effective = total_passed - total_ai_downgraded
-                msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，有效 {effective} 人"
+                msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，最终有效 {total_passed} 人"
             msg += f"，{total_greeted} 人已打招呼"
             progress_callback(100, msg)
 
@@ -3995,8 +4040,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         if progress_callback:
             stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
             if total_ai_evaluated > 0 and total_ai_downgraded > 0:
-                effective = total_passed - total_ai_downgraded
-                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，有效 {effective} 人"
+                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，最终有效 {total_passed} 人"
             stop_msg += f"，{total_greeted} 人已打招呼"
             progress_callback(100, stop_msg)
 
@@ -4006,8 +4050,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
         if progress_callback:
             stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
             if total_ai_evaluated > 0 and total_ai_downgraded > 0:
-                effective = total_passed - total_ai_downgraded
-                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，有效 {effective} 人"
+                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，最终有效 {total_passed} 人"
             stop_msg += f"，{total_greeted} 人已打招呼"
             progress_callback(100, stop_msg)
         raise

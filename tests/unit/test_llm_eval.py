@@ -11,6 +11,7 @@ from llm_eval import (
     _build_prompt,
     _parse_response,
     _call_llm_api,
+    _format_ai_log_summary,
     _recalc_recommend_level,
     evaluate_batch,
 )
@@ -92,6 +93,30 @@ def test_parse_response_reason_truncated():
     assert len(result['reason']) == 200
 
 
+def test_format_ai_log_summary_is_single_line_and_truncated():
+    summary = _format_ai_log_summary(
+        {"qualification_status": "qualified"},
+        "技能匹配良好。\n" + "补充说明" * 30,
+        70,
+    )
+    assert summary.startswith("通过：技能匹配良好。")
+    assert "\n" not in summary
+    assert summary.endswith("…")
+    assert len(summary) <= 84
+
+
+def test_format_ai_log_summary_uses_business_conclusion():
+    assert _format_ai_log_summary(
+        {"qualification_status": "manual_review"}, "学历形式缺少证据", 64
+    ).startswith("待确认：")
+    assert _format_ai_log_summary(
+        {"qualification_status": "rejected"}, "工作经验不足", 80
+    ).startswith("淘汰：")
+    assert _format_ai_log_summary(
+        {"qualification_status": "qualified"}, "评分不足", 54
+    ).startswith("淘汰：")
+
+
 # === _build_prompt ===
 
 def test_build_prompt_returns_system_and_user():
@@ -149,7 +174,7 @@ def test_recalc_recommend():
 def test_recalc_pending():
     assert _recalc_recommend_level(55) == "待定"
     assert _recalc_recommend_level(64) == "待定"
-    assert _recalc_recommend_level(0) == "待定"
+    assert _recalc_recommend_level(0) == "已淘汰"
 
 
 # === _call_llm_api (mocked HTTP) ===
@@ -285,6 +310,70 @@ def test_batch_score_clamped_low(mock_call, mock_sleep):
     candidates = [{'name': '赵六', 'match_score': 55, 'recommend_level': '待定', 'summary': '1年'}]
     result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     assert result[0]['match_score'] == 45
+    assert result[0]['recommend_level'] == '已淘汰'
+
+
+@patch('llm_eval.time.sleep')
+@patch('llm_eval._call_llm_api')
+def test_batch_only_applies_verified_high_confidence_hard_failure(mock_call, mock_sleep):
+    finding = {
+        "condition": "工作经验不少于4年",
+        "verdict": "fail",
+        "evidence": "2026届应届生",
+        "confidence": "high",
+    }
+    mock_call.return_value = LLMEvalResult(
+        success=True,
+        adjustment=-10,
+        reason="经验不足",
+        model="m",
+        hard_condition_verdict="fail",
+        hard_condition_findings=[finding],
+    )
+    candidates = [{
+        'name': '应届生',
+        'match_score': 65,
+        'recommend_level': '推荐',
+        'summary': '2026届应届生，Java 开发',
+        'qualification_status': 'manual_review',
+    }]
+    result = quiet_evaluate_batch(
+        candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
+        hard_conditions="## 筛选硬条件\n- 经验：≥4年\n",
+    )
+    assert result[0]['qualification_status'] == 'rejected'
+    assert result[0]['recommend_level'] == '已淘汰'
+
+
+@patch('llm_eval.time.sleep')
+@patch('llm_eval._call_llm_api')
+def test_batch_does_not_reject_speculative_education_finding(mock_call, mock_sleep):
+    finding = {
+        "condition": "统招本科学历",
+        "verdict": "fail",
+        "evidence": "专升本",
+        "confidence": "high",
+    }
+    mock_call.return_value = LLMEvalResult(
+        success=True,
+        adjustment=-6,
+        reason="疑似非统招",
+        model="m",
+        hard_condition_verdict="fail",
+        hard_condition_findings=[finding],
+    )
+    candidates = [{
+        'name': '待确认',
+        'match_score': 70,
+        'recommend_level': '推荐',
+        'summary': '专升本，Java 开发',
+        'qualification_status': 'manual_review',
+    }]
+    result = quiet_evaluate_batch(
+        candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
+        hard_conditions="## 筛选硬条件\n- 必要条件：统招本科\n",
+    )
+    assert result[0]['qualification_status'] == 'manual_review'
 
 
 @patch('llm_eval.time.sleep')
