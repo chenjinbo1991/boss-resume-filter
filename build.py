@@ -1242,6 +1242,22 @@ def _check_code_to_changelog_coverage(strict=False):
                 keywords.extend(["更新日志", "远端", "release", "notes"])
         if "bossmaster.py" in fpath and re.search(r"captcha|verify|risk|403|412|429", lowered):
             keywords.extend(["风控", "验证码", "验证"])
+        semantic_keywords = (
+            (r"greet", ["打招呼"]),
+            (r"candidate", ["候选人"]),
+            (r"browser|chromium|chrome", ["浏览器", "连接"]),
+            (r"\blog\b|log_", ["日志"]),
+            (r"blacklist", ["黑名单"]),
+            (r"resume", ["简历"]),
+            (r"export|excel", ["导出"]),
+            (r"followup", ["跟进"]),
+            (r"feedback", ["反馈"]),
+            (r"stat", ["统计"]),
+            (r"detail", ["明细"]),
+        )
+        for pattern, words in semantic_keywords:
+            if re.search(pattern, lowered):
+                keywords.extend(words)
         return keywords
 
     # 每条规则产出 (信号类型, 摘要, 关键词, 建议分类)
@@ -1300,7 +1316,7 @@ def _check_code_to_changelog_coverage(strict=False):
 
         # 3. 核心文件新增公开函数（不以 _ 开头 = 用户可见的新入口）
         if fpath in ("bossmaster.py", "gui_main.py"):
-            for m in re.finditer(r"def\s+([a-z]\w{5,})\s*\(", joined):
+            for m in re.finditer(r"^def\s+([a-z]\w{5,})\s*\(", joined, re.MULTILINE):
                 fname = m.group(1)
                 after = joined[m.end():m.end()+300]
                 signals.append(("新函数", f"{fpath}: {fname}", _keywords(f"{fname} {after}"), "新增功能"))
@@ -1326,9 +1342,12 @@ def _check_code_to_changelog_coverage(strict=False):
                 continue
             if behavior_re.search(line):
                 text = _snippet(re.sub(r"\s+", " ", line))
+                context_words = _context_keywords(fpath, line)
+                if not re.search(r"[一-鿿]{2,}", line) and not context_words:
+                    continue
                 signals.append((
                     "行为变更", f"{fpath}: {text}",
-                    _keywords(text) + _context_keywords(fpath, line),
+                    _keywords(text) + context_words,
                     "体验优化",
                 ))
 
@@ -1342,8 +1361,19 @@ def _check_code_to_changelog_coverage(strict=False):
                     signals.append(("新数据", f"{fpath}: {text}", _keywords(text), "新增功能"))
 
         # 7. 删除 / 限制：删除 UI 文案、函数入口、配置键，或新增限制逻辑
+        normalized_additions = {line.strip() for line in additions if line.strip()}
+        added_function_names = {
+            match.group(1)
+            for line in additions
+            if (match := re.search(r"\bdef\s+([a-zA-Z_]\w*)\s*\(", line))
+        }
         for line in removals:
             if _is_comment_or_doc_line(line):
+                continue
+            if line.strip() in normalized_additions:
+                continue
+            removed_func = re.search(r"\bdef\s+([a-zA-Z_]\w*)\s*\(", line)
+            if removed_func and removed_func.group(1) in added_function_names:
                 continue
             if (
                 re.search(r"[一-鿿]{3,}", line)
@@ -1351,15 +1381,23 @@ def _check_code_to_changelog_coverage(strict=False):
                 or re.search(r'"[A-Za-z_][A-Za-z0-9_]+"\s*:', line)  # JSON keys only (requires double quotes)
             ):
                 text = _snippet(re.sub(r"\s+", " ", line))
-                signals.append(("删除/限制", f"{fpath}: removed {text}", _keywords(text), "体验优化"))
+                signals.append((
+                    "删除/限制",
+                    f"{fpath}: removed {text}",
+                    _keywords(text) + _context_keywords(fpath, line),
+                    "体验优化",
+                ))
         for line in additions:
             if _is_comment_or_doc_line(line):
                 continue
             if re.search(r"(limit|max|上限|限制|停止|跳过|return\s+|raise\s+)", line, re.IGNORECASE) and behavior_re.search(line):
                 text = _snippet(re.sub(r"\s+", " ", line))
+                context_words = _context_keywords(fpath, line)
+                if not re.search(r"[一-鿿]{2,}", line) and not context_words:
+                    continue
                 signals.append((
                     "删除/限制", f"{fpath}: {text}",
-                    _keywords(text) + _context_keywords(fpath, line),
+                    _keywords(text) + context_words,
                     "体验优化",
                 ))
 

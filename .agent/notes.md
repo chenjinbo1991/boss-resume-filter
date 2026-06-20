@@ -69,9 +69,9 @@ CI 用 `.venv-ci`，本地打包用 `pack_venv`。`build.py` 中 babel locale-da
 
 ## API / BOSS Page
 
-### API 监听依赖 page.refresh 触发完整数据
+### 候选人提取以页面可见集合为准
 
-`extract_candidates_by_comprehensive_analysis()` 启动 `_start_recommend_api_listener()` 后必须 `page.refresh()` 才能触发完整的推荐接口调用（返回全部候选人结构化数据）。微滚动只能触发部分数据（约 28%），后续滚动不触发新 API 请求。`page.refresh()` 会重置岗位筛选到默认岗位，这是当前接受的代价。
+推荐页提取统一以 DOM 滚动得到的页面可见候选人为准。接口监听或后置请求只用于补全这些候选人的结构化字段，不能把页面未出现的候选人直接加入结果。刷新前后必须校验岗位标识；岗位变化时停止扫描并提示用户切回目标岗位。
 
 ## AI Provider / Keyring
 

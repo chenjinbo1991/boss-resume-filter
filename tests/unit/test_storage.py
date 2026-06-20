@@ -14,7 +14,11 @@ from storage import (
     get_greeted_geek_ids,
     is_already_greeted,
     load_candidates_all,
+    mark_candidate_greeted,
+    merge_candidates_all,
+    persist_candidate_greeted,
     save_candidates_all,
+    update_candidate_greeted,
 )
 
 
@@ -46,6 +50,75 @@ def test_dedupe_merges_greet_sent_from_old_to_new():
     assert len(result) == 1
     assert result[0]["greet_sent"] is True
     assert result[0]["match_score"] == 80
+
+
+def test_mark_candidate_greeted_writes_status_time_and_method():
+    candidate = {"geek_id": "g1", "job_name": "Java", "match_score": 70}
+
+    mark_candidate_greeted(candidate, "auto_list", "20260619_120000")
+
+    assert candidate["greet_sent"] is True
+    assert candidate["greet_sent_at"] == "20260619_120000"
+    assert candidate["greet_method"] == "auto_list"
+    assert candidate["followup_status"] == "已打招呼"
+    assert candidate["followup_updated_at"] == "20260619_120000"
+
+
+def test_update_candidate_greeted_persists_immediately():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = os.path.join(tmpdir, "candidates_all.json")
+        save_candidates_all([
+            {"geek_id": "g1", "job_name": "Java", "match_score": 70}
+        ], target)
+
+        updated = update_candidate_greeted(
+            "g1", "Java", "manual_context", target
+        )
+        loaded = load_candidates_all(target)
+
+    assert updated is True
+    assert loaded[0]["greet_sent"] is True
+    assert loaded[0]["greet_method"] == "manual_context"
+    assert loaded[0]["greet_sent_at"]
+
+
+def test_persist_candidate_greeted_merges_with_latest_disk_data():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = os.path.join(tmpdir, "candidates_all.json")
+        save_candidates_all([
+            {"geek_id": "g1", "job_name": "Java", "match_score": 70},
+            {"geek_id": "g2", "job_name": "Python", "match_score": 80,
+             "feedback_status": "合适"},
+        ], target)
+        candidate = {
+            "geek_id": "g1", "job_name": "Java", "match_score": 70,
+            "summary": "完整候选人信息",
+        }
+
+        persisted = persist_candidate_greeted(
+            candidate, "auto_list", target
+        )
+        loaded = load_candidates_all(target)
+
+    assert persisted is True
+    assert len(loaded) == 2
+    assert next(c for c in loaded if c["geek_id"] == "g1")["greet_sent"] is True
+    assert next(c for c in loaded if c["geek_id"] == "g2")["feedback_status"] == "合适"
+
+
+def test_merge_candidates_all_preserves_existing_records():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = os.path.join(tmpdir, "candidates_all.json")
+        save_candidates_all([
+            {"geek_id": "g1", "job_name": "Java", "match_score": 70}
+        ], target)
+
+        merge_candidates_all([
+            {"geek_id": "g2", "job_name": "Python", "match_score": 80}
+        ], target)
+        loaded = load_candidates_all(target)
+
+    assert {c["geek_id"] for c in loaded} == {"g1", "g2"}
 
 
 def test_dedupe_preserves_feedback_from_old_to_new():

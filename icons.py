@@ -424,6 +424,34 @@ def _thumbs_up(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _strong_recommend(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """点赞 + 强调光芒 — 强烈推荐，与普通推荐共用同一视觉语言。"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+
+    # 点赞主体略向下移动，为顶部强调光芒留出空间。
+    thumb_size = max(12, int(round(size_px * 0.95)))
+    thumb_sw = max(1, int(round(sw * thumb_size / size_px)))
+    thumb = _thumbs_up(thumb_size, fill, (0, 0, 0, 0), thumb_sw)
+    img.alpha_composite(thumb, ((size_px - thumb_size) // 2, size_px - thumb_size + 2))
+
+    # 三道短光芒表达“推荐升级”，线宽、圆角和其它轮廓图标保持一致。
+    ray_sw = max(1, sw)
+    rays = [
+        (12, 0.5, 12, 3),
+        (5.5, 2, 7.5, 4),
+        (18.5, 2, 16.5, 4),
+    ]
+    for x1, y1, x2, y2 in rays:
+        d.line(
+            [_s(x1, S), _s(y1, S), _s(x2, S), _s(y2, S)],
+            fill=fill,
+            width=ray_sw,
+        )
+    return img
+
+
 def _mail(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     img = Image.new('RGBA', (size_px, size_px), bg)
     d = ImageDraw.Draw(img)
@@ -475,6 +503,40 @@ def _star(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
         points.append((cx + outer_r * math.cos(ao), cy + outer_r * math.sin(ao)))
         points.append((cx + inner_r * math.cos(ai), cy + inner_r * math.sin(ai)))
     d.polygon(points, outline=fill, width=sw)
+    return img
+
+
+def _hourglass(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """沙漏 — 待定/等待判断。"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    d = ImageDraw.Draw(img)
+    S = size_px
+
+    # 上下横梁。
+    d.line([_s(5, S), _s(3, S), _s(19, S), _s(3, S)], fill=fill, width=sw + 1)
+    d.line([_s(5, S), _s(21, S), _s(19, S), _s(21, S)], fill=fill, width=sw + 1)
+
+    # 玻璃外框：上半部收束到中心，再向下展开。
+    d.line([_s(6, S), _s(4, S), _s(7, S), _s(8, S), _s(12, S), _s(12, S)],
+           fill=fill, width=sw, joint='curve')
+    d.line([_s(18, S), _s(4, S), _s(17, S), _s(8, S), _s(12, S), _s(12, S)],
+           fill=fill, width=sw, joint='curve')
+    d.line([_s(12, S), _s(12, S), _s(7, S), _s(16, S), _s(6, S), _s(20, S)],
+           fill=fill, width=sw, joint='curve')
+    d.line([_s(12, S), _s(12, S), _s(17, S), _s(16, S), _s(18, S), _s(20, S)],
+           fill=fill, width=sw, joint='curve')
+
+    # 少量沙粒，让小尺寸下也能一眼识别为沙漏。
+    d.polygon([
+        (_s(8, S), _s(6, S)),
+        (_s(16, S), _s(6, S)),
+        (_s(12, S), _s(10, S)),
+    ], fill=fill)
+    d.polygon([
+        (_s(12, S), _s(14, S)),
+        (_s(8, S), _s(18, S)),
+        (_s(16, S), _s(18, S)),
+    ], fill=fill)
     return img
 
 
@@ -614,6 +676,21 @@ def _check(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     return img
 
 
+def _passed_filter(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
+    """放大双人图案 — 通过筛选，沿用原候选人图标。"""
+    img = Image.new('RGBA', (size_px, size_px), bg)
+    people_size = max(12, int(round(size_px * 1.10)))
+    people_sw = max(1, int(round(sw * people_size / size_px)))
+    people = _people(people_size, fill, (0, 0, 0, 0), people_sw)
+    bbox = people.getbbox()
+    if bbox:
+        people = people.crop(bbox)
+        x = (size_px - people.width) // 2
+        y = (size_px - people.height) // 2
+        img.alpha_composite(people, (x, y))
+    return img
+
+
 def _close(size_px: int, fill: str, bg: str, sw: int) -> Image.Image:
     """叉号 ✕ — 取消/关闭"""
     img = Image.new('RGBA', (size_px, size_px), bg)
@@ -650,15 +727,18 @@ ICON_REGISTRY: Dict[str, Callable] = {
     'people':       _people,
     'trophy':       _trophy,
     'thumbs_up':    _thumbs_up,
+    'strong_recommend': _strong_recommend,
     'arrow_up':     _arrow_up,
     'arrow_down':   _arrow_down,
     'mail':         _mail,
     'play':         _play,
     'stop':         _stop,
     'star':         _star,
+    'hourglass':    _hourglass,
     'chat':         _chat,
     'download':     _download,
     'check':        _check,
+    'passed_filter': _passed_filter,
     'close':        _close,
     'document':     _document,
     'shield_check': _shield_check,

@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import shutil
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,6 +14,7 @@ from constants import SCORE_THRESHOLD_PASS
 
 
 logger = logging.getLogger(__name__)
+_CANDIDATES_FILE_LOCK = threading.RLock()
 
 CANDIDATES_FILE = "candidates_all.json"
 _FEEDBACK_FIELDS = (
@@ -35,6 +38,8 @@ _FEEDBACK_FIELDS = (
     'resume_eval_at',
     'greet_context',
     'greet_context_updated_at',
+    'greet_sent_at',
+    'greet_method',
 )
 
 # 有时间戳的字段组：(时间戳字段, (关联数据字段...))
@@ -44,6 +49,7 @@ _TIMESTAMP_FIELD_GROUPS = (
     ('followup_updated_at', ('followup_status', 'followup_note')),
     ('blacklisted_at', ('blacklisted', 'blacklist_reason')),
     ('greet_context_updated_at', ('greet_context',)),
+    ('greet_sent_at', ('greet_sent', 'greet_method')),
 )
 _TIMESTAMPED_FIELDS = frozenset(
     f for ts_f, related in _TIMESTAMP_FIELD_GROUPS for f in (ts_f, *related)
@@ -57,37 +63,38 @@ def _candidate_paths(path: Optional[str] = None) -> tuple[Path, Path]:
 
 def load_candidates_all(path: Optional[str] = None) -> list[dict[str, Any]]:
     """加载候选人数据；主文件损坏时自动尝试从 .bak 恢复。恢复失败时抛出异常，避免静默丢失数据。"""
-    candidate_path, backup_path = _candidate_paths(path)
-    if candidate_path.exists():
-        try:
-            with open(candidate_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"加载候选人数据失败：{e}")
-            restored = _load_candidates_backup(path)
-            if restored is not None:
-                try:
-                    shutil.copy2(backup_path, candidate_path)
-                    print(f"已从 {backup_path} 恢复候选人数据")
-                except OSError as restore_error:
-                    error_msg = f"候选人数据文件损坏且备份恢复失败：{restore_error}"
-                    print(error_msg)
-                    raise RuntimeError(error_msg) from restore_error
-                return restored
-            error_msg = f"候选人数据文件损坏且备份不存在或损坏，数据可能已丢失"
-            print(error_msg)
-            raise RuntimeError(error_msg)
-    restored = _load_candidates_backup(path)
-    if restored is not None:
-        try:
-            shutil.copy2(backup_path, candidate_path)
-            print(f"主文件缺失，已从 {backup_path} 恢复候选人数据")
-        except OSError as restore_error:
-            error_msg = f"主文件缺失且备份恢复失败：{restore_error}"
-            print(error_msg)
-            raise RuntimeError(error_msg) from restore_error
-        return restored
-    return []
+    with _CANDIDATES_FILE_LOCK:
+        candidate_path, backup_path = _candidate_paths(path)
+        if candidate_path.exists():
+            try:
+                with open(candidate_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"加载候选人数据失败：{e}")
+                restored = _load_candidates_backup(path)
+                if restored is not None:
+                    try:
+                        shutil.copy2(backup_path, candidate_path)
+                        print(f"已从 {backup_path} 恢复候选人数据")
+                    except OSError as restore_error:
+                        error_msg = f"候选人数据文件损坏且备份恢复失败：{restore_error}"
+                        print(error_msg)
+                        raise RuntimeError(error_msg) from restore_error
+                    return restored
+                error_msg = f"候选人数据文件损坏且备份不存在或损坏，数据可能已丢失"
+                print(error_msg)
+                raise RuntimeError(error_msg)
+        restored = _load_candidates_backup(path)
+        if restored is not None:
+            try:
+                shutil.copy2(backup_path, candidate_path)
+                print(f"主文件缺失，已从 {backup_path} 恢复候选人数据")
+            except OSError as restore_error:
+                error_msg = f"主文件缺失且备份恢复失败：{restore_error}"
+                print(error_msg)
+                raise RuntimeError(error_msg) from restore_error
+            return restored
+        return []
 
 
 def _load_candidates_backup(path: Optional[str] = None) -> Optional[list[dict[str, Any]]]:
@@ -110,27 +117,87 @@ def get_greeted_geek_ids(candidates_all: list[dict[str, Any]]) -> set[str]:
 
 def save_candidates_all(candidates_all: list[dict[str, Any]], path: Optional[str] = None) -> None:
     """保存 candidates_all.json，支持去重、中断恢复和 .bak 备份。"""
-    candidate_path, backup_path = _candidate_paths(path)
-    unique_candidates = _dedupe_candidates(candidates_all)
+    with _CANDIDATES_FILE_LOCK:
+        candidate_path, backup_path = _candidate_paths(path)
+        unique_candidates = _dedupe_candidates(candidates_all)
 
-    # 过滤低于通过分的候选人（有人工反馈或黑名单记录的低分候选人保留）
-    unique_candidates = [
-        c for c in unique_candidates
-        if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS
-        or c.get('feedback_status')
-        or c.get('blacklisted')
-    ]
+        # 过滤低于通过分的候选人（有人工反馈或黑名单记录的低分候选人保留）
+        unique_candidates = [
+            c for c in unique_candidates
+            if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS
+            or c.get('feedback_status')
+            or c.get('blacklisted')
+        ]
 
-    if candidate_path.exists():
-        try:
-            shutil.copy2(candidate_path, backup_path)
-        except OSError as e:
-            print(f"备份候选人数据失败：{e}")
+        if candidate_path.exists():
+            try:
+                shutil.copy2(candidate_path, backup_path)
+            except OSError as e:
+                print(f"备份候选人数据失败：{e}")
 
-    tmp_file = Path(str(candidate_path) + ".tmp")
-    with open(tmp_file, 'w', encoding='utf-8') as f:
-        json.dump(unique_candidates, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_file, candidate_path)
+        tmp_file = Path(str(candidate_path) + ".tmp")
+        with open(tmp_file, 'w', encoding='utf-8') as f:
+            json.dump(unique_candidates, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, candidate_path)
+
+
+def mark_candidate_greeted(
+    candidate: dict[str, Any],
+    method: str,
+    timestamp: Optional[str] = None,
+) -> None:
+    """统一写入打招呼成功状态及审计字段。"""
+    greeted_at = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate['greet_sent'] = True
+    candidate['greet_sent_at'] = greeted_at
+    candidate['greet_method'] = method
+    candidate['followup_status'] = "已打招呼"
+    candidate['followup_updated_at'] = greeted_at
+
+
+def merge_candidates_all(
+    candidates: list[dict[str, Any]],
+    path: Optional[str] = None,
+) -> None:
+    """在锁内读取最新文件并合并候选人，避免旧快照覆盖并发更新。"""
+    with _CANDIDATES_FILE_LOCK:
+        current = load_candidates_all(path)
+        save_candidates_all(current + candidates, path)
+
+
+def persist_candidate_greeted(
+    candidate: dict[str, Any],
+    method: str,
+    path: Optional[str] = None,
+) -> bool:
+    """将单个打招呼成功状态立即合并到最新磁盘数据。"""
+    if not candidate.get('geek_id'):
+        return False
+    with _CANDIDATES_FILE_LOCK:
+        mark_candidate_greeted(candidate, method)
+        merge_candidates_all([candidate], path)
+        return True
+
+
+def update_candidate_greeted(
+    geek_id: str,
+    job_name: str,
+    method: str,
+    path: Optional[str] = None,
+) -> bool:
+    """原子完成候选人读取、打招呼状态更新和保存。"""
+    with _CANDIDATES_FILE_LOCK:
+        candidates = load_candidates_all(path)
+        normalized_job = job_name.replace(" ", "")
+        for candidate in candidates:
+            if (
+                candidate.get('geek_id') == geek_id
+                and candidate.get('job_name', '').replace(" ", "") == normalized_job
+            ):
+                mark_candidate_greeted(candidate, method)
+                save_candidates_all(candidates, path)
+                return True
+        return False
 
 
 def _merge_manual_fields(target: dict[str, Any], source: dict[str, Any]) -> None:

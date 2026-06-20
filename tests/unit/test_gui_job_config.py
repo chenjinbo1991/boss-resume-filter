@@ -1,3 +1,7 @@
+import queue
+from pathlib import Path
+
+import icons
 from gui_main import BossFilterGUI, _optional_int_to_entry, _parse_optional_int_entry
 
 
@@ -178,3 +182,156 @@ def test_latest_history_value_treats_present_as_latest_and_falls_back_to_summary
     assert BossFilterGUI._latest_history_value(
         [], "company", "工作经历：摘要公司 高级工程师 2022 至今", "工作经历："
     ) == "摘要公司"
+
+
+def test_candidate_status_hides_internal_greet_context_capability():
+    """状态栏只展示业务状态，不暴露打招呼上下文等内部实现。"""
+    gui = BossFilterGUI.__new__(BossFilterGUI)
+    candidate = {
+        "greet_sent": False,
+        "followup_status": "未沟通",
+        "greet_context": {"chat_start": {"jid": "job-1", "lid": "list-1"}},
+    }
+
+    assert gui._format_candidate_status(candidate) == "未沟通"
+
+
+def test_greet_confirmation_hint_explains_prepared_path_without_technical_terms():
+    candidate = {
+        "greet_context": {"chat_start": {"jid": "job-1", "lid": "list-1"}},
+    }
+
+    hint = BossFilterGUI._get_greet_confirmation_hint(candidate)
+
+    assert "无需停留在原推荐页面" in hint
+    assert "上下文" not in hint
+    assert "API" not in hint
+
+
+def test_greet_confirmation_hint_explains_current_page_fallback():
+    hint = BossFilterGUI._get_greet_confirmation_hint({})
+
+    assert "当前推荐页面定位" in hint
+    assert "该岗位的推荐牛人页面" in hint
+
+
+def test_update_log_waits_until_lazy_run_page_creates_log_widget():
+    """未进入运行控制页时保留日志，不能因 log_text 尚未创建而报错或丢消息。"""
+    class FakeRoot:
+        def __init__(self):
+            self.scheduled = []
+
+        def after(self, delay, callback):
+            self.scheduled.append((delay, callback))
+
+    gui = BossFilterGUI.__new__(BossFilterGUI)
+    gui.root = FakeRoot()
+    gui.log_queue = queue.Queue()
+    gui.log_queue.put("打招呼成功")
+
+    gui.update_log()
+
+    assert gui.log_queue.qsize() == 1
+    assert gui.root.scheduled == [(100, gui.update_log)]
+
+
+def test_result_page_stats_show_greeted_after_pending():
+    """结果页依次展示强烈推荐、推荐、待定、已打招呼。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    stats_block = source[source.index("stats_data = [", source.index("def create_result_page")):]
+    stats_block = stats_block[:stats_block.index("\n\n        for icon_name")]
+
+    assert '"通过筛选"' not in stats_block
+    assert (
+        stats_block.index('"强烈推荐"')
+        < stats_block.index('"推荐"')
+        < stats_block.index('"待定"')
+        < stats_block.index('"已打招呼"')
+    )
+    assert '"strong_recommend"' in stats_block
+    assert '"hourglass"' in stats_block
+    assert '"pending"' in stats_block
+    assert '("chat", "已打招呼", "greeted"' in stats_block
+
+
+def test_result_page_greeted_detail_uses_passed_candidates_only():
+    """已打招呼指标只统计通过筛选且已打招呼的候选人。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    detail_block = source[source.index("elif stat_type == 'greeted':"):]
+    detail_block = detail_block[:detail_block.index("\n            else:")]
+
+    assert "SCORE_THRESHOLD_PASS" in detail_block
+    assert "c.get('greet_sent', False)" in detail_block
+
+
+def test_passed_filter_uses_enlarged_original_people_icon():
+    """通过筛选沿用原双人图案，并适当放大视觉占位。"""
+    assert "passed_filter" in icons.ICON_REGISTRY
+    original = icons.ICON_REGISTRY["people"](40, "white", (0, 0, 0, 0), 3)
+    image = icons.ICON_REGISTRY["passed_filter"](40, "white", (0, 0, 0, 0), 3)
+    assert image.size == (40, 40)
+    assert image.getbbox() is not None
+    original_width = original.getbbox()[2] - original.getbbox()[0]
+    enlarged_width = image.getbbox()[2] - image.getbbox()[0]
+    assert enlarged_width > original_width
+    assert enlarged_width >= 36
+
+
+def test_strong_recommendation_uses_registered_emphasized_thumb_icon():
+    """强烈推荐使用点赞加光芒，与普通推荐保持同一视觉语言。"""
+    assert "strong_recommend" in icons.ICON_REGISTRY
+    image = icons.ICON_REGISTRY["strong_recommend"](40, "white", (0, 0, 0, 0), 3)
+    assert image.size == (40, 40)
+    assert image.getbbox() is not None
+    assert image.getbbox()[2] - image.getbbox()[0] >= 32
+    assert image.getbbox()[3] - image.getbbox()[1] >= 36
+
+
+def test_home_page_strong_recommendation_uses_emphasized_thumb_icon():
+    """首页与筛选结果页统一使用点赞加光芒表达强烈推荐。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    home_block = source[source.index("cards_data = [", source.index("def create_home_page")):]
+    home_block = home_block[:home_block.index("\n\n        self.home_stats_vars")]
+
+    assert '("strong_recommend", "强烈推荐"' in home_block
+    assert '("star", "强烈推荐"' not in home_block
+
+
+def test_home_page_renames_total_candidates_to_passed_filter():
+    """首页第一张卡片展示通过筛选，并使用放大的原双人图案。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    home_block = source[source.index("cards_data = [", source.index("def create_home_page")):]
+    home_block = home_block[:home_block.index("\n\n        self.home_stats_vars")]
+
+    assert '("passed_filter", "通过筛选", "total_home"' in home_block
+    assert '"累计候选人"' not in home_block
+
+
+def test_stats_page_strong_recommendation_uses_emphasized_thumb_icon():
+    """数据统计页与其他页面统一使用点赞加光芒表达强烈推荐。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    stats_block = source[source.index("summary_items = [", source.index("def create_stats_page")):]
+    stats_block = stats_block[:stats_block.index("\n\n        for icon_name")]
+
+    assert '("strong_recommend", "强烈推荐"' in stats_block
+    assert '("star", "强烈推荐"' not in stats_block
+
+
+def test_stats_page_renames_total_candidates_to_passed_filter():
+    """数据统计页第一张卡片展示通过筛选，并使用放大的原双人图案。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    stats_block = source[source.index("summary_items = [", source.index("def create_stats_page")):]
+    stats_block = stats_block[:stats_block.index("\n\n        for icon_name")]
+
+    assert '("passed_filter", "通过筛选", "total"' in stats_block
+    assert '"总候选人"' not in stats_block
+
+
+def test_stats_page_greeted_uses_chat_icon_consistently():
+    """数据统计页与首页、筛选结果页统一使用聊天气泡表示已打招呼。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    stats_block = source[source.index("summary_items = [", source.index("def create_stats_page")):]
+    stats_block = stats_block[:stats_block.index("\n\n        for icon_name")]
+
+    assert '("chat", "已打招呼", "greeted"' in stats_block
+    assert '("mail", "已打招呼", "greeted"' not in stats_block

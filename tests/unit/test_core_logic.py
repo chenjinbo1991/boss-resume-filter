@@ -73,6 +73,116 @@ def test_parse_greet_context_from_detail_url_builds_chat_start_payload():
     }
 
 
+def test_context_capture_skips_candidates_planned_for_immediate_auto_greet():
+    candidates = [
+        {"geek_id": "strong", "name": "强推", "match_score": 80, "recommend_level": "强烈推荐"},
+        {"geek_id": "recommend", "name": "推荐", "match_score": 70, "recommend_level": "推荐"},
+        {"geek_id": "pending", "name": "待定", "match_score": 60, "recommend_level": "待定"},
+        {
+            "geek_id": "review",
+            "name": "待人工",
+            "match_score": 80,
+            "recommend_level": "强烈推荐",
+            "manual_review_required": True,
+        },
+    ]
+
+    selected = bossmaster._select_greet_context_candidates(
+        candidates,
+        auto_greet=True,
+        point_to_point_mode=False,
+        greet_names_list=None,
+        greet_levels_allowed=["强烈推荐", "推荐"],
+        existing_greeted_ids=set(),
+        raw_order_by_geek_id={
+            "strong": 0, "recommend": 1, "pending": 2, "review": 3,
+        },
+    )
+
+    assert {c["geek_id"] for c in selected} == {"pending", "review"}
+
+
+def test_context_capture_keeps_auto_greet_candidates_beyond_run_limit():
+    candidates = [
+        {
+            "geek_id": f"g{i}",
+            "name": f"候选人{i}",
+            "match_score": 80,
+            "recommend_level": "强烈推荐",
+        }
+        for i in range(52)
+    ]
+
+    selected = bossmaster._select_greet_context_candidates(
+        candidates,
+        auto_greet=True,
+        point_to_point_mode=False,
+        greet_names_list=None,
+        greet_levels_allowed=["强烈推荐"],
+        existing_greeted_ids=set(),
+        raw_order_by_geek_id={f"g{i}": i for i in range(52)},
+    )
+
+    assert [c["geek_id"] for c in selected] == ["g50", "g51"]
+
+
+def test_context_capture_priority_selects_value_then_executes_page_order():
+    candidates = [
+        {
+            "geek_id": "old-high", "match_score": 95,
+            "greet_context": {"chat_start": {"jid": "old"}},
+        },
+        {"geek_id": "new-low", "match_score": 60},
+        {"geek_id": "new-high-late", "match_score": 90},
+        {"geek_id": "new-high-early", "match_score": 90},
+    ]
+    page_order = {
+        "old-high": 0,
+        "new-low": 1,
+        "new-high-late": 3,
+        "new-high-early": 2,
+    }
+
+    selected = bossmaster._prioritize_greet_context_candidates(
+        candidates, page_order, limit=3
+    )
+
+    # 名额先给无上下文者；三人入选后，实际执行恢复为页面顺序。
+    assert [c["geek_id"] for c in selected] == [
+        "new-low", "new-high-early", "new-high-late",
+    ]
+
+
+def test_context_refresh_overwrites_old_value_only_after_success():
+    old_context = {"chat_start": {"jid": "old"}}
+    new_context = {"chat_start": {"jid": "new"}}
+    candidate = {
+        "geek_id": "g1", "name": "候选人",
+        "greet_context": old_context,
+        "greet_context_updated_at": "2026-06-18T10:00:00",
+    }
+
+    with patch.object(
+        bossmaster,
+        "_capture_greet_context_from_list_page",
+        side_effect=[(None, "失败"), (new_context, "成功")],
+    ), patch.object(bossmaster.time, "sleep"):
+        first = bossmaster.enrich_greet_contexts_for_candidates(
+            object(), [candidate], max_count=1
+        )
+        assert first == 0
+        assert candidate["greet_context"] == old_context
+        assert candidate["greet_context_updated_at"] == "2026-06-18T10:00:00"
+
+        second = bossmaster.enrich_greet_contexts_for_candidates(
+            object(), [candidate], max_count=1
+        )
+
+    assert second == 1
+    assert candidate["greet_context"] == new_context
+    assert candidate["greet_context_updated_at"] > "2026-06-18T10:00:00"
+
+
 def test_extract_job_salary_range_handles_numeric_and_negotiable_text():
     assert _extract_salary_range("薪资范围：12k-15k") == (12, 15)
     assert _extract_salary_range("月薪: 20K-30K") == (20, 30)
@@ -799,7 +909,9 @@ def test_auto_greet_skips_manual_review_candidates():
          patch.object(bossmaster, "extract_candidates_by_comprehensive_analysis", return_value=raw_candidates), \
          patch.object(bossmaster, "get_iframe", return_value=None), \
          patch.object(bossmaster, "send_greeting_on_list_page") as mock_greet, \
-         patch.object(bossmaster, "save_candidates_all"):
+         patch.object(bossmaster, "save_candidates_all"), \
+         patch.object(bossmaster, "merge_candidates_all"), \
+         patch.object(bossmaster, "persist_candidate_greeted"):
         result = bossmaster.smart_scan_candidates(
             FakePage(),
             job_info,
@@ -843,7 +955,9 @@ def test_auto_greet_uses_page_order_not_score_order():
          patch.object(bossmaster, "_human_delay", return_value=0), \
          patch.object(bossmaster.time, "sleep"), \
          patch.object(bossmaster, "send_greeting_on_list_page", return_value=(True, "成功")) as mock_greet, \
-         patch.object(bossmaster, "save_candidates_all"):
+         patch.object(bossmaster, "save_candidates_all"), \
+         patch.object(bossmaster, "merge_candidates_all"), \
+         patch.object(bossmaster, "persist_candidate_greeted"):
         bossmaster.smart_scan_candidates(
             FakePage(),
             job_info,
@@ -884,7 +998,9 @@ def test_auto_greet_limit_triggers_notice_and_caps_greetings():
          patch.object(bossmaster, "_human_delay", return_value=0), \
          patch.object(bossmaster.time, "sleep"), \
          patch.object(bossmaster, "send_greeting_on_list_page", return_value=(True, "成功")) as mock_greet, \
-         patch.object(bossmaster, "save_candidates_all"):
+         patch.object(bossmaster, "save_candidates_all"), \
+         patch.object(bossmaster, "merge_candidates_all"), \
+         patch.object(bossmaster, "persist_candidate_greeted"):
         bossmaster.smart_scan_candidates(
             FakePage(),
             job_info,

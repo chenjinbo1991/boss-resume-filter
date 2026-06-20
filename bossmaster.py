@@ -56,6 +56,8 @@ from storage import (
     get_greeted_geek_ids,
     is_already_greeted,
     load_candidates_all,
+    merge_candidates_all,
+    persist_candidate_greeted,
     save_candidates_all,
 )
 
@@ -92,7 +94,7 @@ RECOMMEND_PAGE_URL_PARTS = (
 RECOMMEND_PAGE_URL = "https://www.zhipin.com/web/chat/recommend"
 GREET_CONTEXT_VERSION = 1
 GREET_CONTEXT_CAPTURE_LIMIT = 30
-GREET_CONTEXT_MIN_SCORE = 60
+GREET_CONTEXT_MIN_SCORE = SCORE_THRESHOLD_PASS
 GREET_CONTEXT_DELAY_CENTER = 1.2
 GREET_CONTEXT_DELAY_SPREAD = 0.7
 GREET_CONTEXT_BATCH_SIZE = 10
@@ -2430,8 +2432,6 @@ def enrich_greet_contexts_for_candidates(
     for candidate in candidates:
         if stop_event and stop_event.is_set():
             raise StopRequested()
-        if candidate.get("greet_context", {}).get("chat_start"):
-            continue
         geek_id = candidate.get("geek_id")
         if not geek_id:
             continue
@@ -2445,10 +2445,11 @@ def enrich_greet_contexts_for_candidates(
         context, msg = _capture_greet_context_from_list_page(page, str(geek_id), stop_event=stop_event)
         if context:
             candidate["greet_context"] = context
+            candidate["greet_context_updated_at"] = datetime.now().isoformat(timespec="seconds")
             enriched += 1
-            print(f"  已保存 {candidate.get('name', '候选人')} 的打招呼上下文")
+            print(f"  已更新 {candidate.get('name', '候选人')} 的打招呼上下文")
         else:
-            print(f"  未保存 {candidate.get('name', '候选人')} 的打招呼上下文：{msg}")
+            print(f"  未更新 {candidate.get('name', '候选人')} 的打招呼上下文：{msg}")
         time.sleep(_human_delay(GREET_CONTEXT_DELAY_CENTER, GREET_CONTEXT_DELAY_SPREAD))
     return enriched
 
@@ -3023,6 +3024,70 @@ def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
 
     return results
 
+def _select_greet_context_candidates(
+    passed_candidates: list[dict[str, Any]],
+    *,
+    auto_greet: bool,
+    point_to_point_mode: bool,
+    greet_names_list: list[str] | None,
+    greet_levels_allowed: list[str],
+    existing_greeted_ids: set[str],
+    raw_order_by_geek_id: dict[str, int],
+) -> list[dict[str, Any]]:
+    """选择本轮不会自动发送、但后续可能需要手工补发的候选人。"""
+    if point_to_point_mode:
+        planned_auto_greet = [
+            c for c in passed_candidates
+            if c.get('name') in (greet_names_list or [])
+            and c.get('geek_id') not in existing_greeted_ids
+        ]
+    else:
+        planned_auto_greet = [
+            c for c in passed_candidates
+            if c.get('recommend_level') in greet_levels_allowed
+            and c.get('geek_id') not in existing_greeted_ids
+            and not c.get('manual_review_required')
+        ]
+    planned_auto_greet.sort(
+        key=lambda x: raw_order_by_geek_id.get(
+            str(x.get('geek_id')), len(raw_order_by_geek_id)
+        )
+    )
+    planned_ids = {
+        c.get('geek_id')
+        for c in planned_auto_greet[:AUTO_GREET_RUN_LIMIT]
+    } if auto_greet else set()
+
+    return [
+        c for c in passed_candidates
+        if c.get('geek_id') not in existing_greeted_ids
+        and c.get('geek_id') not in planned_ids
+        and c.get('match_score', 0) >= GREET_CONTEXT_MIN_SCORE
+    ]
+
+
+def _prioritize_greet_context_candidates(
+    candidates: list[dict[str, Any]],
+    raw_order_by_geek_id: dict[str, int],
+    limit: int = GREET_CONTEXT_CAPTURE_LIMIT,
+) -> list[dict[str, Any]]:
+    """按业务价值选名额，再按页面顺序返回实际执行队列。"""
+    ranked = sorted(candidates, key=lambda c: (
+        bool((c.get('greet_context') or {}).get('chat_start')),
+        -float(c.get('match_score', 0) or 0),
+        raw_order_by_geek_id.get(
+            str(c.get('geek_id')), len(raw_order_by_geek_id)
+        ),
+    ))
+    selected = ranked[:limit]
+    return sorted(
+        selected,
+        key=lambda c: raw_order_by_geek_id.get(
+            str(c.get('geek_id')), len(raw_order_by_geek_id)
+        ),
+    )
+
+
 def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUNDS_DEFAULT, verbose=False, greet_level='normal', greet_names_list=None, list_candidates=False, progress_callback=None, stop_event=None, ai_eval=False, api_config=None, api_key=None, captcha_callback=None, notice_callback=None, blocking_notice_callback=None, stats=None, max_candidates=API_CANDIDATE_LIMIT_DEFAULT, use_api_extraction=True, extraction_mode=None):
     """
     智能扫描候选人 - 两阶段模式
@@ -3325,29 +3390,33 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         llm_count = sum(1 for c in passed_candidates if c.get('llm_evaluated'))
         print(f"AI 评估完成：{llm_count} 人已评估")
 
-    # === 阶段 1.6: 为可打招呼候选人补抓详情页打招呼上下文（最佳努力）===
-    # 注意：manual_review_required 不参与过滤。greet_context 是只读采集，
-    # 真正的发送闸门在自动打招呼（bossmaster.py:3326/3628）和 GUI 手动确认
-    # （gui_main.py:9362），确保人工核实通过后立即可用上下文发送。
-    context_candidates = [
-        c for c in passed_candidates
-        if c.get('geek_id') not in existing_ids_for_job_and_greeted
-        and not c.get('greet_context', {}).get('chat_start')
-        and c.get('match_score', 0) >= GREET_CONTEXT_MIN_SCORE
-    ]
+    # === 阶段 1.6: 为后续可能补打招呼的候选人捕获上下文（最佳努力）===
+    # 本轮确定会自动发送的候选人无需提前抓取；被模式、人工确认或单轮上限
+    # 排除的人仍保存上下文，方便后续从筛选结果页直接发送。
+    context_candidates = _select_greet_context_candidates(
+        passed_candidates,
+        auto_greet=auto_greet,
+        point_to_point_mode=point_to_point_mode,
+        greet_names_list=greet_names_list,
+        greet_levels_allowed=greet_levels_allowed,
+        existing_greeted_ids=existing_ids_for_job_and_greeted,
+        raw_order_by_geek_id=raw_order_by_geek_id,
+    )
+    context_candidates = _prioritize_greet_context_candidates(
+        context_candidates,
+        raw_order_by_geek_id,
+    )
     if context_candidates and not list_candidates and hasattr(page, "listen"):
         print(f"\n=== 阶段 1.6: 捕获打招呼上下文（共 {len(context_candidates)} 人，最佳努力）===")
-        context_candidates.sort(key=lambda x: raw_order_by_geek_id.get(str(x.get('geek_id')), len(raw_order_by_geek_id)))
         enriched_count = enrich_greet_contexts_for_candidates(
             page,
             context_candidates,
             stop_event=stop_event,
-            max_count=GREET_CONTEXT_CAPTURE_LIMIT,
+            max_count=None,
         )
-        for c in context_candidates:
-            if c.get('greet_context') and not c.get('greet_context_updated_at'):
-                c['greet_context_updated_at'] = datetime.now().isoformat(timespec="seconds")
-        print(f"打招呼上下文捕获完成：成功 {enriched_count}/{min(len(context_candidates), GREET_CONTEXT_CAPTURE_LIMIT)} 人")
+        if enriched_count:
+            merge_candidates_all(context_candidates)
+        print(f"打招呼上下文捕获完成：成功 {enriched_count}/{len(context_candidates)} 人")
 
     # === 仅列出候选人，不打招呼 ===
     if list_candidates and passed_candidates:
@@ -3463,8 +3532,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 if success:
                     greet_success_count += 1
                     consecutive_failures = 0  # 重置连续失败计数
-                    candidate['greet_sent'] = True
-                    candidate['followup_status'] = "已打招呼"
+                    persist_candidate_greeted(candidate, "auto_list")
                     candidates_all.append(candidate)
                     greeted_in_this_run.append(candidate['geek_id'])
                     print(f"OK")
@@ -3497,7 +3565,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         except KeyboardInterrupt:
             print(f"\n\n⚠️  检测到中断，保存当前进度...")
             # 中断时立即保存所有数据
-            save_candidates_all(candidates_all)
+            merge_candidates_all(candidates_all)
             if greeted_in_this_run:
                 print(f"  本次运行已打招呼 {len(greeted_in_this_run)} 人")
             print(f"✅ 候选人总数：{len(candidates_all)}")
@@ -3513,7 +3581,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             if c.get('geek_id') not in existing_index:
                 candidates_all.append(c)
                 existing_index[c.get('geek_id')] = c
-    save_candidates_all(candidates_all)
+    merge_candidates_all(candidates_all)
 
     if stats is not None:
         stats['raw_count'] = len(raw_candidates)
@@ -3763,7 +3831,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                 print(f"待确认：{msg}")
                             else:
                                 success_count += 1
-                                c['greet_sent'] = True
+                                persist_candidate_greeted(c, "regreet_list")
                                 print("OK")
                         else:
                             fail_count += 1
@@ -3779,7 +3847,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
                 except KeyboardInterrupt:
                     print(f"\n\n检测到中断，保存当前进度...")
-                    save_candidates_all(candidates_all)
+                    merge_candidates_all(candidates_all)
                     # 生成 Excel 文件
                     if export_to_excel(candidates_all, CANDIDATES_XLSX_PATH):
                         print(f"[SAVE] Excel 文件：{CANDIDATES_XLSX_PATH.name}")
@@ -3787,6 +3855,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                     raise
 
                 print(f"\n补打招呼完成：成功 {success_count} 人，失败 {fail_count} 人，待确认 {skip_count} 人")
+                merge_candidates_all(candidates_all)
                 print(f"已更新 candidates_all.json")
 
         print("\n--- 浏览器保持打开 ---")

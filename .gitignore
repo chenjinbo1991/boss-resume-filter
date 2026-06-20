@@ -37,6 +37,7 @@ build/
 *.log
 debug_*.py
 debug_*.log
+tmp/
 build_log*.txt
 test_output.txt
 *.html

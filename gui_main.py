@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.12.1"
+__version__ = "2.12.2"
 
 import json
 import logging
@@ -33,7 +33,7 @@ from constants import (
     SCORE_THRESHOLD_STRONG,
     USER_AGENT,
 )
-from storage import save_candidates_all
+from storage import persist_candidate_greeted, mark_candidate_greeted, save_candidates_all
 import gui_dialogs
 
 # ========== 路径常量 - 解决相对路径问题 ==========
@@ -754,6 +754,9 @@ class BossFilterGUI:
         self._selectors_auto_checked = False  # 连接后选择器是否已自动检查
         self._pending_manual_check = False  # 待处理的手动检测请求
         self._pending_chrome_restart = False  # 待处理的 Chrome 重启请求
+        # DrissionPage 4.1.1.2 的 Chromium 单例初始化不是完整原子的：
+        # 并发构造 ChromiumPage 时，后一个线程可能拿到尚无 _dl_mgr 的半初始化对象。
+        self._browser_connection_lock = threading.Lock()
 
         # 右键菜单引用列表（统一销毁）
         self._context_menus = []
@@ -887,6 +890,7 @@ class BossFilterGUI:
             'warning': '#FB8C00',       # 警告橙
             'danger': '#E53935',        # 危险红
             'purple': '#8E24AA',        # 紫色
+            'pending': '#546E7A',       # 待定蓝灰色
             'bg_main': '#F8F9FA',       # 主背景
             'bg_card': '#FFFFFF',       # 卡片背景
             'bg_input': '#FAFAFA',      # 输入框背景
@@ -1454,8 +1458,8 @@ class BossFilterGUI:
 
         # 卡片数据
         cards_data = [
-            ("people", "累计候选人", "total_home", self.colors['primary']),
-            ("star", "强烈推荐", "strong_home", self.colors['purple']),
+            ("passed_filter", "通过筛选", "total_home", self.colors['primary']),
+            ("strong_recommend", "强烈推荐", "strong_home", self.colors['purple']),
             ("thumbs_up", "推荐", "recommended_home", self.colors['success']),
             ("chat", "已打招呼", "greeted_home", self.colors['warning']),
         ]
@@ -3049,9 +3053,10 @@ class BossFilterGUI:
         self.result_stats_greeted = {}
         self.result_stats_click = {}
         stats_data = [
-            ("people", "通过筛选", "passed", self.colors['primary']),
-            ("star", "强烈推荐", "strong", self.colors['purple']),
+            ("strong_recommend", "强烈推荐", "strong", self.colors['purple']),
             ("thumbs_up", "推荐", "recommended", self.colors['success']),
+            ("hourglass", "待定", "pending", self.colors['pending']),
+            ("chat", "已打招呼", "greeted", self.colors['warning']),
         ]
 
         for icon_name, label_text, var_name, color in stats_data:
@@ -3080,7 +3085,9 @@ class BossFilterGUI:
             value_label.pack(anchor="center", pady=(0, int(2 * self.dpi_scale * self.zoom_factor)))
 
             # 已打招呼
-            greeted_var = tk.StringVar(value="0 已打招呼")
+            greeted_var = tk.StringVar(
+                value="通过筛选中" if var_name == "greeted" else "0 已打招呼"
+            )
             self.result_stats_greeted[var_name] = greeted_var
             greeted_label = ttk.Label(card_frame, textvariable=greeted_var,
                                      font=(FONT_FAMILY, int(10 * self.font_scale)),
@@ -3251,10 +3258,10 @@ class BossFilterGUI:
 
         self.stats_summary_vars = {}
         summary_items = [
-            ("people", "总候选人", "total", self.colors['primary']),
-            ("star", "强烈推荐", "strong", self.colors['purple']),
+            ("passed_filter", "通过筛选", "total", self.colors['primary']),
+            ("strong_recommend", "强烈推荐", "strong", self.colors['purple']),
             ("thumbs_up", "推荐", "recommended", self.colors['success']),
-            ("mail", "已打招呼", "greeted", self.colors['warning']),
+            ("chat", "已打招呼", "greeted", self.colors['warning']),
         ]
 
         for icon_name, label_text, var_name, color in summary_items:
@@ -3829,7 +3836,7 @@ class BossFilterGUI:
 
             # 根据类型筛选候选人（只统计通过分）
             if stat_type == 'total_home':
-                title = "累计候选人"
+                title = "通过筛选"
                 filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS]
             elif stat_type == 'strong_home':
                 title = "强烈推荐"
@@ -3933,94 +3940,49 @@ class BossFilterGUI:
                     return
                 tree.selection_set(clicked_item)
 
-                context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
-                menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
-                icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
-                icon_blacklist = self.icons.button('close', self.colors['danger'])
-                icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
-                icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+                # 从 filtered_ref 中定位候选人
+                vals = tree.item(clicked_item, 'values')
+                candidate = None
+                for c in filtered_ref[0]:
+                    if c.get('name') == vals[0] and str(c.get('match_score', '')) == str(vals[4]):
+                        candidate = c
+                        break
+                if not candidate:
+                    return
 
                 def show_detail():
-                    vals = tree.item(clicked_item, 'values')
-                    if vals:
-                        for c in filtered_ref[0]:
-                            if c.get('name') == vals[0]:
-                                d_win = tk.Toplevel(detail_window)
-                                d_win.title("候选人详情")
-                                d_win.transient(detail_window)
-                                d_win.withdraw()
-                                d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
-                                ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
-                                         foreground=self.colors['primary']).pack(pady=15)
-                                tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
-                                tw.pack(fill='both', expand=True, padx=20, pady=10)
-                                tw.insert('1.0', self._format_candidate_detail(c))
-                                self.bind_text_context_menu(tw, editable=False)
-                                _place_window_centered(d_win, 1000, 880, parent=self.root)
-                                d_win.deiconify()
-                                break
+                    d_win = tk.Toplevel(detail_window)
+                    d_win.title("候选人详情")
+                    d_win.transient(detail_window)
+                    d_win.withdraw()
+                    d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
+                    ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
+                             foreground=self.colors['primary']).pack(pady=15)
+                    tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
+                    tw.pack(fill='both', expand=True, padx=20, pady=10)
+                    tw.insert('1.0', self._format_candidate_detail(candidate))
+                    self.bind_text_context_menu(tw, editable=False)
+                    _place_window_centered(d_win, 1000, 880, parent=self.root)
+                    d_win.deiconify()
 
                 def remove_candidate():
                     if not messagebox.askyesno("确认删除", "确定要移除该候选人吗？"):
                         return
-                    vals = tree.item(clicked_item, 'values')
-                    name = vals[0]
-                    score = vals[4]
-                    # 通过 name+score 精确定位候选人，获取 geek_id
-                    target_geek_id = None
-                    for c in filtered_ref[0]:
-                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
-                            target_geek_id = c.get('geek_id')
-                            break
-                    if not target_geek_id:
+                    geek_id = candidate.get('geek_id')
+                    if not geek_id:
                         return
-                    # 从当前过滤列表中移除（用 geek_id 精确匹配，避免同名误删）
-                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target_geek_id]
-                    # 从 JSON 中移除
+                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != geek_id]
                     if CANDIDATES_PATH.exists():
                         with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                             candidates = json.load(f)
-                        candidates = [c for c in candidates if c.get('geek_id') != target_geek_id]
+                        candidates = [c for c in candidates if c.get('geek_id') != geek_id]
                         save_candidates_all(candidates, CANDIDATES_PATH)
-                    # 从表格中移除行
                     tree.delete(clicked_item)
-                    # 更新弹窗内统计标签
-                    new_total = len(filtered_ref[0])
                     new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
                     count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
-                    # 刷新主界面统计
                     self.refresh_home_stats()
                     self.refresh_results()
-                    # 保持弹窗焦点
                     detail_window.lift()
-
-                def blacklist_candidate():
-                    vals = tree.item(clicked_item, 'values')
-                    name = vals[0]
-                    score = vals[4]
-                    target = None
-                    for c in filtered_ref[0]:
-                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
-                            target = c
-                            break
-                    if not target:
-                        return
-                    def save_blacklist(reason):
-                        updated = self._update_candidate_blacklist(target.get('geek_id'), reason)
-                        if not updated:
-                            messagebox.showerror("错误", "加入黑名单失败：未找到候选人", parent=detail_window)
-                            return
-                        filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target.get('geek_id')]
-                        tree.delete(clicked_item)
-                        new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
-                        count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
-                        self._regenerate_excel()
-                        self.refresh_home_stats()
-                        self.refresh_stats()
-                        self.refresh_results()
-                        detail_window.lift()
-
-                    self._open_blacklist_reason_dialog(target, detail_window, save_blacklist)
 
                 def export_selected():
                     selection = tree.selection()
@@ -4051,13 +4013,23 @@ class BossFilterGUI:
                         export_to_excel(selected_data, file_path)
                         messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
 
-                menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
-                menu.add_command(label=" 加入黑名单", image=icon_blacklist, compound=tk.LEFT, command=blacklist_candidate)
-                menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=remove_candidate)
-                menu.add_separator()
-                menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=export_selected)
-                menu._icon_refs = [icon_detail, icon_blacklist, icon_trash_menu, icon_export_menu]
-                menu.tk_popup(event.x_root, event.y_root)
+                def detail_refresh():
+                    self.refresh_home_stats()
+                    self.refresh_results()
+                    detail_window.lift()
+
+                self._build_candidate_context_menu(
+                    parent=detail_window,
+                    tree=tree,
+                    tree_item=clicked_item,
+                    candidate=candidate,
+                    show_detail_fn=show_detail,
+                    remove_fn=remove_candidate,
+                    export_fn=export_selected,
+                    refresh_fn=detail_refresh,
+                    x_root=event.x_root,
+                    y_root=event.y_root,
+                )
 
             tree.bind('<Button-3>', on_detail_right_click)
             self._bind_detail_tree_tooltip(tree, filtered_ref)
@@ -4164,13 +4136,7 @@ class BossFilterGUI:
                 candidates = [c for c in candidates if _in_date_range(c)]
 
             # 根据类型筛选候选人
-            if stat_type == 'passed':
-                # 通过筛选：强烈推荐 + 推荐
-                title = "通过筛选"
-                filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_RECOMMEND]
-                # 只显示已打招呼的
-                detail_type = 'greeted'
-            elif stat_type == 'strong':
+            if stat_type == 'strong':
                 # 强烈推荐
                 title = "强烈推荐"
                 filtered = [c for c in candidates if c.get('match_score', 0) >= SCORE_THRESHOLD_STRONG]
@@ -4179,6 +4145,19 @@ class BossFilterGUI:
                 # 推荐
                 title = "推荐"
                 filtered = [c for c in candidates if SCORE_THRESHOLD_RECOMMEND <= c.get('match_score', 0) < SCORE_THRESHOLD_STRONG]
+                detail_type = 'all'
+            elif stat_type == 'pending':
+                # 待定
+                title = "待定"
+                filtered = [c for c in candidates if SCORE_THRESHOLD_PASS <= c.get('match_score', 0) < SCORE_THRESHOLD_RECOMMEND]
+                detail_type = 'all'
+            elif stat_type == 'greeted':
+                title = "已打招呼"
+                filtered = [
+                    c for c in candidates
+                    if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS
+                    and c.get('greet_sent', False)
+                ]
                 detail_type = 'all'
             else:
                 return
@@ -4315,89 +4294,48 @@ class BossFilterGUI:
                     return
                 tree.selection_set(clicked_item)
 
-                context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
-                menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
-                icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
-                icon_blacklist = self.icons.button('close', self.colors['danger'])
-                icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
-                icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+                # 从 filtered_ref 中定位候选人
+                vals = tree.item(clicked_item, 'values')
+                candidate = None
+                for c in filtered_ref[0]:
+                    if c.get('name') == vals[0] and str(c.get('match_score', '')) == str(vals[4]):
+                        candidate = c
+                        break
+                if not candidate:
+                    return
 
                 def show_detail():
-                    vals = tree.item(clicked_item, 'values')
-                    if vals:
-                        for c in filtered_ref[0]:
-                            if c.get('name') == vals[0]:
-                                d_win = tk.Toplevel(detail_window)
-                                d_win.title("候选人详情")
-                                d_win.transient(detail_window)
-                                d_win.withdraw()
-                                d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
-                                ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
-                                         foreground=self.colors['primary']).pack(pady=15)
-                                tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
-                                tw.pack(fill='both', expand=True, padx=20, pady=10)
-                                tw.insert('1.0', self._format_candidate_detail(c))
-                                self.bind_text_context_menu(tw, editable=False)
-                                _place_window_centered(d_win, 1000, 880, parent=self.root)
-                                d_win.deiconify()
-                                break
+                    d_win = tk.Toplevel(detail_window)
+                    d_win.title("候选人详情")
+                    d_win.transient(detail_window)
+                    d_win.withdraw()
+                    d_title = f"姓名：{vals[0]} | 匹配分：{vals[4]} | {vals[6]}"
+                    ttk.Label(d_win, text=d_title, font=(FONT_FAMILY, 16),
+                             foreground=self.colors['primary']).pack(pady=15)
+                    tw = tk.Text(d_win, wrap='word', font=(FONT_FAMILY, 14))
+                    tw.pack(fill='both', expand=True, padx=20, pady=10)
+                    tw.insert('1.0', self._format_candidate_detail(candidate))
+                    self.bind_text_context_menu(tw, editable=False)
+                    _place_window_centered(d_win, 1000, 880, parent=self.root)
+                    d_win.deiconify()
 
                 def remove_candidate():
                     if not messagebox.askyesno("确认删除", "确定要移除该候选人吗？"):
                         return
-                    vals = tree.item(clicked_item, 'values')
-                    name = vals[0]
-                    score = vals[4]
-                    target_geek_id = None
-                    for c in filtered_ref[0]:
-                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
-                            target_geek_id = c.get('geek_id')
-                            break
-                    if not target_geek_id:
+                    geek_id = candidate.get('geek_id')
+                    if not geek_id:
                         return
-                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target_geek_id]
+                    filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != geek_id]
                     if CANDIDATES_PATH.exists():
                         with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
                             candidates_all = json.load(f)
-                        candidates_all = [c for c in candidates_all if c.get('geek_id') != target_geek_id]
+                        candidates_all = [c for c in candidates_all if c.get('geek_id') != geek_id]
                         save_candidates_all(candidates_all, CANDIDATES_PATH)
                     tree.delete(clicked_item)
-                    # 更新弹窗内统计标签
-                    new_total = len(filtered_ref[0])
                     new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
                     count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
-                    # 刷新主界面
                     self.refresh_results()
-                    # 保持弹窗焦点
                     detail_window.lift()
-
-                def blacklist_candidate():
-                    vals = tree.item(clicked_item, 'values')
-                    name = vals[0]
-                    score = vals[4]
-                    target = None
-                    for c in filtered_ref[0]:
-                        if c.get('name') == name and str(c.get('match_score', '')) == str(score):
-                            target = c
-                            break
-                    if not target:
-                        return
-                    def save_blacklist(reason):
-                        updated = self._update_candidate_blacklist(target.get('geek_id'), reason)
-                        if not updated:
-                            messagebox.showerror("错误", "加入黑名单失败：未找到候选人", parent=detail_window)
-                            return
-                        filtered_ref[0] = [c for c in filtered_ref[0] if c.get('geek_id') != target.get('geek_id')]
-                        tree.delete(clicked_item)
-                        new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
-                        count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
-                        self._regenerate_excel()
-                        self.refresh_home_stats()
-                        self.refresh_stats()
-                        self.refresh_results()
-                        detail_window.lift()
-
-                    self._open_blacklist_reason_dialog(target, detail_window, save_blacklist)
 
                 def export_selected():
                     selection = tree.selection()
@@ -4428,13 +4366,22 @@ class BossFilterGUI:
                         export_to_excel(selected_data, file_path)
                         messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
 
-                menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=show_detail)
-                menu.add_command(label=" 加入黑名单", image=icon_blacklist, compound=tk.LEFT, command=blacklist_candidate)
-                menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=remove_candidate)
-                menu.add_separator()
-                menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=export_selected)
-                menu._icon_refs = [icon_detail, icon_blacklist, icon_trash_menu, icon_export_menu]
-                menu.tk_popup(event.x_root, event.y_root)
+                def detail_refresh():
+                    self.refresh_results()
+                    detail_window.lift()
+
+                self._build_candidate_context_menu(
+                    parent=detail_window,
+                    tree=tree,
+                    tree_item=clicked_item,
+                    candidate=candidate,
+                    show_detail_fn=show_detail,
+                    remove_fn=remove_candidate,
+                    export_fn=export_selected,
+                    refresh_fn=detail_refresh,
+                    x_root=event.x_root,
+                    y_root=event.y_root,
+                )
 
             tree.bind('<Button-3>', on_result_detail_right_click)
             self._bind_detail_tree_tooltip(tree, filtered_ref)
@@ -7015,16 +6962,28 @@ class BossFilterGUI:
 
     def update_log(self):
         """更新日志显示"""
+        log_text = getattr(self, 'log_text', None)
+        if log_text is None:
+            try:
+                self.root.after(100, self.update_log)
+            except tk.TclError:
+                pass
+            return
         try:
             while True:
                 message = self.log_queue.get_nowait()
-                self.log_text.config(state="normal")
-                self.log_text.insert(tk.END, message + "\n")
-                self.log_text.see(tk.END)
-                self.log_text.config(state="disabled")
+                log_text.config(state="normal")
+                log_text.insert(tk.END, message + "\n")
+                log_text.see(tk.END)
+                log_text.config(state="disabled")
         except queue.Empty:
             pass
-        self.root.after(100, self.update_log)
+        except tk.TclError:
+            return
+        try:
+            self.root.after(100, self.update_log)
+        except tk.TclError:
+            pass
 
     def _auto_check_selectors(self):
         """连接成功后自动检查选择器健康状态（仅在 check() 工作线程中调用）
@@ -7108,7 +7067,11 @@ class BossFilterGUI:
         self._browser_check_running = True
 
         def check():
+            connection_lock_acquired = False
             try:
+                connection_lock_acquired = self._browser_connection_lock.acquire(blocking=False)
+                if not connection_lock_acquired:
+                    return
                 if not silent:
                     self.append_log("正在检测浏览器连接...")
 
@@ -7476,6 +7439,8 @@ class BossFilterGUI:
                         self._auto_check_selectors()
                     except Exception:
                         pass  # 选择器检查失败不影响主流程
+                if connection_lock_acquired:
+                    self._browser_connection_lock.release()
                 self._browser_check_running = False
                 # 注意：不在此处调用 root.after()（后台线程不安全）
                 # _pending_manual_check 标志保留为 True，由主线程的 auto-poll 拾取
@@ -7949,18 +7914,28 @@ class BossFilterGUI:
                 recommended_total = len(recommended_list)
                 recommended_greeted = sum(1 for c in recommended_list if c.get('greet_sent', False))
 
-                # 通过筛选 = 强烈推荐 + 推荐
-                passed_total = strong_total + recommended_total
-                passed_greeted = strong_greeted + recommended_greeted
+                # 待定：匹配分>=SCORE_THRESHOLD_PASS 且<SCORE_THRESHOLD_RECOMMEND
+                pending_list = [c for c in candidates if SCORE_THRESHOLD_PASS <= c.get('match_score', 0) < SCORE_THRESHOLD_RECOMMEND]
+                pending_total = len(pending_list)
+                pending_greeted = sum(1 for c in pending_list if c.get('greet_sent', False))
+
+                # 已打招呼：全部通过筛选候选人中已完成沟通的人
+                greeted_total = sum(
+                    1 for c in candidates
+                    if c.get('match_score', 0) >= SCORE_THRESHOLD_PASS
+                    and c.get('greet_sent', False)
+                )
 
                 # 更新统计卡片
-                self.result_stats_vars['passed'].set(str(passed_total))
                 self.result_stats_vars['strong'].set(str(strong_total))
                 self.result_stats_vars['recommended'].set(str(recommended_total))
+                self.result_stats_vars['pending'].set(str(pending_total))
+                self.result_stats_vars['greeted'].set(str(greeted_total))
                 # 更新已打招呼数
-                self.result_stats_greeted['passed'].set(f"{passed_greeted} 已打招呼")
                 self.result_stats_greeted['strong'].set(f"{strong_greeted} 已打招呼")
                 self.result_stats_greeted['recommended'].set(f"{recommended_greeted} 已打招呼")
+                self.result_stats_greeted['pending'].set(f"{pending_greeted} 已打招呼")
+                self.result_stats_greeted['greeted'].set("通过筛选中")
 
                 for item in self.result_tree.get_children():
                     self.result_tree.delete(item)
@@ -8347,55 +8322,90 @@ class BossFilterGUI:
 
     def _show_context_menu(self, event):
         """显示右键菜单"""
-        # 选中点击项
         item = self.result_tree.identify_row(event.y)
-        if item:
-            self.result_tree.selection_set(item)
+        if not item:
+            return
+        self.result_tree.selection_set(item)
+        candidate = self._find_candidate_by_tree_item(item)
+        if not candidate:
+            return
+        self._build_candidate_context_menu(
+            parent=self.root,
+            tree=self.result_tree,
+            tree_item=item,
+            candidate=candidate,
+            show_detail_fn=lambda: self._show_candidate_detail(item),
+            remove_fn=lambda: self._remove_candidate(item),
+            export_fn=lambda: self._export_selected(),
+            refresh_fn=lambda: (self.refresh_results(), self.refresh_home_stats()),
+            x_root=event.x_root,
+            y_root=event.y_root,
+        )
 
-            # 创建菜单
-            context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
-            menu = tk.Menu(self.root, tearoff=0, font=context_menu_font)
-            icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
-            icon_greet = self.icons.button('play', self.colors['success'])
-            icon_followup = self.icons.button('chat', self.colors['primary'])
-            icon_feedback = self.icons.button('check', self.colors['primary'])
-            icon_blacklist = self.icons.button('close', self.colors['danger'])
-            icon_unblacklist = self.icons.button('check', self.colors['success'])
-            icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
-            icon_export_menu = self.icons.button('export', self.colors['text_primary'])
-            menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT, command=lambda: self._show_candidate_detail(item))
-            icon_document = self.icons.button('document', self.colors['primary'])
-            menu.add_command(label=" 导入简历", image=icon_document, compound=tk.LEFT, command=lambda: self._import_resume(item))
+    def _build_candidate_context_menu(self, parent, tree, tree_item, candidate,
+                                       show_detail_fn, remove_fn, export_fn,
+                                       refresh_fn, x_root, y_root):
+        """构建候选人右键菜单（筛选结果页和详细列表窗口共用）。"""
+        context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
+        menu = tk.Menu(parent, tearoff=0, font=context_menu_font)
 
-            # 打招呼：仅对未打招呼的候选人显示
-            candidate_for_menu = self._find_candidate_by_tree_item(item)
+        icon_detail = self.icons.button('clipboard', self.colors['text_primary'])
+        icon_document = self.icons.button('document', self.colors['primary'])
+        icon_greet = self.icons.button('play', self.colors['success'])
+        icon_followup = self.icons.button('chat', self.colors['primary'])
+        icon_feedback = self.icons.button('check', self.colors['primary'])
+        icon_blacklist = self.icons.button('close', self.colors['danger'])
+        icon_unblacklist = self.icons.button('check', self.colors['success'])
+        icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
+        icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+        icon_undo = self.icons.button('refresh', self.colors['text_primary'])
 
-            # 撤销简历评估：仅对有简历评估数据的候选人显示
-            if candidate_for_menu and candidate_for_menu.get('resume_eval_adjustment') is not None:
-                icon_undo = self.icons.button('refresh', self.colors['text_primary'])
-                menu.add_command(label=" 撤销简历评估", image=icon_undo, compound=tk.LEFT, command=lambda: self._revert_resume_eval(item))
+        icon_refs = [icon_detail, icon_document, icon_greet, icon_followup,
+                     icon_feedback, icon_blacklist, icon_unblacklist,
+                     icon_trash_menu, icon_export_menu, icon_undo]
+        menu._icon_refs = icon_refs
 
-            if candidate_for_menu and not candidate_for_menu.get('greet_sent', False):
-                menu.add_command(label=" 打招呼", image=icon_greet, compound=tk.LEFT, command=lambda: self._greet_single_candidate(item))
+        menu.add_command(label=" 查看详情", image=icon_detail, compound=tk.LEFT,
+                         command=show_detail_fn)
+        menu.add_command(label=" 导入简历", image=icon_document, compound=tk.LEFT,
+                         command=lambda: self._import_resume(
+                             None, candidate=candidate, parent=parent,
+                             tree=tree, tree_item=tree_item))
 
-            menu.add_command(label=" 更新跟进", image=icon_followup, compound=tk.LEFT, command=lambda: self._mark_candidate_followup(item))
-            menu.add_command(label=" 标记反馈", image=icon_feedback, compound=tk.LEFT, command=lambda: self._mark_candidate_feedback(item))
-            # 黑名单/移出黑名单：根据候选人状态动态显示
-            if candidate_for_menu and candidate_for_menu.get('blacklisted'):
-                menu.add_command(label=" 移出黑名单", image=icon_unblacklist, compound=tk.LEFT, command=lambda: self._unblacklist_candidate(item))
-            else:
-                menu.add_command(label=" 加入黑名单", image=icon_blacklist, compound=tk.LEFT, command=lambda: self._blacklist_candidate(item))
-            menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT, command=lambda: self._remove_candidate(item))
-            menu.add_separator()
-            menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT, command=lambda: self._export_selected())
+        if candidate.get('resume_eval_adjustment') is not None:
+            menu.add_command(label=" 撤销简历评估", image=icon_undo, compound=tk.LEFT,
+                             command=lambda: self._revert_resume_eval(
+                                 None, candidate=candidate, parent=parent))
 
-            # 保持引用防止 GC
-            menu._icon_refs = [icon_detail, icon_document, icon_greet, icon_followup, icon_feedback, icon_blacklist, icon_unblacklist, icon_trash_menu, icon_export_menu]
-            if candidate_for_menu and candidate_for_menu.get('resume_eval_adjustment') is not None:
-                menu._icon_refs.append(icon_undo)
+        if not candidate.get('greet_sent', False):
+            menu.add_command(label=" 打招呼", image=icon_greet, compound=tk.LEFT,
+                             command=lambda: self._greet_single_candidate(
+                                 None, candidate=candidate, parent=parent,
+                                 tree=tree, tree_item=tree_item))
 
-            # 显示菜单
-            menu.tk_popup(event.x_root, event.y_root)
+        menu.add_command(label=" 更新跟进", image=icon_followup, compound=tk.LEFT,
+                         command=lambda: self._mark_candidate_followup(
+                             None, candidate=candidate, parent=parent))
+        menu.add_command(label=" 标记反馈", image=icon_feedback, compound=tk.LEFT,
+                         command=lambda: self._mark_candidate_feedback(
+                             None, candidate=candidate, parent=parent))
+
+        if candidate.get('blacklisted'):
+            menu.add_command(label=" 移出黑名单", image=icon_unblacklist, compound=tk.LEFT,
+                             command=lambda: self._unblacklist_candidate(
+                                 None, candidate=candidate, parent=parent))
+        else:
+            menu.add_command(label=" 加入黑名单", image=icon_blacklist, compound=tk.LEFT,
+                             command=lambda: self._blacklist_candidate(
+                                 None, candidate=candidate, parent=parent))
+
+        menu.add_command(label=" 移除此人", image=icon_trash_menu, compound=tk.LEFT,
+                         command=remove_fn)
+        menu.add_separator()
+        menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT,
+                         command=export_fn)
+
+        menu.tk_popup(x_root, y_root)
 
     def _find_candidate_by_tree_item(self, item):
         """按结果表选中行定位候选人记录。"""
@@ -8407,6 +8417,14 @@ class BossFilterGUI:
         for c in getattr(self, 'result_tree_data', []):
             if c.get('name') == name and str(c.get('match_score', '')) == str(score):
                 return c
+        return None
+
+    def _resolve_candidate(self, item=None, candidate=None):
+        """统一候选人定位：优先用已解析的 dict，否则按 tree item 查找。"""
+        if candidate is not None:
+            return candidate
+        if item is not None:
+            return self._find_candidate_by_tree_item(item)
         return None
 
     def _extract_extra_fields(self, candidate):
@@ -8487,10 +8505,6 @@ class BossFilterGUI:
         if not followup_status:
             followup_status = "已打招呼" if candidate.get('greet_sent', False) else "未沟通"
         status_parts = [followup_status]
-        # 未打招呼但有打招呼上下文 → 可直接 API 发送，不依赖浏览器停留在推荐页
-        if (not candidate.get('greet_sent')
-                and (candidate.get('greet_context') or {}).get('chat_start')):
-            status_parts.append("可直发")
         if candidate.get('manual_review_required'):
             status_parts.append("需人工确认")
         if candidate.get('feedback_status'):
@@ -8500,6 +8514,19 @@ class BossFilterGUI:
         full = "｜".join(status_parts)
         candidate['_full_status'] = full
         return full
+
+    @staticmethod
+    def _get_greet_confirmation_hint(candidate):
+        """根据内部上下文状态生成面向普通用户的操作提示。"""
+        if (candidate.get('greet_context') or {}).get('chat_start'):
+            return (
+                "已准备好该候选人的沟通信息，可直接发起打招呼，"
+                "无需停留在原推荐页面。"
+            )
+        return (
+            "程序将尝试在当前推荐页面定位该候选人并打招呼。"
+            "请确认浏览器已打开该岗位的推荐牛人页面。"
+        )
 
     def _open_blacklist_reason_dialog(self, candidate, parent, on_confirm):
         """打开加入黑名单原因弹窗。"""
@@ -8692,10 +8719,11 @@ class BossFilterGUI:
             save_candidates_all(candidates, CANDIDATES_PATH)
         return updated
 
-    def _import_resume(self, item):
+    def _import_resume(self, item, candidate=None, parent=None, tree=None, tree_item=None):
         """导入候选人简历文件并触发二次 AI 评估。"""
-        candidate = self._find_candidate_by_tree_item(item)
+        candidate = self._resolve_candidate(item, candidate)
         if not candidate:
+            messagebox.showerror("错误", "未找到候选人", parent=parent or self.root)
             return
 
         # 1. 选择文件
@@ -8832,13 +8860,17 @@ class BossFilterGUI:
 
         # 5. 后台线程调用 LLM
         name = candidate.get('name', '')
+        _parent = parent or self.root
+        _tree = tree or self.result_tree
+        _tree_item = tree_item if tree_item is not None else item
 
         # 表格状态即时反馈
-        try:
-            self.result_tree.set(item, 'status', '简历评估中...')
-            self.result_tree.update_idletasks()
-        except Exception:
-            pass
+        if _tree_item is not None:
+            try:
+                _tree.set(_tree_item, 'status', '简历评估中...')
+                _tree.update_idletasks()
+            except Exception:
+                pass
 
         def _eval_worker():
             try:
@@ -8851,15 +8883,16 @@ class BossFilterGUI:
 
                 if not api_key:
                     def _no_key():
-                        try:
-                            self.result_tree.set(item, 'status',
-                                self._format_candidate_status(candidate))
-                        except Exception:
-                            pass
+                        if _tree_item is not None:
+                            try:
+                                _tree.set(_tree_item, 'status',
+                                    self._format_candidate_status(candidate))
+                            except Exception:
+                                pass
                         messagebox.showwarning("API Key 缺失",
                             "未找到 API Key，请先在「模型配置」页配置。",
-                            parent=self.root)
-                    self.root.after(0, _no_key)
+                            parent=_parent)
+                    _parent.after(0, _no_key)
                     return
 
                 # 读取岗位需求
@@ -8894,8 +8927,8 @@ class BossFilterGUI:
                             f"[简历评估] ✅ {name}: {sign}{result.adjustment} "
                             f"→ 总分 {candidate.get('match_score', '?')}")
                         # 自定义对话框
-                        eval_dialog = tk.Toplevel(self.root)
-                        eval_dialog.transient(self.root)
+                        eval_dialog = tk.Toplevel(_parent)
+                        eval_dialog.transient(_parent)
                         eval_dialog.grab_set()
                         eval_dialog.title("简历二次评估完成")
                         eval_dialog.configure(bg=self.colors['bg_main'])
@@ -8946,38 +8979,40 @@ class BossFilterGUI:
                         self.append_log(f"[简历评估] ❌ {name}: {result.reason}")
                         messagebox.showwarning("评估失败",
                             f"LLM 返回错误：{result.reason}",
-                            parent=self.root)
+                            parent=_parent)
 
-                self.root.after(0, _on_done)
+                _parent.after(0, _on_done)
 
             except Exception as e:
                 def _on_error():
                     self.append_log(f"[简历评估] ❌ {name} 异常：{e}")
-                    try:
-                        self.result_tree.set(item, 'status',
-                            self._format_candidate_status(candidate))
-                    except Exception:
-                        pass
+                    if _tree_item is not None:
+                        try:
+                            _tree.set(_tree_item, 'status',
+                                self._format_candidate_status(candidate))
+                        except Exception:
+                            pass
                     messagebox.showerror("评估异常",
-                        f"二次评估出错：\n{e}", parent=self.root)
-                self.root.after(0, _on_error)
+                        f"二次评估出错：\n{e}", parent=_parent)
+                _parent.after(0, _on_error)
 
         threading.Thread(target=_eval_worker, daemon=True).start()
 
-    def _revert_resume_eval(self, item):
+    def _revert_resume_eval(self, item, candidate=None, parent=None):
         """撤销简历评估：清空简历数据和二次评估结果，回退分数。"""
         from llm_eval import _recalc_recommend_level
 
-        candidate = self._find_candidate_by_tree_item(item)
+        candidate = self._resolve_candidate(item, candidate)
         if not candidate:
             return
 
+        _parent = parent or self.root
         name = candidate.get('name', '')
         confirm = messagebox.askyesno(
             "撤销简历评估",
             f"确定要撤销 {name} 的简历评估吗？\n\n"
             f"将清空简历文件和二次评估结果，分数回退到一次评估状态。",
-            parent=self.root,
+            parent=_parent,
         )
         if not confirm:
             return
@@ -9017,9 +9052,9 @@ class BossFilterGUI:
         self.refresh_home_stats()
         self.append_log(f"[撤销评估] {name}: 分数回退到 {reverted_score}")
 
-    def _blacklist_candidate(self, item):
+    def _blacklist_candidate(self, item, candidate=None, parent=None):
         """把选中候选人加入黑名单。"""
-        candidate = self._find_candidate_by_tree_item(item)
+        candidate = self._resolve_candidate(item, candidate)
         if not candidate:
             messagebox.showerror("错误", "未找到候选人")
             return
@@ -9043,7 +9078,7 @@ class BossFilterGUI:
             except Exception as exc:
                 messagebox.showerror("错误", f"加入黑名单失败：{exc}")
 
-        self._open_blacklist_reason_dialog(candidate, self.root, save_blacklist)
+        self._open_blacklist_reason_dialog(candidate, parent or self.root, save_blacklist)
 
     def _update_candidate_unblacklist(self, geek_id):
         """按 geek_id 移除候选人黑名单，跨岗位生效。"""
@@ -9064,9 +9099,9 @@ class BossFilterGUI:
             save_candidates_all(candidates, CANDIDATES_PATH)
         return updated
 
-    def _unblacklist_candidate(self, item):
+    def _unblacklist_candidate(self, item, candidate=None, parent=None):
         """把选中候选人移出黑名单。"""
-        candidate = self._find_candidate_by_tree_item(item)
+        candidate = self._resolve_candidate(item, candidate)
         if not candidate:
             messagebox.showerror("错误", "未找到候选人")
             return
@@ -9106,7 +9141,8 @@ class BossFilterGUI:
                 c['followup_note'] = note.strip()
                 c['followup_updated_at'] = followup_time
                 if status == "已打招呼":
-                    c['greet_sent'] = True
+                    mark_candidate_greeted(c, "manual_status", followup_time)
+                    c['followup_note'] = note.strip()
                 updated = True
                 break
 
@@ -9114,16 +9150,17 @@ class BossFilterGUI:
             save_candidates_all(candidates, CANDIDATES_PATH)
         return updated
 
-    def _mark_candidate_followup(self, item):
+    def _mark_candidate_followup(self, item, candidate=None, parent=None):
         """标记候选人的跟进状态和备注。"""
-        candidate = self._find_candidate_by_tree_item(item)
+        candidate = self._resolve_candidate(item, candidate)
         if not candidate:
             messagebox.showerror("错误", "未找到候选人")
             return
 
-        win = tk.Toplevel(self.root)
+        _parent = parent or self.root
+        win = tk.Toplevel(_parent)
         win.title("更新跟进")
-        win.transient(self.root)
+        win.transient(_parent)
         win.grab_set()
         win.withdraw()
         win.configure(bg=self.colors['bg_main'])
@@ -9207,7 +9244,12 @@ class BossFilterGUI:
                 candidate['followup_note'] = note
                 candidate['followup_updated_at'] = datetime.now().strftime("%Y%m%d_%H%M%S")
                 if status == "已打招呼":
-                    candidate['greet_sent'] = True
+                    mark_candidate_greeted(
+                        candidate,
+                        "manual_status",
+                        candidate['followup_updated_at'],
+                    )
+                    candidate['followup_note'] = note
                 self._regenerate_excel()
                 self.refresh_results()
                 close()
@@ -9218,7 +9260,7 @@ class BossFilterGUI:
         ttk.Button(btn_frame, text="取消", command=close).pack(side='left')
 
         win.protocol("WM_DELETE_WINDOW", close)
-        _place_window_centered(win, int(460 * self.dpi_scale * self.zoom_factor), int(360 * self.dpi_scale * self.zoom_factor), parent=self.root)
+        _place_window_centered(win, int(460 * self.dpi_scale * self.zoom_factor), int(360 * self.dpi_scale * self.zoom_factor), parent=_parent)
         win.deiconify()
 
     def _update_candidate_feedback(self, geek_id, job_name, status, note):
@@ -9242,16 +9284,17 @@ class BossFilterGUI:
             save_candidates_all(candidates, CANDIDATES_PATH)
         return updated
 
-    def _mark_candidate_feedback(self, item):
+    def _mark_candidate_feedback(self, item, candidate=None, parent=None):
         """标记候选人的人工反馈状态和备注。"""
-        candidate = self._find_candidate_by_tree_item(item)
+        candidate = self._resolve_candidate(item, candidate)
         if not candidate:
             messagebox.showerror("错误", "未找到候选人")
             return
 
-        win = tk.Toplevel(self.root)
+        _parent = parent or self.root
+        win = tk.Toplevel(_parent)
         win.title("标记反馈")
-        win.transient(self.root)
+        win.transient(_parent)
         win.grab_set()
         win.withdraw()
         win.configure(bg=self.colors['bg_main'])
@@ -9343,7 +9386,7 @@ class BossFilterGUI:
         ttk.Button(btn_frame, text="取消", command=close).pack(side='left')
 
         win.protocol("WM_DELETE_WINDOW", close)
-        _place_window_centered(win, int(460 * self.dpi_scale * self.zoom_factor), int(360 * self.dpi_scale * self.zoom_factor), parent=self.root)
+        _place_window_centered(win, int(460 * self.dpi_scale * self.zoom_factor), int(360 * self.dpi_scale * self.zoom_factor), parent=_parent)
         win.deiconify()
 
     def _format_candidate_detail(self, c):
@@ -9692,27 +9735,34 @@ class BossFilterGUI:
         except Exception as e:
             messagebox.showerror("错误", f"查看详情失败：{e}")
 
-    def _greet_single_candidate(self, item):
+    def _greet_single_candidate(self, item, candidate=None, parent=None, tree=None, tree_item=None):
         """对单个候选人打招呼（在后台线程执行）"""
-        values = self.result_tree.item(item, 'values')
-        if not values:
+        _parent = parent or self.root
+        _tree = tree or self.result_tree
+        _tree_item = tree_item if tree_item is not None else item
+
+        if candidate is None:
+            values = self.result_tree.item(item, 'values')
+            if not values:
+                return
+            name = values[0]
+            score = values[4]
+            if hasattr(self, 'result_tree_data'):
+                for c in self.result_tree_data:
+                    if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                        candidate = c
+                        break
+        else:
+            name = candidate.get('name', '')
+            score = candidate.get('match_score', 0)
+
+        if not candidate:
+            messagebox.showwarning("警告", f"未找到候选人 {name} 的数据", parent=_parent)
             return
 
-        name = values[0]
-        score = values[4]
-
-        # 查找候选人数据
-        candidate = None
-        geek_id = None
-        if hasattr(self, 'result_tree_data'):
-            for c in self.result_tree_data:
-                if c.get('name') == name and str(c.get('match_score', '')) == str(score):
-                    candidate = c
-                    geek_id = c.get('geek_id')
-                    break
-
+        geek_id = candidate.get('geek_id')
         if not geek_id:
-            messagebox.showwarning("警告", f"未找到候选人 {name} 的数据")
+            messagebox.showwarning("警告", f"未找到候选人 {name} 的数据", parent=_parent)
             return
 
         # 确认操作
@@ -9722,36 +9772,55 @@ class BossFilterGUI:
             risk_flags = candidate.get('risk_flags') or []
             risk_text = "\n\n风险提示：\n" + "\n".join(f"- {flag}" for flag in risk_flags)
             risk_text += "\n\n该候选人已被自动流程跳过。继续操作视为人工确认后手动打招呼。"
+        greet_hint = self._get_greet_confirmation_hint(candidate)
         if not messagebox.askyesno("确认打招呼",
                                    f"确定要向 {name}（{candidate.get('recommend_level', '')}，{score}分）打招呼吗？\n\n"
                                    f"岗位：{job_name}"
                                    f"{risk_text}\n\n"
-                                   f"如果候选人已保存打招呼上下文，将优先直接发送；否则需要浏览器仍在该岗位的推荐牛人页面。",
-                                   parent=self.root):
+                                   f"{greet_hint}",
+                                   parent=_parent):
             return
 
         # 立即更新表格状态为"打招呼中..."，给用户即时反馈
-        self.result_tree.set(item, 'status', '打招呼中...')
-        self.result_tree.update_idletasks()
+        if _tree_item is not None:
+            try:
+                _tree.set(_tree_item, 'status', '打招呼中...')
+                _tree.update_idletasks()
+            except Exception:
+                pass
 
         # 后台线程执行打招呼
         def greet_worker():
+            connection_lock_acquired = False
             try:
+                connection_lock_acquired = self._browser_connection_lock.acquire(timeout=8)
+                if not connection_lock_acquired:
+                    self.append_log("[打招呼] ❌ 浏览器正在执行其他连接操作，请稍后重试")
+                    def _revert_busy():
+                        if _tree_item is not None:
+                            try:
+                                _tree.set(_tree_item, 'status', self._format_candidate_status(candidate))
+                            except Exception:
+                                pass
+                    _parent.after(0, _revert_busy)
+                    return
+
                 # 浏览器未连接时自动尝试重连（读取持久化端口）
                 if not self.browser_page:
                     self.append_log(f"[打招呼] 浏览器未连接，正在尝试重连...")
                     def _revert_connecting():
-                        try:
-                            self.result_tree.set(item, 'status', '未沟通')
-                        except Exception:
-                            pass
+                        if _tree_item is not None:
+                            try:
+                                _tree.set(_tree_item, 'status', self._format_candidate_status(candidate))
+                            except Exception:
+                                pass
                     if not self._try_reconnect_browser():
                         self.append_log(f"[打招呼] ❌ 浏览器重连失败，请先在「运行控制」页连接浏览器")
-                        self.root.after(0, _revert_connecting)
-                        self.root.after(0, lambda: messagebox.showwarning(
+                        _parent.after(0, _revert_connecting)
+                        _parent.after(0, lambda: messagebox.showwarning(
                             "浏览器未连接",
                             "无法连接到 Chrome 浏览器。\n请切换到「运行控制」页点击「检测/连接浏览器」。",
-                            parent=self.root))
+                            parent=_parent))
                         return
                     self.append_log(f"[打招呼] ✅ 浏览器重连成功")
 
@@ -9761,17 +9830,18 @@ class BossFilterGUI:
                 except Exception:
                     self.append_log(f"[打招呼] 浏览器连接已断开，正在尝试重连...")
                     def _revert_stale():
-                        try:
-                            self.result_tree.set(item, 'status', '未沟通')
-                        except Exception:
-                            pass
+                        if _tree_item is not None:
+                            try:
+                                _tree.set(_tree_item, 'status', self._format_candidate_status(candidate))
+                            except Exception:
+                                pass
                     if not self._try_reconnect_browser():
                         self.append_log(f"[打招呼] ❌ 浏览器重连失败，请先在「运行控制」页连接浏览器")
-                        self.root.after(0, _revert_stale)
-                        self.root.after(0, lambda: messagebox.showwarning(
+                        _parent.after(0, _revert_stale)
+                        _parent.after(0, lambda: messagebox.showwarning(
                             "浏览器连接断开",
                             "浏览器连接已断开且无法自动重连。\n请切换到「运行控制」页点击「检测/连接浏览器」。",
-                            parent=self.root))
+                            parent=_parent))
                         return
                     self.append_log(f"[打招呼] ✅ 浏览器重连成功")
 
@@ -9789,12 +9859,12 @@ class BossFilterGUI:
                             "请在浏览器中手动完成验证。\n\n"
                             "点击「是」继续等待验证完成\n"
                             "点击「否」停止当前操作",
-                            parent=self.root,
+                            parent=_parent,
                         )
                         result[0] = answer
                         done.set()
 
-                    self.root.after(0, show_dialog)
+                    _parent.after(0, show_dialog)
                     while not done.is_set():
                         if self.stop_event.is_set():
                             result[0] = False
@@ -9804,14 +9874,33 @@ class BossFilterGUI:
                     return result[0]
 
                 greet_context = candidate.get('greet_context') or {}
+                greet_method = "manual_list"
                 if greet_context.get('chat_start'):
                     self.append_log(f"[打招呼] 使用已保存上下文发送，不依赖推荐牛人页面")
                     success, msg = send_greeting_with_context(
                         self.browser_page, greet_context, stop_event=self.stop_event,
                         captcha_callback=captcha_callback
                     )
+                    if success:
+                        greet_method = "manual_context"
                     if not success:
-                        self.append_log(f"[打招呼] 上下文发送失败，尝试回退到推荐列表按钮：{msg}")
+                        self.append_log(f"[打招呼] 上下文直接发送失败（{msg}），尝试回退到推荐列表按钮")
+                        # 回退路径需要浏览器在对应岗位的推荐牛人页面，提示用户切换
+                        ack_done = threading.Event()
+                        def _ask_switch_page():
+                            messagebox.showinfo(
+                                "直接发送失败",
+                                f"向 {name} 直接发送打招呼未成功（{msg}）。\n\n"
+                                f"接下来将尝试从推荐列表页面发送，\n"
+                                f"请确认浏览器已打开「{job_name}」的推荐牛人页面。\n\n"
+                                f"点击「确定」继续尝试。",
+                                parent=_parent,
+                            )
+                            ack_done.set()
+                        _parent.after(0, _ask_switch_page)
+                        ack_done.wait(timeout=30)
+                        if self.stop_event.is_set():
+                            return
                         success, msg = send_greeting_on_list_page(
                             self.browser_page, geek_id, stop_event=self.stop_event,
                             captcha_callback=captcha_callback
@@ -9823,38 +9912,52 @@ class BossFilterGUI:
                     )
                 if success:
                     self.append_log(f"[打招呼] ✅ {name} — {msg}")
-                    # 更新 JSON 中的 greet_sent 状态
-                    candidate['greet_sent'] = True
-                    candidate['followup_status'] = "已打招呼"
-                    self._update_greet_status(geek_id, job_name, True)
-                    # 同步更新 Excel 文件
-                    self._regenerate_excel()
+                    persisted = self._update_greet_status(
+                        candidate, greet_method
+                    )
+                    if persisted:
+                        self._regenerate_excel()
+                    else:
+                        self.append_log(
+                            f"[打招呼] ⚠️ {name} 已发送成功，但本地状态保存失败"
+                        )
+                        _parent.after(0, lambda: messagebox.showerror(
+                            "本地保存失败",
+                            f"{name} 已在 BOSS 直聘发送成功，但本地状态未能保存。\n"
+                            "请勿重复发送，并检查 candidates_all.json。",
+                            parent=_parent,
+                        ))
                     # 刷新结果页和首页统计
-                    self.root.after(0, self.refresh_results)
-                    self.root.after(0, self.refresh_home_stats)
+                    _parent.after(0, self.refresh_results)
+                    _parent.after(0, self.refresh_home_stats)
                 else:
                     self.append_log(f"[打招呼] ❌ {name} 失败：{msg}")
                     # 恢复表格状态（item 可能已被刷新删除，需 try/except）
                     def _revert_status():
-                        try:
-                            self.result_tree.set(item, 'status', '未沟通')
-                        except Exception:
-                            pass
-                    self.root.after(0, _revert_status)
+                        if _tree_item is not None:
+                            try:
+                                _tree.set(_tree_item, 'status', self._format_candidate_status(candidate))
+                            except Exception:
+                                pass
+                    _parent.after(0, _revert_status)
                     # 沟通次数上限
                     if "上限" in msg or "次数" in msg:
-                        self.root.after(0, lambda: messagebox.showwarning(
+                        _parent.after(0, lambda: messagebox.showwarning(
                             "沟通次数已达上限",
                             "BOSS 直聘今日沟通次数已用完，请明天再试。",
-                            parent=self.root))
+                            parent=_parent))
             except Exception as e:
                 self.append_log(f"[打招呼] ❌ {name} 异常：{e}")
                 def _revert_status_exc():
-                    try:
-                        self.result_tree.set(item, 'status', '未沟通')
-                    except Exception:
-                        pass
-                self.root.after(0, _revert_status_exc)
+                    if _tree_item is not None:
+                        try:
+                            _tree.set(_tree_item, 'status', self._format_candidate_status(candidate))
+                        except Exception:
+                            pass
+                _parent.after(0, _revert_status_exc)
+            finally:
+                if connection_lock_acquired:
+                    self._browser_connection_lock.release()
 
         threading.Thread(target=greet_worker, daemon=True).start()
 
@@ -9907,25 +10010,13 @@ class BossFilterGUI:
             self.browser_connected = False
             return False
 
-    def _update_greet_status(self, geek_id, job_name, greet_sent):
+    def _update_greet_status(self, candidate, method) -> bool:
         """更新 candidates_all.json 中指定候选人的打招呼状态"""
         try:
-            if not CANDIDATES_PATH.exists():
-                return
-            with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
-                candidates = json.load(f)
-            updated = False
-            for c in candidates:
-                if c.get('geek_id') == geek_id and c.get('job_name', '').replace(" ", "") == job_name.replace(" ", ""):
-                    c['greet_sent'] = greet_sent
-                    if greet_sent:
-                        c['followup_status'] = "已打招呼"
-                    updated = True
-                    break
-            if updated:
-                save_candidates_all(candidates, CANDIDATES_PATH)
+            return persist_candidate_greeted(candidate, method, CANDIDATES_PATH)
         except Exception as e:
             self.append_log(f"[打招呼] 更新状态失败：{e}")
+            return False
 
     def _regenerate_excel(self):
         """打招呼后同步更新 Excel 文件（静默，不弹窗）"""
