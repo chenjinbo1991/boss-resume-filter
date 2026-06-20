@@ -656,6 +656,50 @@ def test_gitee_clean_old_assets_dry_run_keeps_all_assets():
     assert deleted == []
 
 
+def test_gitee_release_lookup_uses_explicit_pagination():
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [{"id": 1, "tag_name": "v9.9.9", "name": "v9.9.9", "body": ""}]
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return FakeResponse()
+
+    session = FakeSession()
+    original_session = build._gitee_session
+    original_fetch_assets = build._gitee_fetch_assets
+    try:
+        build._gitee_session = lambda: session
+        build._gitee_fetch_assets = lambda *_args, **_kwargs: {}
+        release_id, assets = build._gitee_find_or_create_release(
+            "https://gitee.com/api/v5/repos/owner/repo",
+            "secret-token",
+            "v9.9.9",
+            "v9.9.9",
+            "",
+        )
+    finally:
+        build._gitee_session = original_session
+        build._gitee_fetch_assets = original_fetch_assets
+
+    assert release_id == 1
+    assert assets == {}
+    assert session.calls[0][1]["params"] == {
+        "access_token": "secret-token",
+        "page": 1,
+        "per_page": 100,
+    }
+
+
 def test_gitee_clean_old_assets_apply_deletes_only_non_current_assets():
     releases = [
         {"tag_name": "v9.9.9", "id": 1},

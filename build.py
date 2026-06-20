@@ -3325,14 +3325,16 @@ def _gitee_find_or_create_release(api_base, token, tag, release_title, release_n
             except requests.exceptions.RequestException as e:
                 if attempt < max_attempts - 1:
                     delay = 5 * (attempt + 1)
-                    print(f"  [Gitee] API 请求失败 ({e})，{delay}s 后重试 ({attempt+1}/{max_attempts})")
+                    status = getattr(getattr(e, "response", None), "status_code", None)
+                    detail = f"HTTP {status}" if status else type(e).__name__
+                    print(f"  [Gitee] API 请求失败 ({detail})，{delay}s 后重试 ({attempt+1}/{max_attempts})")
                     time.sleep(delay)
                 else:
                     raise
 
     resp = _retry_request("get",
         f"{api_base}/releases",
-        params={"access_token": token}, timeout=30)
+        params={"access_token": token, "page": 1, "per_page": 100}, timeout=30)
     release = next((r for r in resp.json() if r.get("tag_name") == tag), None)
 
     if release:
@@ -3591,7 +3593,9 @@ def _gitee_get_release_cache(version, release_title, release_notes):
         }
     except requests.exceptions.RequestException as e:
         print(f"\n{'!'*60}")
-        print(f"  [!!]  Gitee Release 获取失败: {e}")
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        detail = f"HTTP {status}" if status else type(e).__name__
+        print(f"  [!!]  Gitee Release 获取失败: {detail}")
         print(f"  手动补传: python build.py --gitee-upload {version}")
         print(f"{'!'*60}\n")
         return None
