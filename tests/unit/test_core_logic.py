@@ -789,7 +789,10 @@ def test_listener_mode_refreshes_and_warns_when_job_identity_changes():
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
-                page, max_rounds=1, extraction_mode="listener"
+                page,
+                max_rounds=1,
+                extraction_mode="listener",
+                blocking_notice_callback=lambda _title, _message: None,
             )
 
     assert [c["geek_id"] for c in candidates] == ["g-stable-dom"]
@@ -798,8 +801,9 @@ def test_listener_mode_refreshes_and_warns_when_job_identity_changes():
     # 刷新后岗位标识变化，应打印警告
     assert "刷新后岗位标识变化" in output.getvalue()
     mock_fetch.assert_not_called()
-    # consume 被调用两次：弹窗后清空旧数据 + 滚动循环中消费新数据
-    assert mock_consume_api.call_count == 2
+    # consume 被调用三次：弹窗前清空旧数据、弹窗后读取切岗新数据、
+    # 滚动循环中继续消费后续数据。
+    assert mock_consume_api.call_count == 3
     mock_dom_extract.assert_called_once()
 
 
