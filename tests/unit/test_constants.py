@@ -1,6 +1,7 @@
 """constants 模块稳定性测试 — 防止评分阈值、城市列表等关键常量被意外修改。"""
 
 from constants import (
+    API_CANDIDATE_LIMIT_DEFAULT,
     CHINESE_NUMERALS,
     MAJOR_CITIES,
     NON_REGULAR_EDU,
@@ -22,6 +23,10 @@ def test_score_thresholds_are_strictly_ascending():
 
 def test_score_components_sum_to_100():
     assert SCORE_BASE + SCORE_SKILL_MAX + SCORE_EXP_MAX + SCORE_EDU_MAX == 100
+
+
+def test_default_api_enrichment_budget_covers_twenty_pages():
+    assert API_CANDIDATE_LIMIT_DEFAULT == 400
 
 
 # ========== 中文数字映射 ==========

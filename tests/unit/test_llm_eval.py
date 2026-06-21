@@ -11,8 +11,10 @@ from llm_eval import (
     _build_prompt,
     _parse_response,
     _call_llm_api,
+    _extract_evaluation_payload,
     _format_ai_log_summary,
     _recalc_recommend_level,
+    _use_forced_function_output,
     evaluate_batch,
 )
 
@@ -46,6 +48,19 @@ def test_parse_response_chinese_punctuation_normalized():
     text = '{"adjustment"：7，"reason"："高度匹配"}'
     result = _parse_response(text)
     assert result['adjustment'] == 7
+
+
+def test_parse_response_repairs_missing_commas_between_lines():
+    text = """{
+      "adjustment": -3
+      "hard_condition_verdict": "unknown"
+      "hard_condition_findings": []
+      "reason": "存在部分风险"
+    }"""
+    result = _parse_response(text)
+    assert result['adjustment'] == -3
+    assert result['hard_condition_verdict'] == "unknown"
+    assert result['reason'] == "存在部分风险"
 
 
 def test_parse_response_adjustment_clamped_high():
@@ -111,10 +126,10 @@ def test_format_ai_log_summary_uses_business_conclusion():
     ).startswith("待确认：")
     assert _format_ai_log_summary(
         {"qualification_status": "rejected"}, "工作经验不足", 80
-    ).startswith("淘汰：")
+    ).startswith("硬条件淘汰：")
     assert _format_ai_log_summary(
         {"qualification_status": "qualified"}, "评分不足", 54
-    ).startswith("淘汰：")
+    ).startswith("评分淘汰：")
 
 
 # === _build_prompt ===
@@ -126,6 +141,31 @@ def test_build_prompt_returns_system_and_user():
     assert msgs[1]['role'] == 'user'
     assert "岗位要求：Java 5年" in msgs[1]['content']
     assert "张三，5年Java经验" in msgs[1]['content']
+
+
+def test_qwen37_dashscope_uses_forced_function_output():
+    assert _use_forced_function_output({
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen3.7-max",
+    }) is True
+    assert _use_forced_function_output({
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4.1",
+    }) is False
+
+
+def test_extract_evaluation_payload_prefers_tool_arguments():
+    arguments = '{"adjustment": 1, "reason": "ok"}'
+    message = {
+        "content": "",
+        "tool_calls": [{
+            "function": {
+                "name": "submit_candidate_evaluation",
+                "arguments": arguments,
+            }
+        }],
+    }
+    assert _extract_evaluation_payload(message, True) == arguments
 
 
 def test_build_llm_candidate_summary_compacts_api_resume_sections():
@@ -196,6 +236,102 @@ def test_call_llm_api_success(mock_requests):
     assert result.success is True
     assert result.adjustment == 5
     assert result.model == 'test-model'
+
+
+@patch('llm_eval.requests')
+def test_call_llm_api_qwen37_uses_function_arguments(mock_requests):
+    import requests as real_requests
+    mock_requests.exceptions = real_requests.exceptions
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        'choices': [{
+            'finish_reason': 'stop',
+            'message': {
+                'content': '',
+                'tool_calls': [{
+                    'function': {
+                        'name': 'submit_candidate_evaluation',
+                        'arguments': json.dumps({
+                            'adjustment': 3,
+                            'reason': '匹配',
+                            'hard_condition_verdict': 'unknown',
+                            'hard_condition_findings': [],
+                        }, ensure_ascii=False),
+                    }
+                }],
+            },
+        }]
+    }
+    mock_session = MagicMock()
+    mock_session.post.return_value = mock_response
+    mock_requests.Session.return_value = mock_session
+
+    api_config = {
+        'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        'model': 'qwen3.7-max',
+    }
+    result = _call_llm_api([{"role": "user", "content": "test"}], api_config, "fake-key")
+
+    assert result.success is True
+    assert result.adjustment == 3
+    request_body = mock_session.post.call_args.kwargs["json"]
+    assert request_body["enable_thinking"] is False
+    assert request_body["temperature"] == 0
+    assert request_body["tool_choice"]["function"]["name"] == "submit_candidate_evaluation"
+
+
+@patch('llm_eval.requests')
+def test_call_llm_api_retries_once_after_invalid_json(mock_requests):
+    import requests as real_requests
+    mock_requests.exceptions = real_requests.exceptions
+    invalid_response = MagicMock()
+    invalid_response.status_code = 200
+    invalid_response.json.return_value = {
+        'choices': [{'message': {'content': '{"adjustment": 5 "reason": "缺少逗号"}'}}]
+    }
+    valid_response = MagicMock()
+    valid_response.status_code = 200
+    valid_response.json.return_value = {
+        'choices': [{'message': {'content': '{"adjustment": 5, "reason": "匹配"}'}}]
+    }
+    mock_session = MagicMock()
+    mock_session.post.side_effect = [invalid_response, valid_response]
+    mock_requests.Session.return_value = mock_session
+
+    api_config = {'base_url': 'https://api.example.com/v1', 'model': 'test-model'}
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = _call_llm_api([{"role": "user", "content": "test"}], api_config, "fake-key")
+
+    assert result.success is True
+    assert result.adjustment == 5
+    assert mock_session.post.call_count == 2
+    retry_body = mock_session.post.call_args_list[1].kwargs["json"]
+    assert retry_body["temperature"] == 0
+    assert "上次返回的 JSON 格式有误" in retry_body["messages"][-1]["content"]
+
+
+@patch('llm_eval.requests')
+def test_call_llm_api_stops_after_one_json_format_retry(mock_requests):
+    import requests as real_requests
+    mock_requests.exceptions = real_requests.exceptions
+    invalid_response = MagicMock()
+    invalid_response.status_code = 200
+    invalid_response.json.return_value = {
+        'choices': [{'message': {'content': '{"adjustment": 5 "reason": "仍然错误"}'}}]
+    }
+    mock_session = MagicMock()
+    mock_session.post.side_effect = [invalid_response, invalid_response]
+    mock_requests.Session.return_value = mock_session
+
+    api_config = {'base_url': 'https://api.example.com/v1', 'model': 'test-model'}
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = _call_llm_api([{"role": "user", "content": "test"}], api_config, "fake-key")
+
+    assert result.success is False
+    assert result.reason.startswith("AI 返回格式错误（自动纠正后仍无法解析；")
+    assert "返回长度" in result.reason
+    assert mock_session.post.call_count == 2
 
 
 @patch('llm_eval.requests')
@@ -290,6 +426,7 @@ def test_batch_failure_preserves_score(mock_call, mock_sleep):
     result = quiet_evaluate_batch(candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key")
     c = result[0]
     assert c['llm_evaluated'] is False
+    assert c['llm_error'] == "timeout"
     assert c['match_score'] == 60
     assert c['recommend_level'] == '待定'
 
@@ -347,7 +484,7 @@ def test_batch_only_applies_verified_high_confidence_hard_failure(mock_call, moc
 
 @patch('llm_eval.time.sleep')
 @patch('llm_eval._call_llm_api')
-def test_batch_does_not_reject_speculative_education_finding(mock_call, mock_sleep):
+def test_batch_rejects_explicit_upgrade_bachelor_finding(mock_call, mock_sleep):
     finding = {
         "condition": "统招本科学历",
         "verdict": "fail",
@@ -357,7 +494,7 @@ def test_batch_does_not_reject_speculative_education_finding(mock_call, mock_sle
     mock_call.return_value = LLMEvalResult(
         success=True,
         adjustment=-6,
-        reason="疑似非统招",
+        reason="专升本不符合统招本科要求",
         model="m",
         hard_condition_verdict="fail",
         hard_condition_findings=[finding],
@@ -373,7 +510,8 @@ def test_batch_does_not_reject_speculative_education_finding(mock_call, mock_sle
         candidates, "岗位", {'base_url': 'x', 'model': 'y'}, "key",
         hard_conditions="## 筛选硬条件\n- 必要条件：统招本科\n",
     )
-    assert result[0]['qualification_status'] == 'manual_review'
+    assert result[0]['qualification_status'] == 'rejected'
+    assert result[0]['recommend_level'] == '已淘汰'
 
 
 @patch('llm_eval.time.sleep')

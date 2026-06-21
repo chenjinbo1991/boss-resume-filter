@@ -31,7 +31,7 @@ REJECTED = "rejected"
 MANUAL_REVIEW = "manual_review"
 _EXPLICIT_NON_REGULAR_EDU = (
     "自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
-    "电大", "远程教育", "成人高考", "成人教育", "业余",
+    "专升本", "电大", "远程教育", "成人高考", "成人教育", "业余",
 )
 
 
@@ -330,6 +330,26 @@ def _has_non_regular_edu_risk(text: str) -> bool:
     return any(ne in text for ne in NON_REGULAR_EDU)
 
 
+def _explicit_non_regular_bachelor_reason(text: str) -> str:
+    """Return a deterministic rejection reason for a non-regular bachelor path."""
+    if any(term in text for term in _EXPLICIT_NON_REGULAR_EDU):
+        return "明确为非统招本科"
+    if re.search(r'第一学历.{0,12}(?:大专|专科)', text, re.DOTALL):
+        return "第一学历为大专/专科，后续本科不符合统招本科要求"
+    if re.search(r'(?:大专|专科).{0,80}(?:后修|后续|在读|取得|升读).{0,20}本科', text, re.DOTALL):
+        return "大专/专科后取得本科，不符合统招本科要求"
+    if re.search(r'(?:2|3|两|二|三)\s*年制本科', text):
+        return "本科教育年限不超过3年，不符合统招本科要求"
+
+    for segment in re.split(r'[\n；;]', text):
+        if "本科" not in segment:
+            continue
+        years = [int(year) for year in re.findall(r'(?<!\d)(19\d{2}|20\d{2})(?!\d)', segment)]
+        if len(years) >= 2 and 0 < years[-1] - years[-2] <= 3:
+            return "本科教育经历不超过3年，不符合统招本科要求"
+    return ""
+
+
 def _add_risk_flag(details: dict[str, Any], flag: str, blocked_reason: str = "需要人工确认") -> None:
     """Attach a manual-review risk flag to filter details."""
     risk_flags = details.setdefault('risk_flags', [])
@@ -379,8 +399,14 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
             )
             required_edu = edu_keywords.get(rule.get("edu", "不限"), 0)
             has_non_regular_risk = _has_non_regular_edu_risk(candidate_text)
+            explicit_non_regular_reason = _explicit_non_regular_bachelor_reason(candidate_text)
 
             if rule.get("edu") == "本科":
+                if explicit_non_regular_reason and not re.search(r'(统招|全日制)\s*本科', candidate_text):
+                    return False, 0, {
+                        "reason": f"学历不符：{explicit_non_regular_reason}",
+                        "qualification_status": REJECTED,
+                    }
                 if candidate_edu_level >= 5:
                     # 硕士/博士直接通过学历等级，但仍需检查非统招风险
                     if has_non_regular_risk:
@@ -628,9 +654,12 @@ def check_required_condition(candidate_text: str, condition: str | dict[str, Any
                 return {"passed": True, "reason": ""}
 
             has_bachelor = "本科" in candidate_text
-            is_explicit_non_regular = any(term in candidate_text for term in _EXPLICIT_NON_REGULAR_EDU)
-            if is_explicit_non_regular:
-                return {"passed": False, "reason": "学历不符：明确为非统招本科"}
+            explicit_non_regular_reason = _explicit_non_regular_bachelor_reason(candidate_text)
+            if explicit_non_regular_reason:
+                return {
+                    "passed": False,
+                    "reason": f"学历不符：{explicit_non_regular_reason}",
+                }
             if has_bachelor or "硕士" in candidate_text or "博士" in candidate_text or "专升本" in candidate_text:
                 return {
                     "passed": True,

@@ -348,6 +348,7 @@ SOURCE_CHECK_FILES = [
     "filtering.py",
     "storage.py",
     "llm_eval.py",
+    "ai_adapter.py",
     "job_ai_parser.py",
     "doc_parser.py",
     "security.py",
@@ -358,6 +359,7 @@ SOURCE_CHECK_FILES = [
     "tests/test_import.py",
     "tests/unit/test_core_logic.py",
     "tests/unit/test_llm_eval.py",
+    "tests/unit/test_ai_adapter.py",
     "tests/unit/test_job_ai_parser.py",
     "tests/unit/test_selectors.py",
 ]
@@ -742,7 +744,7 @@ def _check_changelog_updated():
     # 检查核心代码是否有变更
     core_files = [
         "gui_main.py", "gui_dialogs.py", "changelog_parser.py", "bossmaster.py",
-        "filtering.py", "storage.py", "llm_eval.py", "job_ai_parser.py",
+        "filtering.py", "storage.py", "llm_eval.py", "ai_adapter.py", "job_ai_parser.py",
         "doc_parser.py", "security.py", "updater.py", "icons.py",
         "constants.py", "paths.py", "selectors.json", "ui_config.json",
         "job_config.json",
@@ -1246,6 +1248,8 @@ def _check_code_to_changelog_coverage(strict=False):
             (r"greet", ["打招呼"]),
             (r"candidate", ["候选人"]),
             (r"browser|chromium|chrome", ["浏览器", "连接"]),
+            (r"model|capability|protocol|provider|api_key", ["模型", "兼容"]),
+            (r"qualification|education|edu_", ["学历", "资格"]),
             (r"\blog\b|log_", ["日志"]),
             (r"blacklist", ["黑名单"]),
             (r"resume", ["简历"]),
@@ -1356,9 +1360,24 @@ def _check_code_to_changelog_coverage(strict=False):
             for line in additions:
                 if _is_comment_or_doc_line(line):
                     continue
-                if data_re.search(line) and re.search(r"['\"][A-Za-z_][A-Za-z0-9_]{2,}['\"]\s*:", line):
+                field_match = re.search(r"['\"]([A-Za-z_][A-Za-z0-9_]{2,})['\"]\s*:", line)
+                if (
+                    field_match
+                    and field_match.group(1) in {
+                        "status", "error", "msg", "message", "time",
+                        "response_time", "capability", "reason", "adjustment",
+                    }
+                    and not re.search(r"candidate|qualification|llm_|followup|feedback|blacklist|resume", line)
+                ):
+                    continue
+                if data_re.search(line) and field_match:
                     text = _snippet(re.sub(r"\s+", " ", line))
-                    signals.append(("新数据", f"{fpath}: {text}", _keywords(text), "新增功能"))
+                    signals.append((
+                        "新数据",
+                        f"{fpath}: {text}",
+                        _keywords(text) + _context_keywords(fpath, line),
+                        "新增功能",
+                    ))
 
         # 7. 删除 / 限制：删除 UI 文案、函数入口、配置键，或新增限制逻辑
         normalized_additions = {line.strip() for line in additions if line.strip()}
@@ -1375,10 +1394,15 @@ def _check_code_to_changelog_coverage(strict=False):
             removed_func = re.search(r"\bdef\s+([a-zA-Z_]\w*)\s*\(", line)
             if removed_func and removed_func.group(1) in added_function_names:
                 continue
+            if removed_func and removed_func.group(1).startswith("_"):
+                continue
             if (
                 re.search(r"[一-鿿]{3,}", line)
                 or re.search(r"def\s+[a-zA-Z_]\w+\s*\(", line)
-                or re.search(r'"[A-Za-z_][A-Za-z0-9_]+"\s*:', line)  # JSON keys only (requires double quotes)
+                or (
+                    fpath.endswith((".json", ".JSON"))
+                    and re.search(r'"[A-Za-z_][A-Za-z0-9_]+"\s*:', line)
+                )
             ):
                 text = _snippet(re.sub(r"\s+", " ", line))
                 signals.append((
@@ -3009,7 +3033,7 @@ def _needs_cross_platform_rebuild(changed_files):
 
     # 需要重建的文件（改了影响构建产物内容）
     SHARED_BUILD_FILES = {
-        'gui_main.py', 'bossmaster.py', 'filtering.py', 'llm_eval.py',
+        'gui_main.py', 'bossmaster.py', 'filtering.py', 'llm_eval.py', 'ai_adapter.py',
         'job_ai_parser.py', 'storage.py', 'doc_parser.py', 'security.py', 'constants.py',
         'paths.py', 'icons.py', 'updater.py', 'selectors.json',
         'job_config.json', 'api_config.json', 'ui_config.json', 'requirements.txt',

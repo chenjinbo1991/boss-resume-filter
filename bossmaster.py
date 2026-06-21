@@ -1801,6 +1801,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
     pending_listener_url = ""
     observed_api_url = ""
     listener_refresh_captured = False
+    last_round_new_count = 0
 
     # listener 启动后刷新一次，让首屏 API 请求被监听器捕获（结构化字段来源）。
     # 刷新会使页面恢复默认岗位，用 identity 校验检测是否跑偏。
@@ -1995,6 +1996,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                 logger.error("提取候选人元素失败(轮次%d): %s", scroll_round + 1, e)
 
             new_count = len(candidates_in_round)
+            last_round_new_count = new_count
             total_count = len(all_candidates)
 
             # 连续空轮次检测（兜底策略，不依赖特定文案）
@@ -2010,6 +2012,13 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
             if (scroll_round + 1) % 10 == 0 or (scroll_round + 1) == max_rounds:
                 status = f"+{new_count}" if new_count > 0 else "无新增"
                 print(f"轮次 {scroll_round + 1}/{max_rounds}: {status}, 累计 {total_count} 个")
+        else:
+            if last_round_new_count > 0:
+                warning = (
+                    f"已达到扫描轮次上限 {max_rounds}，最后一轮仍新增 "
+                    f"{last_round_new_count} 人，候选人可能未提取完整"
+                )
+                print(f"[WARN] {warning}")
     finally:
         if api_listener:
             try:
@@ -2035,6 +2044,7 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                     page_limit = 5
                 print(f"API 直调仅补全 DOM 已出现候选人，最多 {page_limit} 页")
                 consecutive_misses = 0
+                api_limit_reached_with_hits = False
                 for page_num in range(1, page_limit + 1):
                     if stop_event and stop_event.is_set():
                         raise StopRequested()
@@ -2068,11 +2078,23 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
                         break
                     if has_more is False:
                         break
+                    if (
+                        page_num == page_limit
+                        and matched > 0
+                        and missing_ids
+                    ):
+                        api_limit_reached_with_hits = True
+                if api_limit_reached_with_hits:
+                    print(
+                        f"[WARN] API 补全已达到 {page_limit} 页上限，最后一页仍命中 "
+                        f"DOM 候选人，仍有 {len(missing_ids)} 人缺少结构化信息"
+                    )
 
     # 统计 API 结构化数据覆盖率
     _api_count = sum(1 for c in all_candidates if c.get('structured'))
     if all_candidates:
-        print(f"API 结构化数据: {_api_count}/{len(all_candidates)} 人"
+        _fallback_count = len(all_candidates) - _api_count
+        print(f"结构化数据覆盖: {_api_count}/{len(all_candidates)} 人"
               f" ({_api_count * 100 // len(all_candidates)}%)")
         # 拆分 listener 与 API 兜底的贡献（首次合并者胜，已在 _merge_... 中标记）
         _listener_enriched = sum(
@@ -2081,9 +2103,16 @@ def extract_candidates_by_comprehensive_analysis(page, max_rounds=MAX_ROUNDS_DEF
         _api_fb_enriched = sum(
             1 for c in all_candidates if c.get('_enriched_by') == 'api_fallback'
         )
-        if _listener_enriched or _api_fb_enriched:
-            print(f"  ├─ listener 结构化: {_listener_enriched} 人")
-            print(f"  └─ API 兜底结构化: {_api_fb_enriched} 人")
+        coverage_details = []
+        if _listener_enriched:
+            coverage_details.append(("listener 结构化", _listener_enriched))
+        if _api_fb_enriched:
+            coverage_details.append(("API 兜底结构化", _api_fb_enriched))
+        if _fallback_count:
+            coverage_details.append(("文本降级解析", _fallback_count))
+        for index, (label, count) in enumerate(coverage_details):
+            branch = "└─" if index == len(coverage_details) - 1 else "├─"
+            print(f"  {branch} {label}: {count} 人")
 
     print(f"\n=== 提取完成 ===")
     print(f"总共找到 {len(all_candidates)} 个候选人")
@@ -2928,6 +2957,9 @@ def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
         - status: 'ok' | 'warn' | 'fail'
         - detail: 描述信息
     """
+    # Chrome 刷新或重建标签页时，DrissionPage 的旧对象可能短暂断线。
+    # 先验证连接，避免把连接问题误报成选择器失效。
+    page.run_js('return 1')
     results = []
     sel = load_selectors()
 
@@ -3368,6 +3400,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
 
     ai_removed_count = 0
     ai_evaluated_count = 0
+    rule_pool_count = len(passed_candidates)
     # === 阶段 1.5: AI 辅助评估（可选）===
     if ai_eval and api_config and api_key and passed_candidates:
         from llm_eval import evaluate_batch
@@ -3398,7 +3431,6 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             hard_parts.append(f"- 必要条件：{'、'.join(cond_names)}")
         hard_conditions = "## 筛选硬条件\n" + "\n".join(hard_parts) + "\n\n" if hard_parts else ""
 
-        rule_pool_count = len(passed_candidates)
         passed_candidates = evaluate_batch(
             passed_candidates, job_requirement, api_config, api_key,
             hard_conditions=hard_conditions,
@@ -3409,7 +3441,14 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
         passed_candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
         llm_count = sum(1 for c in passed_candidates if c.get('llm_evaluated'))
         ai_evaluated_count = llm_count
-        print(f"AI 评估完成：{llm_count} 人已评估")
+        llm_failed_count = rule_pool_count - llm_count
+        success_rate = llm_count * 100 / rule_pool_count if rule_pool_count else 0
+        print(
+            f"AI 评估完成：成功 {llm_count} 人，失败 {llm_failed_count} 人，"
+            f"成功率 {success_rate:.1f}%"
+        )
+        if llm_failed_count and llm_failed_count / rule_pool_count >= 0.3:
+            print("[WARN] AI 评估失败率过高，本轮结果主要依据规则评分，请人工复核失败候选人")
         ai_hard_rejected = sum(
             1 for c in passed_candidates if c.get('qualification_status') == 'rejected'
         )
@@ -3632,6 +3671,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
 
     if stats is not None:
         stats['raw_count'] = len(raw_candidates)
+        stats['rule_passed_count'] = rule_pool_count
         stats['passed_count'] = len(passed_candidates)
         stats['greeted_count'] = sum(1 for c in passed_candidates if c.get('greet_sent'))
         if ai_eval:
@@ -3681,6 +3721,26 @@ def _show_job_navigation_prompt(current_idx, total, next_job_name, confirm_callb
                 print(f"  {remaining} 秒后自动继续...", end="\r")
                 time.sleep(1)
             print("  继续处理...\n")
+
+
+def _format_scan_summary(
+    status: str,
+    total_rule_passed: int,
+    total_raw: int,
+    total_ai_evaluated: int,
+    total_ai_downgraded: int,
+    total_passed: int,
+    total_greeted: int,
+) -> str:
+    """Format the final scan summary with rule and AI counts kept separate."""
+    prefix = "筛选完成：" if status == "完成" else ""
+    message = f"[{status}] {prefix}规则筛选通过 {total_rule_passed}/{total_raw} 人"
+    if total_ai_evaluated > 0:
+        message += (
+            f"，AI复核后淘汰 {total_ai_downgraded} 人，"
+            f"最终保留 {total_passed} 人"
+        )
+    return f"{message}，{total_greeted} 人已打招呼"
 
 
 def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, stop_event=None, existing_page=None, captcha_callback=None, notice_callback=None, blocking_notice_callback=None):
@@ -3934,7 +3994,8 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
     # 统计累计（提前初始化，防止异常路径上 NameError）
     job_stats = {}
-    total_raw = total_passed = total_greeted = total_ai_evaluated = total_ai_downgraded = 0
+    total_raw = total_rule_passed = total_passed = 0
+    total_greeted = total_ai_evaluated = total_ai_downgraded = 0
 
     try:
         if existing_page:
@@ -4013,6 +4074,9 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                                stats=job_stats)
             all_candidates.extend(candidates)
             total_raw += job_stats.get('raw_count', 0)
+            total_rule_passed += job_stats.get(
+                'rule_passed_count', job_stats.get('passed_count', 0)
+            )
             total_passed += job_stats.get('passed_count', 0)
             total_greeted += job_stats.get('greeted_count', 0)
             total_ai_evaluated += job_stats.get('ai_eval_count', 0)
@@ -4028,30 +4092,45 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
 
         # 全部岗位处理完毕，更新进度为最终状态
         if progress_callback:
-            msg = f"[完成] 筛选完成：通过 {total_passed}/{total_raw} 个"
-            if total_ai_evaluated > 0 and total_ai_downgraded > 0:
-                msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，最终有效 {total_passed} 人"
-            msg += f"，{total_greeted} 人已打招呼"
+            msg = _format_scan_summary(
+                "完成",
+                total_rule_passed,
+                total_raw,
+                total_ai_evaluated,
+                total_ai_downgraded,
+                total_passed,
+                total_greeted,
+            )
             progress_callback(100, msg)
 
     except StopRequested:
         print(f"\n\n⏹ 用户停止，保存当前进度...")
         _save_progress_on_exit()
         if progress_callback:
-            stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
-            if total_ai_evaluated > 0 and total_ai_downgraded > 0:
-                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，最终有效 {total_passed} 人"
-            stop_msg += f"，{total_greeted} 人已打招呼"
+            stop_msg = _format_scan_summary(
+                "已停止",
+                total_rule_passed,
+                total_raw,
+                total_ai_evaluated,
+                total_ai_downgraded,
+                total_passed,
+                total_greeted,
+            )
             progress_callback(100, stop_msg)
 
     except KeyboardInterrupt:
         print(f"\n\n检测到中断，保存当前进度...")
         _save_progress_on_exit()
         if progress_callback:
-            stop_msg = f"[已停止] 通过 {total_passed}/{total_raw} 个"
-            if total_ai_evaluated > 0 and total_ai_downgraded > 0:
-                stop_msg += f"，结合AI评估后淘汰 {total_ai_downgraded} 人，最终有效 {total_passed} 人"
-            stop_msg += f"，{total_greeted} 人已打招呼"
+            stop_msg = _format_scan_summary(
+                "已停止",
+                total_rule_passed,
+                total_raw,
+                total_ai_evaluated,
+                total_ai_downgraded,
+                total_passed,
+                total_greeted,
+            )
             progress_callback(100, stop_msg)
         raise
 

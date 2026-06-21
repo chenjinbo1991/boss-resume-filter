@@ -3,7 +3,7 @@ BOSS 简历筛选器 - 图形界面版本
 优化：浏览器状态检测 + 进度条 + 数据安全性 + UI 细节增强
 """
 
-__version__ = "2.12.2"
+__version__ = "2.13"
 
 import json
 import logging
@@ -1231,6 +1231,7 @@ class BossFilterGUI:
 
         if current_page == 5:
             self._update_model_list_height()
+            self._update_model_list_columns()
         elif current_page == 1:
             self._update_config_page_dynamic_heights()
         elif current_page == 3:
@@ -2515,14 +2516,18 @@ class BossFilterGUI:
             fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 模型列表 Treeview
-        model_columns = ("name", "provider", "base_url")
-        self.model_list_tree = ttk.Treeview(model_list_card, columns=model_columns, show="headings")
+        model_columns = ("name", "provider", "compat", "base_url")
+        self.model_list_tree = ttk.Treeview(model_list_card, columns=model_columns, show="headings", selectmode='extended')
         self.model_list_tree.heading("name", text="模型名称")
         self.model_list_tree.heading("provider", text="服务商")
+        self.model_list_tree.heading("compat", text="状态")
         self.model_list_tree.heading("base_url", text="Base URL")
-        self.model_list_tree.column("name", width=110, minwidth=100, anchor='center', stretch=True)
-        self.model_list_tree.column("provider", width=60, minwidth=50, anchor='center', stretch=True)
-        self.model_list_tree.column("base_url", width=490, minwidth=100, anchor='center', stretch=True)
+        self.model_list_tree.column("name", width=280, minwidth=200, anchor='center', stretch=False)
+        self.model_list_tree.column("provider", width=260, minwidth=200, anchor='center', stretch=False)
+        self.model_list_tree.column("compat", width=160, minwidth=120, anchor='center', stretch=False)
+        self.model_list_tree.column("base_url", width=350, minwidth=200, anchor='w', stretch=True)
+        # 普通窗口隐藏 Base URL 列，最大化时显示
+        self.model_list_tree.configure(displaycolumns=("name", "provider", "compat"))
 
         # 已保存模型列表字体比表格字体小一号
         fs = self.dpi_scale * self.zoom_factor
@@ -2551,10 +2556,56 @@ class BossFilterGUI:
         def show_model_context_menu(event):
             item = self.model_list_tree.identify_row(event.y)
             if item:
-                self.model_list_tree.selection_set(item)
+                # 右键点击的行已在多选集合内时，保持现有选区
+                if item not in self.model_list_tree.selection():
+                    self.model_list_tree.selection_set(item)
                 self.model_context_menu.tk_popup(event.x_root, event.y_root)
 
         self.model_list_tree.bind("<Button-3>", show_model_context_menu)
+
+        # Base URL 列 tooltip
+        self._model_tooltip_after_id = None
+        self._model_tooltip = None
+        self._model_tooltip_item = None
+
+        def _on_model_motion(event):
+            """鼠标移动时检查是否需要显示 Base URL tooltip"""
+            item = self.model_list_tree.identify_row(event.y)
+            column = self.model_list_tree.identify_column(event.x)
+            # 第4列是 base_url
+            if not item or column != '#4':
+                self._hide_model_tooltip()
+                return
+            values = self.model_list_tree.item(item, 'values')
+            if not values or len(values) < 4:
+                self._hide_model_tooltip()
+                return
+            base_url = values[3]
+            if not base_url:
+                self._hide_model_tooltip()
+                return
+            # 检查文本是否被截断（简单判断：长度超过一定字符）
+            if len(base_url) <= 50:
+                self._hide_model_tooltip()
+                return
+            tooltip_key = (item, 'base_url')
+            if tooltip_key == self._model_tooltip_item and self._model_tooltip and self._model_tooltip.winfo_exists():
+                return
+            self._model_tooltip_item = tooltip_key
+            if self._model_tooltip_after_id:
+                self.root.after_cancel(self._model_tooltip_after_id)
+            x = self.root.winfo_pointerx() + 15
+            y = self.root.winfo_pointery() + 10
+            self._model_tooltip_after_id = self.root.after(
+                300, lambda: self._show_model_tooltip(base_url, x, y, tooltip_key)
+            )
+
+        def _on_model_leave(event):
+            """鼠标离开时隐藏 tooltip"""
+            self._hide_model_tooltip()
+
+        self.model_list_tree.bind("<Motion>", _on_model_motion)
+        self.model_list_tree.bind("<Leave>", _on_model_leave)
 
         # 初始化模型列表
         self.saved_models = []
@@ -2698,14 +2749,23 @@ class BossFilterGUI:
             # 将内部键转换为显示名称
             provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
             base_url = model_config.get("base_url", "")
+            # 可用性状态显示
+            cap = model_config.get("capability", {})
+            cap_status = cap.get("status", "")
+            if cap_status in ("compatible", "limited"):
+                status_display = "✓ 可用"
+            else:
+                status_display = "未检测"
             is_current = "✓ 使用中" if name == current_model else ""
-            self.model_list_tree.insert("", "end", values=(name, provider_display, base_url), tags=('current' if is_current else ''))
+            self.model_list_tree.insert("", "end", values=(name, provider_display, status_display, base_url), tags=('current' if is_current else ''))
 
         # 设置使用中标记的样式
         self.model_list_tree.tag_configure('current', foreground=self.colors['success'])
 
         # 动态调整高度：普通窗口保持原来的最多6行，全屏/高窗口显示更多行。
         self._update_model_list_height()
+        # 根据窗口状态显示/隐藏 Base URL 列
+        self._update_model_list_columns()
 
         # 绑定双击事件 - 双击切换模型
         self.model_list_tree.bind("<Double-1>", lambda e: self.use_selected_model())
@@ -2735,6 +2795,27 @@ class BossFilterGUI:
             self.model_list_tree['height'] = max(1, min(row_count, max_rows))
         except tk.TclError:
             return
+
+    def _update_model_list_columns(self):
+        """始终显示四列：模型名称、服务商、状态、Base URL，最大化时自动拉伸"""
+        if not hasattr(self, 'model_list_tree'):
+            return
+        display = ("name", "provider", "compat", "base_url")
+        current = tuple(self.model_list_tree.cget("displaycolumns"))
+        if current != display:
+            self.model_list_tree.configure(displaycolumns=display)
+
+        # 最大化时所有列自动拉伸，普通窗口固定宽度
+        if self._is_window_maximized():
+            self.model_list_tree.column("name", width=350, stretch=True)
+            self.model_list_tree.column("provider", width=260, stretch=True)
+            self.model_list_tree.column("compat", width=160, stretch=True)
+            self.model_list_tree.column("base_url", width=500, stretch=True)
+        else:
+            self.model_list_tree.column("name", width=280, stretch=False)
+            self.model_list_tree.column("provider", width=260, stretch=False)
+            self.model_list_tree.column("compat", width=160, stretch=False)
+            self.model_list_tree.column("base_url", width=350, stretch=True)
 
     def create_run_page(self):
         """创建运行控制页面 - 增强版：浏览器状态检测 + 进度条 + 滚动支持"""
@@ -2915,7 +2996,11 @@ class BossFilterGUI:
         progress_frame = ttk.Frame(param_frame, style='TFrame')
         progress_frame.pack(fill="x", pady=int(15 * self.dpi_scale * self.zoom_factor))
 
-        ttk.Label(progress_frame, text="筛选进度:", font=self.font_label,
+        # 第一行：标签 + 进度条
+        progress_row = ttk.Frame(progress_frame, style='TFrame')
+        progress_row.pack(fill="x")
+
+        ttk.Label(progress_row, text="筛选进度:", font=self.font_label,
                  background=self.colors['bg_card']).pack(side="left")
 
         # 自定义 Progressbar 样式：高度与文字对齐
@@ -2927,15 +3012,18 @@ class BossFilterGUI:
                                   background=self.colors['primary'])
 
         self.progress_var = tk.DoubleVar(value=0)
-        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var,
+        self.progress_bar = ttk.Progressbar(progress_row, variable=self.progress_var,
                                             maximum=100, mode='determinate', length=400,
                                             style='Run.Horizontal.TProgressbar')
         self.progress_bar.pack(side="left", padx=int(15 * self.dpi_scale * self.zoom_factor), fill="x", expand=True)
 
-        self.progress_label = ttk.Label(progress_frame, text="0%",
+        # 第二行：进度描述文字（全宽，不截断）
+        self.progress_label = ttk.Label(progress_frame, text="",
                                        font=self.font_label,
-                                       foreground=self.colors['primary'], width=45)
-        self.progress_label.pack(side="left")
+                                       foreground=self.colors['primary'],
+                                       anchor="w", justify="left",
+                                       background=self.colors['bg_card'])
+        self.progress_label.pack(fill="x", pady=(int(4 * self.dpi_scale * self.zoom_factor), 0))
 
         # 控制按钮区
         btn_container = ttk.Frame(control_container, style='TFrame')
@@ -3940,7 +4028,82 @@ class BossFilterGUI:
                 clicked_item = tree.identify_row(event.y)
                 if not clicked_item:
                     return
-                tree.selection_set(clicked_item)
+                # 右键点击的行已在多选集合内时，保持现有选区
+                if clicked_item not in tree.selection():
+                    tree.selection_set(clicked_item)
+
+                selection = tree.selection()
+                # 多选时显示批量操作功能
+                if len(selection) > 1:
+                    def export_selected():
+                        if not selection:
+                            messagebox.showwarning("警告", "请先选择要导出的候选人")
+                            return
+                        selected_data = []
+                        for sel_item in selection:
+                            sv = tree.item(sel_item, 'values')
+                            for c in filtered_ref[0]:
+                                if c.get('name') == sv[0]:
+                                    selected_data.append(c)
+                                    break
+                        if not selected_data:
+                            return
+                        from bossmaster import export_to_excel
+                        if len(selected_data) == 1:
+                            init_name = f"{selected_data[0].get('name', '候选人')}.xlsx"
+                        else:
+                            init_name = f"{selected_data[0].get('name', '候选人')}等{len(selected_data)}人_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                        file_path = filedialog.asksaveasfilename(
+                            title="保存选中的候选人",
+                            defaultextension=".xlsx",
+                            filetypes=[("Excel 文件", "*.xlsx")],
+                            initialfile=init_name
+                        )
+                        if file_path:
+                            export_to_excel(selected_data, file_path)
+                            messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
+
+                    def remove_selected():
+                        if not messagebox.askyesno("确认删除", f"确定要移除选中的 {len(selection)} 名候选人吗？"):
+                            return
+                        for sel_item in selection:
+                            sv = tree.item(sel_item, 'values')
+                            for c in filtered_ref[0]:
+                                if c.get('name') == sv[0]:
+                                    geek_id = c.get('geek_id')
+                                    if geek_id:
+                                        # 从内存数据中移除
+                                        filtered_ref[0] = [x for x in filtered_ref[0] if x.get('geek_id') != geek_id]
+                                        # 从文件中移除
+                                        if CANDIDATES_PATH.exists():
+                                            with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                                                candidates = json.load(f)
+                                            candidates = [x for x in candidates if x.get('geek_id') != geek_id]
+                                            save_candidates_all(candidates, CANDIDATES_PATH)
+                                    break
+                        # 删除 Treeview 中的项
+                        for sel_item in selection:
+                            tree.delete(sel_item)
+                        new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
+                        count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
+                        self.refresh_home_stats()
+                        self.refresh_results()
+
+                    context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
+                    menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
+                    icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+                    icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
+                    icon_greet = self.icons.button('play', self.colors['success'])
+                    menu._icon_refs = [icon_export_menu, icon_trash_menu, icon_greet]
+                    menu.add_command(label=" 批量打招呼", image=icon_greet, compound=tk.LEFT,
+                                     command=lambda: self._greet_selected_candidates(selection, filtered_ref, tree, parent=detail_window))
+                    menu.add_command(label=" 移除选中", image=icon_trash_menu, compound=tk.LEFT,
+                                     command=remove_selected)
+                    menu.add_separator()
+                    menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT,
+                                     command=export_selected)
+                    menu.tk_popup(event.x_root, event.y_root)
+                    return
 
                 # 从 filtered_ref 中定位候选人
                 vals = tree.item(clicked_item, 'values')
@@ -4294,7 +4457,82 @@ class BossFilterGUI:
                 clicked_item = tree.identify_row(event.y)
                 if not clicked_item:
                     return
-                tree.selection_set(clicked_item)
+                # 右键点击的行已在多选集合内时，保持现有选区
+                if clicked_item not in tree.selection():
+                    tree.selection_set(clicked_item)
+
+                selection = tree.selection()
+                # 多选时显示批量操作功能
+                if len(selection) > 1:
+                    def export_selected():
+                        if not selection:
+                            messagebox.showwarning("警告", "请先选择要导出的候选人")
+                            return
+                        selected_data = []
+                        for sel_item in selection:
+                            sv = tree.item(sel_item, 'values')
+                            for c in filtered_ref[0]:
+                                if c.get('name') == sv[0]:
+                                    selected_data.append(c)
+                                    break
+                        if not selected_data:
+                            return
+                        from bossmaster import export_to_excel
+                        if len(selected_data) == 1:
+                            init_name = f"{selected_data[0].get('name', '候选人')}.xlsx"
+                        else:
+                            init_name = f"{selected_data[0].get('name', '候选人')}等{len(selected_data)}人_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                        file_path = filedialog.asksaveasfilename(
+                            title="保存选中的候选人",
+                            defaultextension=".xlsx",
+                            filetypes=[("Excel 文件", "*.xlsx")],
+                            initialfile=init_name
+                        )
+                        if file_path:
+                            export_to_excel(selected_data, file_path)
+                            messagebox.showinfo("成功", f"已导出 {len(selected_data)} 名候选人到：\n{file_path}")
+
+                    def remove_selected():
+                        if not messagebox.askyesno("确认删除", f"确定要移除选中的 {len(selection)} 名候选人吗？"):
+                            return
+                        for sel_item in selection:
+                            sv = tree.item(sel_item, 'values')
+                            for c in filtered_ref[0]:
+                                if c.get('name') == sv[0]:
+                                    geek_id = c.get('geek_id')
+                                    if geek_id:
+                                        # 从内存数据中移除
+                                        filtered_ref[0] = [x for x in filtered_ref[0] if x.get('geek_id') != geek_id]
+                                        # 从文件中移除
+                                        if CANDIDATES_PATH.exists():
+                                            with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                                                candidates = json.load(f)
+                                            candidates = [x for x in candidates if x.get('geek_id') != geek_id]
+                                            save_candidates_all(candidates, CANDIDATES_PATH)
+                                    break
+                        # 删除 Treeview 中的项
+                        for sel_item in selection:
+                            tree.delete(sel_item)
+                        new_greeted = len([c for c in filtered_ref[0] if c.get('greet_sent', False)])
+                        count_label_ref[0].config(text=f"，已打招呼 {new_greeted} 人")
+                        self.refresh_results()
+                        detail_window.lift()
+
+                    context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
+                    menu = tk.Menu(detail_window, tearoff=0, font=context_menu_font)
+                    icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+                    icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
+                    icon_greet = self.icons.button('play', self.colors['success'])
+                    menu._icon_refs = [icon_export_menu, icon_trash_menu, icon_greet]
+                    menu.add_command(label=" 批量打招呼", image=icon_greet, compound=tk.LEFT,
+                                     command=lambda: self._greet_selected_candidates(selection, filtered_ref, tree, parent=detail_window))
+                    menu.add_command(label=" 移除选中", image=icon_trash_menu, compound=tk.LEFT,
+                                     command=remove_selected)
+                    menu.add_separator()
+                    menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT,
+                                     command=export_selected)
+                    menu.tk_popup(event.x_root, event.y_root)
+                    return
 
                 # 从 filtered_ref 中定位候选人
                 vals = tree.item(clicked_item, 'values')
@@ -4692,107 +4930,155 @@ class BossFilterGUI:
             messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
 
     def test_saved_model_connectivity(self):
-        """测试已保存模型列表中选中模型的连通性（单模型，后台线程执行）"""
+        """测试已保存模型列表中选中模型的连通性（支持多选，后台并行执行）"""
         selection = self.model_list_tree.selection()
         if not selection:
-            messagebox.showwarning("警告", "请先选择要测试的模型")
+            messagebox.showwarning("警告", "请先选择要测试的模型（Ctrl+点击多选）")
             return
 
-        item = self.model_list_tree.item(selection[0])
-        model_name = item['values'][0]
-        provider_display = item['values'][1]
-        provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
+        # 收集所有选中模型的配置
+        models_to_test = []
+        for item_id in selection:
+            item = self.model_list_tree.item(item_id)
+            model_name = item['values'][0]
+            provider_display = item['values'][1]
+            provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
 
-        # 查找模型配置（base_url）
-        model_config = None
-        for saved in getattr(self, 'saved_models', []):
-            if saved.get("model") == model_name:
-                model_config = saved
-                break
-        if not model_config:
-            messagebox.showerror("错误", f"未找到模型 '{model_name}' 的配置信息")
+            model_config = None
+            for saved in getattr(self, 'saved_models', []):
+                if saved.get("model") == model_name:
+                    model_config = saved
+                    break
+            if not model_config:
+                continue
+
+            base_url = model_config.get("base_url", "").strip()
+            api_key = get_api_key(provider_key, base_url)
+            models_to_test.append({
+                "model_name": model_name,
+                "provider_display": provider_display,
+                "provider_key": provider_key,
+                "model_config": model_config,
+                "base_url": base_url,
+                "api_key": api_key,
+            })
+
+        if not models_to_test:
+            messagebox.showerror("错误", "未找到选中模型的配置信息")
             return
 
-        base_url = model_config.get("base_url", "").strip()
-        api_key = get_api_key(provider_key, base_url)
-        if not api_key:
-            messagebox.showwarning("警告",
-                f"模型 '{model_name}' 的 API Key 未在系统钥匙串中找到\n\n"
-                f"请先在 API 配置页输入并保存该服务商的 API Key")
-            return
-        if not base_url:
-            messagebox.showwarning("警告", f"模型 '{model_name}' 未配置 Base URL")
-            return
+        total = len(models_to_test)
+        self._update_api_status(text=f"⏳ 正在测试 {total} 个模型...", foreground=self.colors['warning'])
 
-        self._update_api_status(text=f"⏳ 正在测试 {model_name}...", foreground=self.colors['warning'])
+        # 并行测试
+        results = {}
+        results_lock = threading.Lock()
 
-        def _run_test():
-            import requests, certifi, time
-            start = time.time()
-            session = requests.Session()
-            try:
-                resp = session.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    json={"model": model_name, "messages": [{"role": "user", "content": "1"}],
-                          "max_tokens": 1, "stream": False},
-                    headers={"Content-Type": "application/json",
-                             "Authorization": f"Bearer {api_key}",
-                             "User-Agent": USER_AGENT, "Connection": "close"},
-                    timeout=(8, 30), verify=certifi.where()
-                )
-                elapsed = time.time() - start
-                if resp.status_code == 200:
-                    result = {"status": "success", "time": elapsed}
-                elif resp.status_code == 401:
-                    result = {"status": "error", "msg": "认证失败（API Key 无效）"}
-                elif resp.status_code == 404:
-                    result = {"status": "error", "msg": "模型不存在"}
-                else:
-                    friendly = None
-                    try:
-                        err_json = resp.json()
-                        code = err_json.get("error", {}).get("code", "")
-                        msg_text = err_json.get("error", {}).get("message", "")
-                        if "not activated" in msg_text.lower():
-                            friendly = "该服务商未开通此模型"
-                        elif "quota" in msg_text.lower() or "limit" in msg_text.lower():
-                            friendly = "配额超限"
-                        elif "free tier" in msg_text.lower() or "allocationquota" in code.lower():
-                            friendly = "免费额度已用完"
-                    except Exception:
-                        pass
-                    result = {"status": "error", "msg": friendly or f"HTTP {resp.status_code}"}
-            except requests.exceptions.Timeout:
-                result = {"status": "error", "msg": "连接超时"}
-            except requests.exceptions.ConnectionError:
-                result = {"status": "error", "msg": "无法连接，请检查 Base URL 或网络"}
-            except Exception as e:
-                result = {"status": "error", "msg": f"异常: {str(e)[:80]}"}
-            finally:
-                session.close()
+        def _test_one(entry):
+            model_name = entry["model_name"]
+            if not entry["api_key"]:
+                result = {"status": "error", "msg": "API Key 未配置"}
+            elif not entry["base_url"]:
+                result = {"status": "error", "msg": "Base URL 未配置"}
+            else:
+                try:
+                    from llm_eval import probe_model_compatibility
+                    config = dict(entry["model_config"])
+                    config["api_provider"] = entry["provider_key"]
+                    capability = probe_model_compatibility(config, entry["api_key"], force=True)
+                    if capability.get("status") in ("compatible", "limited"):
+                        result = {
+                            "status": "success",
+                            "time": capability.get("response_time", 0),
+                            "capability": capability,
+                        }
+                    else:
+                        result = {"status": "error", "msg": capability.get("message", "模型不兼容")}
+                except Exception as e:
+                    result = {"status": "error", "msg": f"异常: {str(e)[:80]}"}
 
-            self.root.after(0, lambda: self._show_connectivity_result(model_name, provider_display, result))
+            with results_lock:
+                results[model_name] = result
 
-        threading.Thread(target=_run_test, daemon=True).start()
+        threads = []
+        for entry in models_to_test:
+            t = threading.Thread(target=_test_one, args=(entry,), daemon=True)
+            threads.append(t)
+            t.start()
 
-    def _show_connectivity_result(self, model_name, provider_display, result):
-        """在主线程显示连通性测试结果"""
-        if result["status"] == "success":
-            self._update_api_status(
-                text=f"✓ {model_name} 连通正常（{result['time']:.1f}s）",
-                foreground=self.colors['success'])
-            messagebox.showinfo("测试成功",
-                f"模型 {model_name} 连通正常\n\n"
-                f"服务商：{provider_display}\n"
-                f"响应时间：{result['time']:.1f} 秒")
+        def _wait_and_show():
+            for t in threads:
+                t.join()
+            self.root.after(0, lambda: self._show_batch_connectivity_results(models_to_test, results))
+
+        threading.Thread(target=_wait_and_show, daemon=True).start()
+
+    def _show_batch_connectivity_results(self, models_to_test, results):
+        """显示批量连通性测试结果"""
+        success_lines = []
+        fail_lines = []
+        for entry in models_to_test:
+            name = entry["model_name"]
+            provider = entry["provider_display"]
+            result = results.get(name, {"status": "error", "msg": "超时"})
+            if result["status"] == "success":
+                cap = result.get("capability", {})
+                compat = "完整兼容" if cap.get("status") == "compatible" else "兼容模式"
+                mode = "工具调用" if cap.get("output_mode") == "tool" else "JSON 纠错"
+                success_lines.append(f"✓ {name} ({provider}) — {compat} / {mode} ({result['time']:.1f}s)")
+                # 回写 capability
+                self._save_capability_to_model(name, cap)
+            else:
+                fail_lines.append(f"✗ {name} ({provider}) — {result.get('msg', '未知错误')}")
+
+        # 状态栏显示摘要
+        s_count = len(success_lines)
+        f_count = len(fail_lines)
+        if f_count == 0:
+            self._update_api_status(text=f"✓ {s_count} 个模型测试通过", foreground=self.colors['success'])
+        elif s_count == 0:
+            self._update_api_status(text=f"✗ {f_count} 个模型测试失败", foreground=self.colors['danger'])
         else:
-            self._update_api_status(
-                text=f"✗ {model_name} 测试失败：{result['msg']}",
-                foreground=self.colors['danger'])
-            messagebox.showerror("测试失败",
-                f"模型 {model_name} 测试失败\n\n"
-                f"服务商：{provider_display}\n"
-                f"错误：{result['msg']}")
+            self._update_api_status(text=f"{s_count} 通过 / {f_count} 失败", foreground=self.colors['warning'])
+
+        # 弹窗显示详情
+        detail = "\n".join(success_lines + fail_lines)
+        if f_count == 0:
+            messagebox.showinfo("测试完成", f"全部 {s_count} 个模型测试通过\n\n{detail}")
+        else:
+            messagebox.showwarning("测试完成", f"{s_count} 通过 / {f_count} 失败\n\n{detail}")
+
+    def _save_capability_to_model(self, model_name, capability):
+        """将探测到的 capability 回写到 saved_models 并持久化到磁盘"""
+        if not hasattr(self, 'saved_models'):
+            return
+        # 只保留显示需要的字段，避免存储过多探测细节
+        cap_slim = {
+            "status": capability.get("status", ""),
+            "output_mode": capability.get("output_mode", ""),
+        }
+        updated = False
+        for m in self.saved_models:
+            if m.get("model") == model_name:
+                m["capability"] = cap_slim
+                updated = True
+        if not updated:
+            return
+        # 同步到 api_config 并原子写盘
+        self.api_config["saved_models"] = self.saved_models
+        try:
+            tmp_path = API_CONFIG_PATH.with_suffix('.json.tmp')
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(self._sanitize_config_for_save(self.api_config), f, ensure_ascii=False, indent=4)
+            os.replace(tmp_path, API_CONFIG_PATH)
+        except Exception:
+            # 写盘失败不影响内存状态，清理临时文件
+            try:
+                os.remove(API_CONFIG_PATH.with_suffix('.json.tmp'))
+            except OSError:
+                pass
+        # 刷新列表显示
+        self.load_saved_models_to_tree()
 
     def save_api_config(self):
         """保存 API 配置 - API Key 按服务商加密存储到系统钥匙串"""
@@ -5271,52 +5557,25 @@ class BossFilterGUI:
                                 results_lock = threading.Lock()
 
                                 def _test_single_model(model_name):
-                                    """测试单个模型"""
-                                    import requests
-                                    import certifi
-                                    import time
-
-                                    start = time.time()
-                                    session = requests.Session()
+                                    """测试单个模型能否稳定生成程序所需评估格式。"""
                                     try:
-                                        resp = session.post(
-                                            f"{test_base_url.rstrip('/')}/chat/completions",
-                                            json={"model": model_name, "messages": [{"role": "user", "content": "1"}], "max_tokens": 1, "stream": False},
-                                            headers={"Content-Type": "application/json", "Authorization": f"Bearer {test_api_key}", "User-Agent": USER_AGENT, "Connection": "close"},
-                                            timeout=(8, 30),
-                                            verify=certifi.where()
-                                        )
-                                        elapsed = time.time() - start
-                                        if resp.status_code == 200:
-                                            result = {"status": "success", "time": elapsed}
-                                        elif resp.status_code == 401:
-                                            result = {"status": "error", "msg": "认证失败"}
-                                        elif resp.status_code == 404:
-                                            result = {"status": "error", "msg": "模型不存在"}
+                                        from llm_eval import probe_model_compatibility
+                                        capability = probe_model_compatibility({
+                                            "api_provider": provider_key,
+                                            "base_url": test_base_url,
+                                            "model": model_name,
+                                        }, test_api_key, force=True)
+                                        if capability.get("status") in ("compatible", "limited"):
+                                            mode = "工具" if capability.get("output_mode") == "tool" else "兼容"
+                                            result = {
+                                                "status": "success",
+                                                "time": capability.get("response_time", 0),
+                                                "mode": mode,
+                                            }
                                         else:
-                                            # 识别常见业务错误
-                                            friendly = None
-                                            try:
-                                                err_json = resp.json()
-                                                code = err_json.get("error", {}).get("code", "")
-                                                msg_text = err_json.get("error", {}).get("message", "")
-                                                if "not activated" in msg_text.lower():
-                                                    friendly = "未开通"
-                                                elif "quota" in msg_text.lower() or "limit" in msg_text.lower():
-                                                    friendly = "配额超限"
-                                                elif "free tier" in msg_text.lower() or "allocationquota" in code.lower():
-                                                    friendly = "免费额度已用完"
-                                            except Exception:
-                                                pass
-                                            result = {"status": "error", "msg": friendly or f"HTTP {resp.status_code}"}
-                                    except requests.exceptions.Timeout:
-                                        result = {"status": "error", "msg": "连接超时"}
-                                    except requests.exceptions.ConnectionError:
-                                        result = {"status": "error", "msg": "无法连接"}
+                                            result = {"status": "error", "msg": capability.get("message", "不兼容")}
                                     except Exception as e:
                                         result = {"status": "error", "msg": f"异常: {str(e)[:50]}"}
-                                    finally:
-                                        session.close()
 
                                     with results_lock:
                                         results[model_name] = result
@@ -5330,7 +5589,7 @@ class BossFilterGUI:
                                                 current_text = current_text.split(" [")[0]
                                             # 设置新状态
                                             if result["status"] == "success":
-                                                new_text = f"{current_text} [✓ {result['time']:.1f}s]"
+                                                new_text = f"{current_text} [✓ {result.get('mode', '兼容')} {result['time']:.1f}s]"
                                                 self.root.after(0, lambda i=idx, t=new_text: (
                                                     listbox.delete(i),
                                                     listbox.insert(i, t),
@@ -5687,6 +5946,56 @@ class BossFilterGUI:
                     f"• Base URL 中的域名是否正确\n"
                     f"• DNS 服务器是否可用\n"
                     f"• 是否需要配置 hosts 文件"
+                ))
+                return
+
+            # 连通不等于可用：真实验证该模型能否生成程序可解析的评估结果。
+            try:
+                from llm_eval import probe_model_compatibility
+                provider_display = self.api_provider_var.get().strip()
+                provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
+                capability = probe_model_compatibility({
+                    "api_provider": provider_key,
+                    "base_url": base_url,
+                    "model": model,
+                }, api_key, force=True)
+                elapsed = time.time() - start_time
+                if capability.get("status") in ("compatible", "limited"):
+                    compatibility = "完整兼容" if capability.get("status") == "compatible" else "兼容模式"
+                    output_mode = "结构化工具调用" if capability.get("output_mode") == "tool" else "JSON 文本自动纠错"
+                    self.root.after(0, lambda: self._update_api_status(
+                        text=f"✓ {compatibility} ({elapsed:.1f}s)",
+                        foreground=self.colors['success'],
+                    ))
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "连接测试成功",
+                        f"模型可用于 AI 评估\n\n"
+                        f"响应时间：{elapsed:.1f}秒\n"
+                        f"服务商：{provider_display}\n"
+                        f"模型：{model}\n"
+                        f"兼容状态：{compatibility}\n"
+                        f"输出方式：{output_mode}",
+                    ))
+                else:
+                    error_message = capability.get("message", "模型无法生成程序所需评估格式")
+                    self.root.after(0, lambda: self._update_api_status(
+                        text="✗ 模型不兼容",
+                        foreground=self.colors['danger'],
+                    ))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "连接测试失败",
+                        f"API 可访问，但模型不能用于 AI 评估\n\n原因：{error_message}",
+                    ))
+                return
+            except Exception as e:
+                error_message = str(e)[:120]
+                self.root.after(0, lambda: self._update_api_status(
+                    text="✗ 能力验证失败",
+                    foreground=self.colors['danger'],
+                ))
+                self.root.after(0, lambda: messagebox.showerror(
+                    "连接测试失败",
+                    f"模型能力验证异常：{error_message}",
                 ))
                 return
 
@@ -6996,11 +7305,14 @@ class BossFilterGUI:
             return
         if not self.browser_connected or not self.browser_page:
             return
-        self._selectors_auto_checked = True
-
+        page = self.browser_page
         try:
+            page.run_js('return 1')
+            if page is not self.browser_page:
+                return
+            self._selectors_auto_checked = True
             from bossmaster import check_selectors_health
-            results = check_selectors_health(self.browser_page)
+            results = check_selectors_health(page)
 
             ok_count = sum(1 for r in results if r['status'] == 'ok')
             warn_count = sum(1 for r in results if r['status'] == 'warn')
@@ -7024,7 +7336,15 @@ class BossFilterGUI:
                     f"可编辑 selectors.json 修复，详见日志。"
                 ))
         except Exception as e:
-            self.append_log(f"选择器自动检查失败：{e}")
+            self._selectors_auto_checked = False
+            error_text = str(e).splitlines()[0] if str(e) else type(e).__name__
+            if "连接已断开" in str(e) or "disconnected" in str(e).lower():
+                self.browser_connected = False
+                if page is self.browser_page:
+                    self.browser_page = None
+                self.append_log("浏览器页面连接短暂中断，等待自动重连...")
+                return
+            self.append_log(f"选择器自动检查失败：{error_text}")
 
     def _reactivate_and_navigate(self, page, target_url):
         """激活已有的 Chrome 进程并导航到目标页面。
@@ -8292,6 +8612,31 @@ class BossFilterGUI:
             self._tooltip = None
         self._tooltip_item = None
 
+    def _show_model_tooltip(self, text, x, y, tooltip_key=None):
+        """显示模型列表的 Base URL tooltip"""
+        self._hide_model_tooltip()
+        tip = tk.Toplevel(self.root)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f'+{x}+{y}')
+        label = tk.Label(
+            tip, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
+            font=(FONT_FAMILY, int(10 * self.dpi_scale * self.zoom_factor)),
+            padx=6, pady=3, wraplength=400
+        )
+        label.pack()
+        self._model_tooltip = tip
+        self._model_tooltip_item = tooltip_key
+
+    def _hide_model_tooltip(self, event=None):
+        """隐藏模型列表的 tooltip"""
+        if self._model_tooltip_after_id:
+            self.root.after_cancel(self._model_tooltip_after_id)
+            self._model_tooltip_after_id = None
+        if self._model_tooltip:
+            self._model_tooltip.destroy()
+            self._model_tooltip = None
+        self._model_tooltip_item = None
+
     def _bind_detail_tree_tooltip(self, tree, filtered_ref):
         """为明细窗口 Treeview 绑定状态列 tooltip（截断时显示完整状态）。"""
         _state = {'key': None, 'after_id': None}
@@ -8363,7 +8708,51 @@ class BossFilterGUI:
         item = self.result_tree.identify_row(event.y)
         if not item:
             return
-        self.result_tree.selection_set(item)
+        # 右键点击的行已在多选集合内时，保持现有选区
+        if item not in self.result_tree.selection():
+            self.result_tree.selection_set(item)
+
+        selection = self.result_tree.selection()
+        # 多选时显示批量操作功能
+        if len(selection) > 1:
+            context_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
+            menu = tk.Menu(self.root, tearoff=0, font=context_menu_font)
+            icon_export_menu = self.icons.button('export', self.colors['text_primary'])
+            icon_trash_menu = self.icons.button('trash', self.colors['text_primary'])
+            icon_greet = self.icons.button('play', self.colors['success'])
+            menu._icon_refs = [icon_export_menu, icon_trash_menu, icon_greet]
+
+            def remove_selected():
+                if not messagebox.askyesno("确认删除", f"确定要移除选中的 {len(selection)} 名候选人吗？"):
+                    return
+                for sel_item in selection:
+                    candidate = self._find_candidate_by_tree_item(sel_item)
+                    if candidate:
+                        geek_id = candidate.get('geek_id')
+                        if geek_id:
+                            # 从内存数据中移除
+                            self.result_tree_data = [c for c in self.result_tree_data if c.get('geek_id') != geek_id]
+                            # 从文件中移除
+                            if CANDIDATES_PATH.exists():
+                                with open(CANDIDATES_PATH, 'r', encoding='utf-8') as f:
+                                    candidates = json.load(f)
+                                candidates = [c for c in candidates if c.get('geek_id') != geek_id]
+                                save_candidates_all(candidates, CANDIDATES_PATH)
+                # 删除 Treeview 中的项
+                for sel_item in selection:
+                    self.result_tree.delete(sel_item)
+                self.refresh_home_stats()
+
+            menu.add_command(label=" 批量打招呼", image=icon_greet, compound=tk.LEFT,
+                             command=lambda: self._greet_selected_candidates(selection, [self.result_tree_data], self.result_tree, parent=self.root))
+            menu.add_command(label=" 移除选中", image=icon_trash_menu, compound=tk.LEFT,
+                             command=remove_selected)
+            menu.add_separator()
+            menu.add_command(label=" 导出选中", image=icon_export_menu, compound=tk.LEFT,
+                             command=lambda: self._export_selected())
+            menu.tk_popup(event.x_root, event.y_root)
+            return
+
         candidate = self._find_candidate_by_tree_item(item)
         if not candidate:
             return
@@ -9998,6 +10387,312 @@ class BossFilterGUI:
                     self._browser_connection_lock.release()
 
         threading.Thread(target=greet_worker, daemon=True).start()
+
+    def _greet_selected_candidates(self, selection, filtered_ref, tree, parent=None):
+        """批量打招呼（在后台线程执行）"""
+        _parent = parent or self.root
+
+        # 收集选中的候选人数据
+        candidates_to_greet = []
+        for sel_item in selection:
+            sv = tree.item(sel_item, 'values')
+            if not sv:
+                continue
+            name = sv[0]
+            score = sv[4]
+            for c in filtered_ref[0]:
+                if c.get('name') == name and str(c.get('match_score', '')) == str(score):
+                    # 跳过已打招呼的候选人
+                    if not c.get('greet_sent', False):
+                        candidates_to_greet.append((sel_item, c))
+                    break
+
+        if not candidates_to_greet:
+            messagebox.showinfo("提示", "选中的候选人已全部打过招呼", parent=_parent)
+            return
+
+        # 分组：有 greet_context 和没有 greet_context 的候选人
+        with_context = []
+        without_context = []
+        for item, c in candidates_to_greet:
+            greet_context = c.get('greet_context') or {}
+            if greet_context.get('chat_start'):
+                with_context.append((item, c))
+            else:
+                without_context.append((item, c))
+
+        # 构建确认信息
+        names_with = [c.get('name', '') for _, c in with_context[:3]]
+        names_without = [c.get('name', '') for _, c in without_context[:3]]
+
+        confirm_parts = []
+        if with_context:
+            confirm_parts.append(f"✅ 可直接发送（{len(with_context)} 人）：{'、'.join(names_with)}{'...' if len(with_context) > 3 else ''}")
+        if without_context:
+            confirm_parts.append(f"⚠️ 需要页面支持（{len(without_context)} 人）：{'、'.join(names_without)}{'...' if len(without_context) > 3 else ''}")
+
+        confirm_text = "批量打招呼将按以下分组执行：\n\n" + "\n\n".join(confirm_parts)
+        if without_context:
+            confirm_text += "\n\n⚠️ 没有打招呼上下文的候选人，需要浏览器在对应岗位的推荐牛人页面才能发送。\n如果页面不对，这些候选人会发送失败。"
+
+        if not messagebox.askyesno("确认批量打招呼", confirm_text, parent=_parent):
+            return
+
+        # 后台线程执行批量打招呼
+        def batch_greet_worker():
+            connection_lock_acquired = False
+            try:
+                connection_lock_acquired = self._browser_connection_lock.acquire(timeout=8)
+                if not connection_lock_acquired:
+                    self.append_log("[批量打招呼] ❌ 浏览器正在执行其他连接操作，请稍后重试")
+                    return
+
+                # 浏览器未连接时自动尝试重连
+                if not self.browser_page:
+                    self.append_log("[批量打招呼] 浏览器未连接，正在尝试重连...")
+                    if not self._try_reconnect_browser():
+                        self.append_log("[批量打招呼] ❌ 浏览器重连失败，请先在「运行控制」页连接浏览器")
+                        _parent.after(0, lambda: messagebox.showwarning(
+                            "浏览器未连接",
+                            "无法连接到 Chrome 浏览器。\n请切换到「运行控制」页点击「检测/连接浏览器」。",
+                            parent=_parent))
+                        return
+                    self.append_log("[批量打招呼] ✅ 浏览器重连成功")
+
+                # 检查 page 连接是否还活着
+                try:
+                    self.browser_page.run_js('return 1')
+                except Exception:
+                    self.append_log("[批量打招呼] 浏览器连接已断开，正在尝试重连...")
+                    if not self._try_reconnect_browser():
+                        self.append_log("[批量打招呼] ❌ 浏览器重连失败，请先在「运行控制」页连接浏览器")
+                        _parent.after(0, lambda: messagebox.showwarning(
+                            "浏览器连接断开",
+                            "浏览器连接已断开且无法自动重连。\n请切换到「运行控制」页点击「检测/连接浏览器」。",
+                            parent=_parent))
+                        return
+                    self.append_log("[批量打招呼] ✅ 浏览器重连成功")
+
+                from bossmaster import send_greeting_on_list_page, send_greeting_with_context
+
+                success_count = 0
+                fail_count = 0
+                skip_count = 0
+
+                # 先处理有 greet_context 的候选人（稳定，不依赖页面）
+                if with_context:
+                    self.append_log(f"[批量打招呼] 处理 {len(with_context)} 个有上下文的候选人...")
+                    for tree_item, candidate in with_context:
+                        if self.stop_event.is_set():
+                            self.append_log("[批量打招呼] 用户停止操作")
+                            break
+
+                        name = candidate.get('name', '')
+                        geek_id = candidate.get('geek_id')
+
+                        if not geek_id:
+                            self.append_log(f"[批量打招呼] ⚠️ {name} 缺少 geek_id，跳过")
+                            skip_count += 1
+                            continue
+
+                        # 更新表格状态为"打招呼中..."
+                        _parent.after(0, lambda t=tree_item: self._safe_tree_set(tree, t, 'status', '打招呼中...'))
+
+                        self.append_log(f"[批量打招呼] 正在向 {name} 打招呼（使用上下文）...")
+
+                        def captcha_callback(detail):
+                            result = [False]
+                            done = threading.Event()
+
+                            def show_dialog():
+                                answer = messagebox.askyesno(
+                                    "检测到安全验证弹窗",
+                                    f"程序检测到安全验证弹窗\n（{detail}）\n\n"
+                                    "请在浏览器中手动完成验证。\n\n"
+                                    "点击「是」继续等待验证完成\n"
+                                    "点击「否」停止当前操作",
+                                    parent=_parent,
+                                )
+                                result[0] = answer
+                                done.set()
+
+                            _parent.after(0, show_dialog)
+                            while not done.is_set():
+                                if self.stop_event.is_set():
+                                    result[0] = False
+                                    done.set()
+                                    break
+                                done.wait(timeout=0.5)
+                            return result[0]
+
+                        greet_context = candidate.get('greet_context') or {}
+                        success, msg = send_greeting_with_context(
+                            self.browser_page, greet_context, stop_event=self.stop_event,
+                            captcha_callback=captcha_callback
+                        )
+
+                        if success:
+                            self.append_log(f"[批量打招呼] ✅ {name} — {msg}")
+                            persisted = self._update_greet_status(candidate, "manual_context")
+                            if persisted:
+                                success_count += 1
+                            else:
+                                self.append_log(f"[批量打招呼] ⚠️ {name} 已发送成功，但本地状态保存失败")
+                                success_count += 1
+                            # 更新表格状态
+                            _parent.after(0, lambda t=tree_item, c=candidate: self._safe_tree_set(tree, t, 'status', self._format_candidate_status(c)))
+                        else:
+                            self.append_log(f"[批量打招呼] ❌ {name} 失败：{msg}")
+                            fail_count += 1
+                            # 恢复表格状态
+                            _parent.after(0, lambda t=tree_item, c=candidate: self._safe_tree_set(tree, t, 'status', self._format_candidate_status(c)))
+                            # 沟通次数上限时停止
+                            if "上限" in msg or "次数" in msg:
+                                self.append_log("[批量打招呼] 沟通次数已达上限，停止批量打招呼")
+                                _parent.after(0, lambda: messagebox.showwarning(
+                                    "沟通次数已达上限",
+                                    "BOSS 直聘今日沟通次数已用完，请明天再试。",
+                                    parent=_parent))
+                                break
+
+                        # 打招呼间隔，避免触发风控
+                        if self.stop_event.is_set():
+                            break
+                        import random
+                        time.sleep(random.uniform(2, 4))
+
+                # 再处理没有 greet_context 的候选人（需要页面支持）
+                if without_context and not self.stop_event.is_set():
+                    self.append_log(f"[批量打招呼] 处理 {len(without_context)} 个需要页面支持的候选人...")
+
+                    # 弹出提示框，让用户确认浏览器是否在正确的页面上
+                    page_confirm_done = threading.Event()
+                    page_confirm_result = [False]
+
+                    def show_page_confirm():
+                        job_names = list(set(c.get('job_name', '未知岗位') for _, c in without_context))
+                        job_text = "、".join(job_names[:3])
+                        if len(job_names) > 3:
+                            job_text += "等"
+
+                        answer = messagebox.askyesno(
+                            "需要切换页面",
+                            f"接下来需要处理 {len(without_context)} 个没有打招呼上下文的候选人。\n\n"
+                            f"这些候选人需要浏览器在对应岗位的推荐牛人页面才能发送打招呼。\n\n"
+                            f"涉及岗位：{job_text}\n\n"
+                            f"请确认浏览器已打开对应的推荐牛人页面。\n\n"
+                            f"点击「是」继续执行\n"
+                            f"点击「否」跳过这些候选人",
+                            parent=_parent,
+                        )
+                        page_confirm_result[0] = answer
+                        page_confirm_done.set()
+
+                    _parent.after(0, show_page_confirm)
+                    page_confirm_done.wait(timeout=30)
+
+                    if not page_confirm_result[0]:
+                        self.append_log("[批量打招呼] 用户选择跳过需要页面支持的候选人")
+                        skip_count += len(without_context)
+                    else:
+                        for tree_item, candidate in without_context:
+                            if self.stop_event.is_set():
+                                self.append_log("[批量打招呼] 用户停止操作")
+                                break
+
+                            name = candidate.get('name', '')
+                            geek_id = candidate.get('geek_id')
+                            job_name = candidate.get('job_name', '未知岗位')
+
+                            if not geek_id:
+                                self.append_log(f"[批量打招呼] ⚠️ {name} 缺少 geek_id，跳过")
+                                skip_count += 1
+                                continue
+
+                            # 更新表格状态为"打招呼中..."
+                            _parent.after(0, lambda t=tree_item: self._safe_tree_set(tree, t, 'status', '打招呼中...'))
+
+                            self.append_log(f"[批量打招呼] 正在向 {name} 打招呼（需要页面支持）...")
+
+                            def captcha_callback2(detail):
+                                result = [False]
+                                done = threading.Event()
+
+                                def show_dialog():
+                                    answer = messagebox.askyesno(
+                                        "检测到安全验证弹窗",
+                                        f"程序检测到安全验证弹窗\n（{detail}）\n\n"
+                                        "请在浏览器中手动完成验证。\n\n"
+                                        "点击「是」继续等待验证完成\n"
+                                        "点击「否」停止当前操作",
+                                        parent=_parent,
+                                    )
+                                    result[0] = answer
+                                    done.set()
+
+                                _parent.after(0, show_dialog)
+                                while not done.is_set():
+                                    if self.stop_event.is_set():
+                                        result[0] = False
+                                        done.set()
+                                        break
+                                    done.wait(timeout=0.5)
+                                return result[0]
+
+                            success, msg = send_greeting_on_list_page(
+                                self.browser_page, geek_id, stop_event=self.stop_event,
+                                captcha_callback=captcha_callback2
+                            )
+
+                            if success:
+                                self.append_log(f"[批量打招呼] ✅ {name} — {msg}")
+                                persisted = self._update_greet_status(candidate, "manual_list")
+                                if persisted:
+                                    success_count += 1
+                                else:
+                                    self.append_log(f"[批量打招呼] ⚠️ {name} 已发送成功，但本地状态保存失败")
+                                    success_count += 1
+                                # 更新表格状态
+                                _parent.after(0, lambda t=tree_item, c=candidate: self._safe_tree_set(tree, t, 'status', self._format_candidate_status(c)))
+                            else:
+                                self.append_log(f"[批量打招呼] ❌ {name} 失败：{msg}")
+                                fail_count += 1
+                                # 恢复表格状态
+                                _parent.after(0, lambda t=tree_item, c=candidate: self._safe_tree_set(tree, t, 'status', self._format_candidate_status(c)))
+                                # 沟通次数上限时停止
+                                if "上限" in msg or "次数" in msg:
+                                    self.append_log("[批量打招呼] 沟通次数已达上限，停止批量打招呼")
+                                    _parent.after(0, lambda: messagebox.showwarning(
+                                        "沟通次数已达上限",
+                                        "BOSS 直聘今日沟通次数已用完，请明天再试。",
+                                        parent=_parent))
+                                    break
+
+                            # 打招呼间隔，避免触发风控
+                            if self.stop_event.is_set():
+                                break
+                            import random
+                            time.sleep(random.uniform(2, 4))
+
+                # 完成后刷新结果
+                _parent.after(0, self.refresh_results)
+                _parent.after(0, self.refresh_home_stats)
+                self.append_log(f"[批量打招呼] 完成：成功 {success_count} 人，失败 {fail_count} 人，跳过 {skip_count} 人")
+
+            except Exception as e:
+                self.append_log(f"[批量打招呼] ❌ 异常：{e}")
+            finally:
+                if connection_lock_acquired:
+                    self._browser_connection_lock.release()
+
+        threading.Thread(target=batch_greet_worker, daemon=True).start()
+
+    def _safe_tree_set(self, tree, item, column, value):
+        """安全设置 Treeview 单元格值（忽略已删除的 item）"""
+        try:
+            tree.set(item, column, value)
+        except Exception:
+            pass
 
     def _try_reconnect_browser(self) -> bool:
         """尝试重连浏览器（读取持久化端口，不启动新 Chrome）

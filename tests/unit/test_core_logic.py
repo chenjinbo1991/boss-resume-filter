@@ -26,6 +26,54 @@ def test_rescan_log_describes_candidates_as_pending_evaluation_not_new():
     assert "新增 {len(raw_candidates)} 个" not in source
 
 
+def test_scan_summary_separates_rule_passed_and_ai_final_counts():
+    message = bossmaster._format_scan_summary(
+        "完成",
+        total_rule_passed=13,
+        total_raw=375,
+        total_ai_evaluated=4,
+        total_ai_downgraded=1,
+        total_passed=12,
+        total_greeted=0,
+    )
+
+    assert message == (
+        "[完成] 筛选完成：规则筛选通过 13/375 人，"
+        "AI复核后淘汰 1 人，最终保留 12 人，0 人已打招呼"
+    )
+
+
+def test_scan_summary_without_ai_does_not_repeat_final_count():
+    message = bossmaster._format_scan_summary(
+        "完成",
+        total_rule_passed=12,
+        total_raw=100,
+        total_ai_evaluated=0,
+        total_ai_downgraded=0,
+        total_passed=12,
+        total_greeted=3,
+    )
+
+    assert message == "[完成] 筛选完成：规则筛选通过 12/100 人，3 人已打招呼"
+
+
+def test_selector_health_rejects_disconnected_page_before_iframe_lookup():
+    class DisconnectedPage:
+        def run_js(self, *_args, **_kwargs):
+            raise RuntimeError("与页面的连接已断开。")
+
+        def eles(self, *_args, **_kwargs):
+            raise AssertionError("连接验证失败后不应继续检查 iframe")
+
+    raised = False
+    try:
+        bossmaster.check_selectors_health(DisconnectedPage())
+    except RuntimeError as exc:
+        raised = "连接已断开" in str(exc)
+
+    assert raised is True
+
+
 def test_parse_experience_years_supports_arabic_and_chinese_numbers():
     cases = {
         "3 年经验": 3,
@@ -628,6 +676,74 @@ def test_api_enrichment_uses_page_cap_and_random_delay():
     mock_dom_extract.assert_called_once()
 
 
+def test_default_api_enrichment_allows_twenty_pages_and_warns_when_still_hitting():
+    class FakeFrame:
+        def run_js(self, script):
+            if script == 'return location.href':
+                return "https://www.zhipin.com/web/frame/recommend/?jobid=job-123&status=0"
+            return None
+
+    dom_batch = [
+        {"geek_id": f"g-dom-{i}", "name": f"候选人{i}", "text": "本科，5年 Java"}
+        for i in range(21)
+    ]
+    api_pages = [
+        ([
+            {
+                "geek_id": f"g-dom-{i}",
+                "name": f"候选人{i}",
+                "summary": "本科，5年 Java",
+                "structured": {"exp_years": 5},
+            }
+        ], True)
+        for i in range(20)
+    ]
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output), \
+            patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener', return_value=None), \
+            patch('bossmaster._fetch_api_page_result', side_effect=api_pages) as mock_fetch, \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch', return_value=dom_batch):
+        candidates = bossmaster.extract_candidates_by_comprehensive_analysis(
+            FakeFrame(), max_rounds=1, extraction_mode="api"
+        )
+
+    assert len(candidates) == 21
+    assert mock_fetch.call_count == 20
+    assert "最多 20 页" in output.getvalue()
+    assert "API 补全已达到 20 页上限" in output.getvalue()
+    assert "仍有 1 人缺少结构化信息" in output.getvalue()
+
+
+def test_scan_warns_when_round_limit_ends_with_new_candidates():
+    class FakePage:
+        url = "https://www.zhipin.com/web/chat/recommend"
+
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output), \
+            patch('bossmaster.time.sleep'), \
+            patch('bossmaster._human_delay', return_value=0), \
+            patch('bossmaster.get_iframe', return_value=None), \
+            patch('bossmaster._start_recommend_api_listener', return_value=None), \
+            patch('bossmaster._detect_captcha', return_value=(False, "")), \
+            patch('bossmaster._extract_cards_batch', return_value=[
+                {"geek_id": "g-new", "name": "新增候选人", "text": "本科，5年 Java"}
+            ]):
+        bossmaster.extract_candidates_by_comprehensive_analysis(
+            FakePage(), max_rounds=1, extraction_mode="dom"
+        )
+
+    assert "已达到扫描轮次上限 1" in output.getvalue()
+    assert "最后一轮仍新增 1 人" in output.getvalue()
+
+
 def test_api_enrichment_stops_after_consecutive_misses():
     """API 兜底连续 3 页无 DOM 命中时提前停止，不浪费后续请求。"""
     class FakeFrame:
@@ -927,7 +1043,7 @@ def test_auto_greet_skips_manual_review_candidates():
     raw_candidates = [{
         "geek_id": "g-risk-1",
         "name": "赵六",
-        "summary": "20K\n北京，专升本，5 年 Java 开发",
+        "summary": "20K\n北京，本科，5 年 Java 开发",
     }]
 
     with patch.object(bossmaster, "load_candidates_all", return_value=[]), \
@@ -1123,7 +1239,7 @@ def test_filter_candidate_age_boundaries_are_stable():
     assert "年龄不符" in details["reason"]
 
 
-def test_filter_candidate_flags_non_regular_bachelor_even_with_school_mark():
+def test_filter_candidate_rejects_upgrade_bachelor_even_with_school_mark():
     rule = {
         "min_exp": 0,
         "edu": "本科",
@@ -1132,9 +1248,9 @@ def test_filter_candidate_flags_non_regular_bachelor_even_with_school_mark():
     }
 
     passed, _, details = filter_candidate("985 本科，专升本，5 年 Java", rule)
-    assert passed is True
-    assert details["manual_review_required"] is True
-    assert "学历形式待确认：疑似非统招本科" in details["risk_flags"]
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "非统招本科" in details["reason"]
 
     passed, _, _ = filter_candidate("全日制本科，5 年 Java", rule)
     assert passed is True

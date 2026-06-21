@@ -374,13 +374,71 @@ def test_filter_candidate_entry_level_experience_is_rejected():
     assert "经验不足" in details["reason"]
 
 
-def test_filter_candidate_non_regular_bachelor_requires_manual_review():
+def test_filter_candidate_non_regular_bachelor_is_rejected():
     rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
     passed, _, details = filter_candidate("专升本，5 年 Java", rule)
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "非统招本科" in details["reason"]
+
+
+def test_filter_candidate_first_degree_junior_college_then_bachelor_is_rejected():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, details = filter_candidate(
+        "第一学历为大专，后修本科学历，6年 Java 开发及 AI 落地经验",
+        rule,
+    )
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "第一学历为大专" in details["reason"]
+
+
+def test_filter_candidate_two_year_bachelor_is_rejected():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, details = filter_candidate("2年制本科，9年 Java/Python 开发", rule)
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "本科教育年限不超过3年" in details["reason"]
+
+
+def test_filter_candidate_two_year_bachelor_date_range_is_rejected():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, details = filter_candidate(
+        "教育经历：南京大学 计算机 本科 2021 2023\n9年 Java 开发",
+        rule,
+    )
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "本科教育经历不超过3年" in details["reason"]
+
+
+def test_filter_candidate_three_year_bachelor_is_rejected():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, details = filter_candidate("3年制本科，9年 Java 开发", rule)
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "本科教育年限不超过3年" in details["reason"]
+
+
+def test_filter_candidate_three_year_bachelor_date_range_is_rejected():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, details = filter_candidate(
+        "教育经历：南京大学 计算机 本科 2021 2024\n9年 Java 开发",
+        rule,
+    )
+    assert passed is False
+    assert details["qualification_status"] == "rejected"
+    assert "本科教育经历不超过3年" in details["reason"]
+
+
+def test_filter_candidate_four_year_bachelor_date_range_is_not_rejected_by_duration():
+    rule = {"min_exp": 0, "edu": "本科", "required_conditions": ["统招本科"], "keywords": ["Java"]}
+    passed, _, details = filter_candidate(
+        "教育经历：南京大学 计算机 本科 2020 2024\n9年 Java 开发",
+        rule,
+    )
     assert passed is True
-    assert details["manual_review_required"] is True
-    assert "学历形式待确认：疑似非统招本科" in details["risk_flags"]
-    assert details["auto_greet_blocked_reason"] == "学历形式待确认"
+    assert details["qualification_status"] == "manual_review"
 
 
 def test_filter_candidate_fulltime_bachelor_passes():

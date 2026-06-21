@@ -21,6 +21,14 @@ from constants import (
 )
 
 import requests
+from ai_adapter import (
+    build_request,
+    detect_protocol,
+    friendly_http_error,
+    load_capability,
+    normalize_response,
+    save_capability,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,51 @@ _BACKOFF_DELAYS = (5, 15, 30)
 # resume prompt 构建时的额外字符缓冲（JSON 结构、format() 占位符等）
 _RESUME_PROMPT_OVERHEAD_BUFFER = 200
 _AI_LOG_REASON_LIMIT = 80
+_JSON_FORMAT_RETRY_LIMIT = 1
+_EVALUATION_TOOL_NAME = "submit_candidate_evaluation"
+_EVALUATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": _EVALUATION_TOOL_NAME,
+        "description": "提交候选人匹配度及硬条件评估结果",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "adjustment": {"type": "integer", "minimum": -10, "maximum": 10},
+                "reason": {"type": "string"},
+                "hard_condition_verdict": {
+                    "type": "string",
+                    "enum": ["pass", "fail", "unknown"],
+                },
+                "hard_condition_findings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "condition": {"type": "string"},
+                            "verdict": {
+                                "type": "string",
+                                "enum": ["pass", "fail", "unknown"],
+                            },
+                            "evidence": {"type": "string"},
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                            },
+                        },
+                        "required": ["condition", "verdict", "evidence", "confidence"],
+                    },
+                },
+            },
+            "required": [
+                "adjustment",
+                "reason",
+                "hard_condition_verdict",
+                "hard_condition_findings",
+            ],
+        },
+    },
+}
 
 
 @dataclass
@@ -107,8 +160,10 @@ def _truncate_text(text: str, limit: int) -> str:
 
 def _format_ai_log_summary(candidate: dict[str, Any], reason: str, score: int) -> str:
     """Return a compact one-line AI result for the runtime log."""
-    if candidate.get('qualification_status') == 'rejected' or score < SCORE_THRESHOLD_PASS:
-        conclusion = "淘汰"
+    if candidate.get('qualification_status') == 'rejected':
+        conclusion = "硬条件淘汰"
+    elif score < SCORE_THRESHOLD_PASS:
+        conclusion = "评分淘汰"
     elif candidate.get('qualification_status') == 'manual_review' or candidate.get('manual_review_required'):
         conclusion = "待确认"
     else:
@@ -331,6 +386,49 @@ def _build_prompt(job_requirement: str, candidate_summary: str, hard_conditions:
     ]
 
 
+def _use_forced_function_output(api_config: dict[str, Any]) -> bool:
+    """Return whether the configured model should use forced function output."""
+    base_url = str(api_config.get('base_url') or '').lower()
+    model = str(api_config.get('model') or '').lower()
+    return 'dashscope.aliyuncs.com' in base_url and model.startswith('qwen3.7')
+
+
+def _extract_evaluation_payload(message: dict[str, Any], use_tool_output: bool) -> str:
+    """Extract evaluation JSON from a tool call or normal assistant content."""
+    if use_tool_output:
+        for tool_call in message.get('tool_calls') or []:
+            function = tool_call.get('function') or {}
+            if function.get('name') == _EVALUATION_TOOL_NAME:
+                return str(function.get('arguments') or '')
+    content = str(message.get('content') or '')
+    if content.strip():
+        return content
+    return str(message.get('reasoning_content') or '')
+
+
+def _repair_json_text(text: str) -> str:
+    """Repair common model JSON formatting mistakes without changing values."""
+    repaired = text.strip()
+    repaired = re.sub(r'^```(?:json)?\s*|\s*```$', '', repaired, flags=re.IGNORECASE)
+    repaired = (
+        repaired
+        .replace('“', '"')
+        .replace('”', '"')
+        .replace('‘', "'")
+        .replace('’', "'")
+        .replace('：', ':')
+        .replace('，', ',')
+    )
+    repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+    repaired = re.sub(r'}\s*{', '},{', repaired)
+    repaired = re.sub(
+        r'([}"\]0-9])\s*\n\s*(?="[^"\n]+"\s*:)',
+        r'\1,\n',
+        repaired,
+    )
+    return repaired
+
+
 def _parse_response(text: str) -> dict:
     """Parse LLM response text into a normalized evaluation dict.
 
@@ -350,15 +448,12 @@ def _parse_response(text: str) -> dict:
         # Try extracting from markdown code block: ```json ... ``` or ``` ... ```
         m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', cleaned, re.DOTALL)
         if m:
-            data = json.loads(m.group(1))
+            data = json.loads(_repair_json_text(m.group(1)))
         else:
-            # Try extracting first JSON object (greedy match + json.loads validation)
-            m = re.search(r'\{.*"adjustment".*\}', cleaned, re.DOTALL)
+            # Try extracting and repairing the first JSON object.
+            m = re.search(r'\{.*(?:["“]adjustment["”]).*\}', cleaned, re.DOTALL)
             if m:
-                # Normalize Chinese punctuation in JSON
-                raw = m.group(0)
-                raw = raw.replace('：', ':').replace('，', ',').replace('"', '"').replace('"', '"')
-                data = json.loads(raw)
+                data = json.loads(_repair_json_text(m.group(0)))
             else:
                 raise ValueError(f"Cannot extract JSON from: {cleaned[:100]}")
 
@@ -421,7 +516,9 @@ def _validated_hard_failures(
     requires_regular_bachelor = '统招本科' in hard_conditions
     explicit_non_regular = (
         "自考", "成教", "函授", "夜大", "网络教育", "继续教育", "非统招",
-        "电大", "远程教育", "成人高考", "成人教育", "业余",
+        "专升本", "电大", "远程教育", "成人高考", "成人教育", "业余",
+        "第一学历为大专", "第一学历为专科",
+        "2年制本科", "两年制本科", "二年制本科", "3年制本科", "三年制本科",
     )
     validated = []
     for finding in findings or []:
@@ -436,7 +533,10 @@ def _validated_hard_failures(
             if months is not None and months < int(min_exp_match.group(1)) * 12:
                 validated.append(finding)
         elif ('学历' in condition or '统招' in condition) and requires_regular_bachelor:
-            if any(term in evidence for term in explicit_non_regular):
+            if (
+                any(term in evidence for term in explicit_non_regular)
+                or re.search(r'(?:大专|专科).{0,40}(?:后修|后续|在读|取得|升读).{0,20}本科', evidence)
+            ):
                 validated.append(finding)
     return validated
 
@@ -445,8 +545,7 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
                     stop_event=None) -> LLMEvalResult:
     """Call LLM API and return evaluation result.
 
-    Uses the OpenAI-compatible /chat/completions endpoint.
-    Retries on 429 (exponential backoff) and transient errors.
+    Uses the provider-aware adapter and retries transient failures.
     """
     try:
         import certifi
@@ -460,23 +559,32 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
     if not base_url or not model:
         return LLMEvalResult(success=False, reason="API config incomplete")
 
-    url = f"{base_url}/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-        "User-Agent": USER_AGENT,
-        "Connection": "close",
-    }
-    body = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": LLM_MAX_TOKENS,
-        "temperature": LLM_TEMPERATURE,
-        "stream": False,
-    }
+    cached = None if api_config.get("_ignore_capability_cache") else load_capability(api_config)
+    if cached:
+        use_tool_output = cached.get("output_mode") == "tool"
+    else:
+        use_tool_output = bool(
+            api_config.get("_probe_output_mode")
+            or _use_forced_function_output(api_config)
+            or detect_protocol(api_config) == "anthropic"
+        )
+
+    def _make_request(tool_output: bool):
+        return build_request(
+            api_config,
+            api_key,
+            messages,
+            max_tokens=LLM_MAX_TOKENS,
+            temperature=0 if tool_output else LLM_TEMPERATURE,
+            tool=_EVALUATION_TOOL if tool_output else None,
+            force_tool=tool_output,
+        )
+
+    url, headers, body, protocol = _make_request(use_tool_output)
     timeout = LLM_TIMEOUT
     max_retries = LLM_MAX_RETRIES
     last_error = None
+    json_format_retries = 0
 
     session = requests.Session()
     try:
@@ -493,10 +601,55 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
 
                 if response.status_code == 200:
                     resp_data = response.json()
-                    content = (resp_data.get('choices', [{}])[0]
-                               .get('message', {})
-                               .get('content', ''))
-                    parsed = _parse_response(content)
+                    message, finish_reason = normalize_response(protocol, resp_data)
+                    content = _extract_evaluation_payload(message, use_tool_output)
+                    try:
+                        parsed = _parse_response(content)
+                    except (json.JSONDecodeError, ValueError) as parse_error:
+                        if use_tool_output:
+                            use_tool_output = False
+                            url, headers, body, protocol = _make_request(False)
+                            save_capability(api_config, {
+                                "status": "limited",
+                                "protocol": protocol,
+                                "output_mode": "json_text",
+                                "message": "工具调用返回不可解析，已自动改用 JSON 文本",
+                            })
+                            last_error = "工具调用输出不可解析"
+                            continue
+                        if json_format_retries < _JSON_FORMAT_RETRY_LIMIT:
+                            json_format_retries += 1
+                            print("  [WARN] AI 返回格式异常，正在自动纠正并重试（1/1）")
+                            if not use_tool_output:
+                                body["messages"] = messages + [
+                                    {"role": "assistant", "content": content[:2000]},
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            "上次返回的 JSON 格式有误。请重新输出一个语法严格正确的 JSON 对象，"
+                                            "不要使用 Markdown，不要添加解释文字，并确保所有字段之间有逗号。"
+                                        ),
+                                    },
+                                ]
+                                body["temperature"] = 0
+                            last_error = "AI 返回格式错误"
+                            continue
+                        error_position = getattr(parse_error, 'pos', None)
+                        detail = f"，位置 {error_position}" if error_position is not None else ""
+                        return LLMEvalResult(
+                            success=False,
+                            reason=(
+                                f"AI 返回格式错误（自动纠正后仍无法解析；"
+                                f"结束原因 {finish_reason}，返回长度 {len(content)}{detail}）"
+                            ),
+                            model=model,
+                        )
+                    save_capability(api_config, {
+                        "status": "compatible" if use_tool_output else "limited",
+                        "protocol": protocol,
+                        "output_mode": "tool" if use_tool_output else "json_text",
+                        "message": "支持结构化工具调用" if use_tool_output else "使用 JSON 文本兼容模式",
+                    })
                     return LLMEvalResult(
                         success=True,
                         adjustment=parsed['adjustment'],
@@ -524,9 +677,24 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
                     last_error = f"Server error ({response.status_code})"
                     continue
                 else:
-                    # Client error — don't retry
+                    if use_tool_output and 400 <= response.status_code < 500:
+                        use_tool_output = False
+                        url, headers, body, protocol = _make_request(False)
+                        save_capability(api_config, {
+                            "status": "limited",
+                            "protocol": protocol,
+                            "output_mode": "json_text",
+                            "message": "模型不支持工具调用，已自动降级",
+                        })
+                        last_error = f"Tool output unsupported ({response.status_code})"
+                        continue
+                    try:
+                        error_payload = response.json()
+                    except ValueError:
+                        error_payload = response.text
+                    friendly = friendly_http_error(response.status_code, error_payload)
                     print(f"  ❌ API 请求失败 ({response.status_code}): {response.text[:200]}")
-                    return LLMEvalResult(success=False, reason=f"HTTP {response.status_code}")
+                    return LLMEvalResult(success=False, reason=friendly)
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 delay = 1 + random.uniform(0, 0.5)
@@ -542,6 +710,42 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
         session.close()
 
     return LLMEvalResult(success=False, reason=f"Max retries: {last_error}")
+
+
+def probe_model_compatibility(api_config: dict, api_key: str, *, force: bool = False) -> dict:
+    """Verify that a model can produce a parseable candidate evaluation."""
+    cached = None if force else load_capability(api_config)
+    if cached and cached.get("status") != "incompatible":
+        return cached
+    probe_config = dict(api_config)
+    probe_config["_probe_output_mode"] = True
+    probe_config["_ignore_capability_cache"] = force
+    messages = _build_prompt(
+        "Java 工程师，要求本科及以上、4年以上经验",
+        "测试候选人：本科，5年 Java 开发经验",
+        "硬条件：统招本科，经验：≥4年",
+    )
+    started = time.time()
+    result = _call_llm_api(messages, probe_config, api_key)
+    capability = load_capability(api_config) or {}
+    if result.success:
+        capability.update({
+            "status": capability.get("status", "compatible"),
+            "protocol": detect_protocol(api_config),
+            "output_mode": capability.get("output_mode", "json_text"),
+            "message": capability.get("message", "评估格式验证通过"),
+            "response_time": time.time() - started,
+        })
+        save_capability(api_config, capability)
+        return capability
+    capability = {
+        "status": "incompatible",
+        "protocol": detect_protocol(api_config),
+        "output_mode": "none",
+        "message": result.reason or "无法生成程序可解析的评估结果",
+        "response_time": time.time() - started,
+    }
+    return capability
 
 
 def _recalc_recommend_level(score: int) -> str:
@@ -598,6 +802,24 @@ def evaluate_batch(
     # Take top N by score (most impactful to evaluate), or all if unlimited
     to_evaluate = candidates[:max_candidates] if max_candidates is not None else candidates
     total = len(to_evaluate)
+    for candidate in to_evaluate:
+        candidate['llm_evaluated'] = False
+        candidate['llm_error'] = ""
+
+    base_url = str(api_config.get("base_url") or "")
+    if base_url.startswith(("http://", "https://")):
+        capability = probe_model_compatibility(api_config, api_key)
+        status_label = {
+            "compatible": "完整兼容",
+            "limited": "兼容模式",
+            "incompatible": "不兼容",
+        }.get(capability.get("status"), "未知")
+        print(
+            f"模型能力：{status_label}，协议 {capability.get('protocol', 'unknown')}，"
+            f"输出 {capability.get('output_mode', 'unknown')}"
+        )
+        if capability.get("status") == "incompatible":
+            print(f"  [WARN] 模型能力验证失败：{capability.get('message', '未知原因')}")
 
     print(f"开始 AI 评估：{total} 人（共 {len(candidates)} 人通过筛选），并发数：{max_workers}")
 
@@ -654,6 +876,7 @@ def evaluate_batch(
 
                     # Store LLM metadata
                     candidate['llm_evaluated'] = True
+                    candidate['llm_error'] = ""
                     candidate['llm_adjustment'] = result.adjustment
                     candidate['llm_reason'] = clean_reason
                     candidate['llm_model'] = result.model
@@ -681,7 +904,11 @@ def evaluate_batch(
                     )
                 else:
                     candidate['llm_evaluated'] = False
-                    print(f"  [{idx+1}/{total}] {name}: 评估失败 ({result.reason})，保留原始分数 {rule_score}")
+                    candidate['llm_error'] = result.reason
+                    print(
+                        f"  [{idx+1}/{total}] {name}：评估失败（{result.reason}），"
+                        f"保留原始分数 {rule_score}"
+                    )
 
                 # Update progress (thread-safe)
                 with count_lock:
