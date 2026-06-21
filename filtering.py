@@ -330,6 +330,23 @@ def _has_non_regular_edu_risk(text: str) -> bool:
     return any(ne in text for ne in NON_REGULAR_EDU)
 
 
+def _has_4year_bachelor_evidence(text: str) -> bool:
+    """Return True when text contains evidence of 4-year bachelor degree.
+
+    检查本科段的起止时间是否≥4年，作为统招本科的有力佐证。
+    """
+    for segment in re.split(r'[\n；;]', text):
+        if "本科" not in segment:
+            continue
+        years = [int(year) for year in re.findall(r'(?<!\d)(19\d{2}|20\d{2})(?!\d)', segment)]
+        if len(years) >= 2 and years[-1] - years[-2] >= 4:
+            return True
+    # 检查是否有明确的"4年制本科"描述
+    if re.search(r'4\s*年制本科', text):
+        return True
+    return False
+
+
 def _explicit_non_regular_bachelor_reason(text: str) -> str:
     """Return a deterministic rejection reason for a non-regular bachelor path."""
     if any(term in text for term in _EXPLICIT_NON_REGULAR_EDU):
@@ -407,6 +424,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
                         "reason": f"学历不符：{explicit_non_regular_reason}",
                         "qualification_status": REJECTED,
                     }
+                has_4year_evidence = _has_4year_bachelor_evidence(candidate_text)
                 if candidate_edu_level >= 5:
                     # 硕士/博士直接通过学历等级，但仍需检查非统招风险
                     if has_non_regular_risk:
@@ -417,15 +435,22 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
                 elif candidate_edu_level == 4:
                     if has_non_regular_risk:
                         if re.search(r'(统招|全日制)\s*本科', candidate_text):
-                            pass
+                            hard_checks.append(f"学历：通过，要求{rule.get('edu')}（统招本科）")
+                        elif has_4year_evidence:
+                            # 有4年起止时间证据，作为统招本科的有力佐证
+                            hard_checks.append(f"学历：通过，要求{rule.get('edu')}（4年制本科佐证）")
                         else:
                             _add_risk_flag(details, "学历形式待确认：疑似非统招本科", "学历形式待确认")
                             hard_checks.append("学历：本科等级通过，学历形式待人工确认")
                     else:
                         hard_checks.append(f"学历：通过，要求{rule.get('edu')}")
                 elif has_non_regular_risk:
-                    _add_risk_flag(details, "学历形式待确认：疑似非统招本科", "学历形式待确认")
-                    hard_checks.append("学历：疑似本科路径，学历形式待人工确认")
+                    if has_4year_evidence:
+                        # 有4年起止时间证据，作为统招本科的有力佐证
+                        hard_checks.append(f"学历：通过，要求本科（4年制本科佐证）")
+                    else:
+                        _add_risk_flag(details, "学历形式待确认：疑似非统招本科", "学历形式待确认")
+                        hard_checks.append("学历：疑似本科路径，学历形式待人工确认")
                 else:
                     return False, 0, {"reason": "学历不足：要求本科"}
             elif required_edu > 0 and candidate_edu_level < required_edu:
@@ -534,7 +559,7 @@ def filter_candidate(candidate_text: str, rule: dict[str, Any], structured_field
             if '暂不考虑' in job_status or '不考虑' in job_status:
                 return False, 0, {"reason": f"求职状态不符：{job_status}"}
             if '在职' in job_status and '离职' not in job_status:
-                _add_risk_flag(details, f"在职状态：{job_status}", "在职状态待确认")
+                # 在职状态不标记为需人工确认，只记录日志
                 hard_checks.append(f"求职状态：{job_status}，在职中")
             else:
                 hard_checks.append(f"求职状态：{job_status}，通过")

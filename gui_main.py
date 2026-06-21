@@ -2749,8 +2749,18 @@ class BossFilterGUI:
             # 将内部键转换为显示名称
             provider_display = self.PROVIDER_DISPLAY.get(provider_key, provider_key)
             base_url = model_config.get("base_url", "")
-            # 可用性状态显示
+            # 可用性状态显示：优先从 capability_cache 读取，fallback 到 saved_models 中的 capability
             cap = model_config.get("capability", {})
+            if not cap.get("status"):
+                # 尝试从 capability_cache 读取
+                try:
+                    from ai_adapter import load_capability
+                    cache_config = {"api_provider": provider_key, "base_url": base_url, "model": name}
+                    cached = load_capability(cache_config)
+                    if cached:
+                        cap = cached
+                except Exception:
+                    pass
             cap_status = cap.get("status", "")
             if cap_status in ("compatible", "limited"):
                 status_display = "✓ 可用"
@@ -5117,9 +5127,10 @@ class BossFilterGUI:
             model_exists = False
             for m in self.api_config["saved_models"]:
                 if m.get("model") == model_name and m.get("api_provider") == provider:
-                    # 更新已存在模型的配置
+                    # 更新已存在模型的配置，保留 capability 字段
                     m["api_provider"] = provider
                     m["base_url"] = base_url
+                    # capability 字段保留，不覆盖
                     model_exists = True
                     break
 
@@ -8216,6 +8227,10 @@ class BossFilterGUI:
 
     def refresh_results(self):
         """刷新结果 - 增强版：支持表头排序、颜色标记和岗位+日期过滤"""
+        # 如果结果页面尚未创建，直接返回
+        if not hasattr(self, 'result_tree') or self.result_tree is None:
+            return
+
         # 数据未变 + 过滤条件未变 → 跳过 Treeview 重建，避免页面切换卡顿
         current_job = self.result_job_var.get() if hasattr(self, 'result_job_var') else ""
         current_dates = self._get_result_date_filter() if hasattr(self, 'result_date_start_entry') else (None, None)
