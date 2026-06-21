@@ -1,29 +1,29 @@
 {
-  "version": "2.12.2",
-  "release_date": "2026-06-20",
+  "version": "2.13",
+  "release_date": "2026-06-21",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.dmg"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
-      "size": 38399669,
-      "sha256": "b1b760fd7698fc46376a7feb90504bacc0a81764f42943f49515bf697655777f"
+      "size": 38434206,
+      "sha256": "9b851c80f9d17bded9123b821007dae5dfc3181375b91109984e61ef9fea7a3d"
     },
     "macos_dmg": {
-      "size": 33079209,
-      "sha256": "502de618d1ae5d4c60af3dbaa7ef6aa7ed7edf1d7d03b4ae9681517caf02e230"
+      "size": 33125563,
+      "sha256": "c0c2574f69c78b2519375a1dda2f432c32f31350bbe0a36525e0ccd31ac3d73e"
     },
     "macos": {
-      "size": 33941351,
-      "sha256": "93f7475078d464ed26afaea945e9a71155f9d9476dddd9d96d5a6a4e789f77e8"
+      "size": 33975321,
+      "sha256": "e4bf50b2cdb0983f3c3728f6b2680135df0e5c2c2c48426d076fa7c93c3a0cb2"
     }
   },
-  "release_notes": "### 新增功能\n\n- **候选人明细支持完整操作菜单**：首页和统计明细窗口可按姓名、匹配分查看详情，支持导入简历做二次评估、更新跟进、标记反馈、手动打招呼、加入黑名单、移除或导出候选人\n\n### 体验优化\n\n- **筛选结果统计更直观**：统计卡片改为强烈推荐、推荐、待定、已打招呼四类，首页和数据统计页统一使用“通过筛选”口径和图标\n- **AI 评估日志更紧凑**：每位候选人的分数变化、结论和理由摘要集中在一行展示，完整评估理由仍保留在候选人详情和 Excel 中\n- **上下文保存状态更明确**：首次获取候选人发送信息时显示“已保存”，已有信息成功替换时显示“已刷新”\n- **重复扫描提示更准确**：筛除当前岗位已沟通候选人后，日志改为显示“本轮待评估”人数，不再将历史未沟通候选人误称为新增\n- **打招呼准备更充分**：优先为待定、需人工确认和超出单轮自动沟通上限的候选人保存发送所需信息，后续手动沟通更顺畅\n- **状态提示更易理解**：结果表只展示业务状态；需要切换推荐页面时会说明原因，点击“确定”后继续，不再暴露内部技术信息\n\n### 问题修复\n\n- **修复硬条件信息不足时误判通过**：工作经验无法确认、只有本科层级但缺少统招证据时改为“需人工确认”，明确应届、经验不足或非统招学历时直接淘汰\n- **修复 AI 判定淘汰后仍保留候选人**：AI 发现的硬条件问题必须提供原文证据并通过规则复核；确认淘汰或评分低于门槛后不再进入后续沟通队列\n- **修复打招呼成功后状态偶尔丢失**：发送成功后立即保存本地状态，并在扫描结束或中断时合并最新数据，避免旧数据覆盖新状态\n- **修复浏览器连接并发冲突**：自动检测和手动沟通同时连接浏览器时改为串行处理，避免偶发连接异常\n- **修复未打开运行页时日志处理异常**：运行日志控件尚未创建时保留待显示内容，不再报错或丢失日志",
+  "release_notes": "### 新增功能\n\n- **多选批量处理候选人**：筛选结果页和明细窗口支持多选候选人，右键可批量打招呼、移除或导出；批量沟通会按候选人发送条件分组处理并保留执行结果\n- **扩展 AI 服务兼容范围**：支持 Anthropic、Azure OpenAI 和常见 OpenAI 兼容服务，模型连接测试会验证能否生成程序可识别的评估结果\n\n### 体验优化\n\n- **候选人信息补全范围扩大**：单次最多补全 20 页候选人信息，提高大量候选人场景下的资料完整度\n- **扫描完整性提示更明确**：达到扫描或信息补全上限时，如最后一轮仍有新增或有效命中，日志会提示结果可能不完整\n- **AI 评估统计更透明**：评估结束显示成功数、失败数和成功率，失败率过高时提醒人工复核\n- **模型兼容性验证更可靠**：连接测试会实际验证评估结果格式，并显示完整兼容或兼容模式；不支持结构化输出的模型会自动降级处理\n- **筛选完成口径更准确**：分别显示规则筛选通过人数、AI 复核淘汰人数和最终保留人数，避免将最终人数误写成规则通过人数\n- **已保存模型列表优化**：模型名称、服务商、状态、Base URL 四列始终显示，Base URL 过长时鼠标悬停显示完整内容；窗口最大化时列宽自动拉伸\n- **批量操作反馈更完整**：模型测试和批量沟通会显示响应时间、停止状态，以及认证失败、配额超限、免费额度不足或模型未开通等原因，方便定位配置或页面问题\n\n### 问题修复\n\n- **修复学历经历误判**：第一学历明确为大专或专科后取得本科、专升本及本科教育不超过三年的候选人按岗位硬条件淘汰，不再误进入人工确认\n- **修复 AI 返回格式异常导致批量评估失败**：通义千问评估改用稳定的参数化结果返回，并关闭不必要的深度思考；其他模型仍保留格式修复和纠错重试\n- **修复部分服务商协议不兼容**：支持 Anthropic 和 Azure 的接口差异，统一处理 OpenAI 兼容服务，并按具体模型保存已验证的输出能力\n- **修复启动时偶发页面断线误报**：浏览器刷新或重建页面导致旧连接失效时，跳过本次选择器检查并等待自动重连，不再误报选择器异常",
   "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.exe",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.12.2/BOSS_ResumeFilter.dmg"
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.exe",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.dmg",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter_mac.zip"
   }
 }
