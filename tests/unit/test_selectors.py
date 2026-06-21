@@ -84,11 +84,17 @@ def test_sel_captcha_keywords_is_list():
     assert '请完成安全验证' in kws
 
 
-def test_sel_limit_keywords_is_list():
+def test_sel_limit_detection_keywords_are_split_by_meaning():
     _reset_selectors_cache()
-    kws = bossmaster._sel('limit_detection', 'keywords')
-    assert isinstance(kws, list)
-    assert '次数已用完' in kws
+    legacy = bossmaster._sel('limit_detection', 'keywords')
+    exhausted = bossmaster._sel('limit_detection', 'exhausted_keywords')
+    upgrade = bossmaster._sel('limit_detection', 'upgrade_keywords')
+    quota = bossmaster._sel('limit_detection', 'quota_keywords')
+    assert legacy == exhausted
+    assert '次数已用完' in exhausted
+    assert '升级套餐' in upgrade
+    assert '今日剩余' in quota
+    assert '今日剩余' not in exhausted
 
 
 def test_sel_captcha_css_selectors_is_list():

@@ -2579,7 +2579,13 @@ def send_greeting_with_context(
     return False, f"上下文打招呼失败: HTTP {result.get('status')} code={result.get('code')} {message}"
 
 
-def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_callback=None):
+def send_greeting_on_list_page(
+    page,
+    geek_id,
+    retry=0,
+    stop_event=None,
+    captcha_callback=None,
+) -> tuple[bool | None, str]:
     """
     在列表页直接向候选人打招呼（极速优化版）
 
@@ -2623,6 +2629,11 @@ def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_
         if not greet_btn:
             return False, "未找到按钮"
 
+        before_button_text = str(getattr(greet_btn, "text", "") or "").strip()
+        continue_mark = _sel('greeting_verify', 'continue_mark', "继续沟通")
+        if continue_mark in before_button_text:
+            return True, "BOSS 页面已显示“继续沟通”，确认此前已建立沟通"
+
         # 滚到可见区域再点击，防止被悬浮头部遮挡
         try:
             greet_btn.scroll.to_see(center=True)
@@ -2660,7 +2671,12 @@ def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_
             else:
                 return False, f"安全验证未完成: {captcha_msg}"
 
-        return True, "成功"
+        return verify_greeting_success(
+            target,
+            geek_id,
+            before_button_text=before_button_text,
+            stop_event=stop_event,
+        )
 
     except Exception as e:
         return False, f"异常: {str(e)[:50]}"
@@ -2669,36 +2685,75 @@ def send_greeting_on_list_page(page, geek_id, retry=0, stop_event=None, captcha_
 
 def _detect_limit_popup(page: ChromiumPage) -> tuple[bool, str]:
     """
-    检测是否弹出了 BOSS 直聘沟通次数上限/升级套餐弹窗（极速版）
+    检测是否弹出了 BOSS 直聘沟通次数上限/升级套餐弹窗。
 
-    单次 JS 调用合并所有关键词检测，<10ms 完成，不影响打招呼速度。
+    明确的“已用完/已达上限”文案可直接判定；“升级套餐”等宽泛文案
+    必须出现在可见对话框内并同时带有沟通次数语境，避免把页面上的
+    “今日剩余 2 次”等正常额度提示误判为次数耗尽。
 
     返回: (is_limited: bool, detail: str)
     """
-    # 所有限制弹窗关键词，用 || 合并为一条 JS 表达式
-    limit_keywords = _sel('limit_detection', 'keywords', [
-        "次数已用完", "沟通次数", "今日上限", "升级套餐",
-        "立即升级", "联系次数", "已达上限", "今日剩余",
-        "开通套餐", "购买套餐", "次数不足", "免费次数",
-        "升级VIP", "VIP无限沟通", "体验VIP", "今日免费",
+    exhausted_keywords = _sel('limit_detection', 'exhausted_keywords', [
+        "次数已用完", "沟通次数已达上限", "联系次数已达上限",
+        "今日沟通次数已达上限", "免费次数已用完", "次数不足",
     ])
-    checks = " || ".join(f'body.innerText.includes("{kw}")' for kw in limit_keywords)
-    script = f'return (function(){{var body=document.body;return {checks};}})()'
+    upgrade_keywords = _sel('limit_detection', 'upgrade_keywords', [
+        "升级套餐", "立即升级", "开通套餐", "购买套餐",
+        "升级VIP", "VIP无限沟通", "体验VIP",
+    ])
+    quota_keywords = _sel('limit_detection', 'quota_keywords', [
+        "沟通次数", "联系次数", "免费次数", "今日上限", "今日剩余", "今日免费",
+    ])
+    config_json = json.dumps({
+        "exhausted": exhausted_keywords,
+        "upgrade": upgrade_keywords,
+        "quota": quota_keywords,
+    }, ensure_ascii=False)
+    script = (
+        'return (function(){'
+        f'var cfg={config_json};'
+        'function vis(el){'
+        'if(!el)return false;var n=el;'
+        'while(n&&n.nodeType===1){var s=getComputedStyle(n);'
+        'if(s.display==="none"||s.visibility==="hidden"||s.opacity==="0")return false;'
+        'n=n.parentElement;}'
+        'var r=el.getBoundingClientRect();'
+        'return r.width>=10&&r.height>=10&&r.bottom>=0&&r.top<=window.innerHeight'
+        '&&r.right>=0&&r.left<=window.innerWidth;}'
+        'function hit(text,kws){for(var i=0;i<kws.length;i++){'
+        'if(text.indexOf(kws[i])!==-1)return kws[i];}return "";}'
+        'var visibleText="",tw=document.createTreeWalker(document.body,4,null),nd;'
+        'while(nd=tw.nextNode()){if(nd.parentElement&&vis(nd.parentElement))'
+        'visibleText+="\\n"+nd.textContent;}'
+        'var exhausted=hit(visibleText,cfg.exhausted);'
+        'if(exhausted)return JSON.stringify({matched:exhausted,scope:"visible page"});'
+        'var selectors=["[role=dialog]","[aria-modal=true]",'
+        '"[class*=dialog]","[class*=modal]","[class*=popup]"];'
+        'var nodes=document.querySelectorAll(selectors.join(","));'
+        'for(var i=0;i<nodes.length;i++){if(!vis(nodes[i]))continue;'
+        'var text=nodes[i].innerText||"";'
+        'var upgrade=hit(text,cfg.upgrade),quota=hit(text,cfg.quota);'
+        'if(upgrade&&quota)return JSON.stringify({matched:upgrade+" + "+quota,scope:"dialog"});}'
+        'return "";})()'
+    )
 
     try:
-        # 只搜 iframe（BOSS 弹窗在此渲染），主页面作为兜底
+        # 优先检查 iframe（BOSS 弹窗通常在此渲染），主页面作为兜底。
         iframe = get_iframe(page)
         if iframe:
             try:
-                if iframe.run_js(script):
-                    return True, "iframe检测到限制弹窗"
+                matched = iframe.run_js(script)
+                if matched:
+                    detail = json.loads(matched)
+                    return True, f"iframe 检测到限制提示（匹配：{detail['matched']}）"
             except Exception:
                 pass
 
-        # 兜底：主页面
         try:
-            if page.run_js(script):
-                return True, "主页面检测到限制弹窗"
+            matched = page.run_js(script)
+            if matched:
+                detail = json.loads(matched)
+                return True, f"主页面检测到限制提示（匹配：{detail['matched']}）"
         except Exception:
             pass
 
@@ -2912,40 +2967,61 @@ def _wait_for_captcha_resolution(page, stop_event=None, max_wait=CAPTCHA_MAX_WAI
     return False
 
 
-def verify_greeting_success(page: ChromiumPage, geek_id: str, debug: bool = False) -> tuple[bool, str]:
+def verify_greeting_success(
+    target: Any,
+    geek_id: str,
+    *,
+    before_button_text: str = "",
+    stop_event=None,
+    attempts: int = 5,
+    interval: float = 0.4,
+) -> tuple[bool | None, str]:
     """
-    验证打招呼是否成功（快速版 - 直接检查按钮文本）
+    验证列表页打招呼结果。
+
+    True 表示页面出现明确成功状态；False 仅保留给明确失败；
+    None 表示点击已执行但页面状态无法确认，调用方不得落盘为已沟通。
     """
-    try:
-        # 直接查找该候选人的"继续沟通"或"已沟通"标记
-        # 使用更精确的 XPath，减少查询范围
-        _geek_attr = _sel('candidate_card', 'geek_id_attr', 'data-geekid')
-        cards = page.eles(f'xpath://*[@{_geek_attr}="{geek_id}"]')
-        if not cards:
-            return True, "点击已执行"
-        
-        parent = cards[0].parent()
-        if not parent:
-            return True, "点击已执行"
-        
-        # 直接获取父元素下所有文本节点，一次查询
-        all_text = parent.text
-        
-        # 检查是否包含成功标记
-        _success_marks = _sel('greeting_verify', 'success_marks', ["已沟通", "沟通过", "已发送"])
-        _continue_mark = _sel('greeting_verify', 'continue_mark', "继续沟通")
+    card_css = _sel(
+        'candidate_card',
+        'card_by_id_css',
+        'css:[data-geekid="{geek_id}"]',
+    ).format(geek_id=geek_id)
+    success_marks = _sel(
+        'greeting_verify',
+        'success_marks',
+        ["已沟通", "沟通过", "已发送"],
+    )
+    continue_mark = _sel('greeting_verify', 'continue_mark', "继续沟通")
+    last_state = "候选人卡片未重新出现"
 
-        if any(mark in all_text for mark in _success_marks):
-            return True, "找到成功标记"
+    for attempt in range(max(1, attempts)):
+        if stop_event and stop_event.is_set():
+            return None, "点击已执行，但用户停止后未完成发送结果确认"
+        if attempt:
+            time.sleep(interval)
+        try:
+            card = target.ele(card_css, timeout=0.5)
+            if not card:
+                last_state = "候选人卡片未重新出现"
+                continue
+            parent = card.parent()
+            if not parent:
+                last_state = "候选人卡片父容器不可用"
+                continue
+            all_text = str(getattr(parent, "text", "") or "")
+            matched = next((mark for mark in success_marks if mark in all_text), "")
+            if matched:
+                return True, f"发送成功，页面出现“{matched}”"
+            if continue_mark in all_text:
+                if continue_mark in before_button_text:
+                    return True, "BOSS 页面已显示“继续沟通”，确认此前已建立沟通"
+                return True, "发送成功，按钮已变为“继续沟通”"
+            last_state = f"按钮尚未变为“{continue_mark}”"
+        except Exception as exc:
+            last_state = f"页面状态读取异常：{str(exc)[:50]}"
 
-        if _continue_mark in all_text:
-            return True, "按钮为'继续沟通'"
-        
-        # 默认成功
-        return True, "点击已执行"
-
-    except Exception:
-        return True, "点击已执行"
+    return None, f"点击已执行，但发送结果无法确认（{last_state}），请在 BOSS 沟通列表核实"
 
 
 def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
@@ -3012,8 +3088,8 @@ def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
         results.append({'group': 'captcha_detection', 'name': 'css_containers',
                        'status': 'ok', 'detail': '无验证码弹窗'})
 
-    # 4. 限制弹窗关键词
-    limit_kws = _sel('limit_detection', 'keywords', [])
+    # 4. 明确的次数耗尽文案
+    limit_kws = _sel('limit_detection', 'exhausted_keywords', [])
     if limit_kws:
         checks = " || ".join(f'body.innerText.includes("{kw}")' for kw in limit_kws)
         script = f'return (function(){{var body=document.body;return {checks};}})()'
@@ -3021,7 +3097,7 @@ def check_selectors_health(page: ChromiumPage) -> list[dict[str, Any]]:
             triggered = target.run_js(script)
             if triggered:
                 results.append({'group': 'limit_detection', 'name': 'keywords',
-                               'status': 'warn', 'detail': '检测到限制弹窗关键词'})
+                               'status': 'warn', 'detail': '检测到明确的次数耗尽文案'})
             else:
                 results.append({'group': 'limit_detection', 'name': 'keywords',
                                'status': 'ok', 'detail': '无限制弹窗'})
@@ -3615,6 +3691,12 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                     page, candidate['geek_id'], stop_event=stop_event,
                     captcha_callback=captcha_callback)
 
+                if success is None:
+                    candidate['greet_sent'] = False
+                    candidate.setdefault('followup_status', "未沟通")
+                    candidates_all.append(candidate)
+                    print(f"待确认：{msg}")
+                    break
                 if success:
                     greet_success_count += 1
                     consecutive_failures = 0  # 重置连续失败计数
@@ -3930,15 +4012,14 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                                 time.sleep(_human_delay(GREET_DELAY_CENTER, GREET_DELAY_SPREAD))
                         print(f"[{i+1}/{len(to_greet)}] 正在向 {name} 打招呼...", end=" ")
                         success, msg = send_greeting_on_list_page(page, geek_id, stop_event=stop_event, captcha_callback=captcha_callback)
+                        if success is None:
+                            skip_count += 1
+                            print(f"待确认：{msg}")
+                            break
                         if success:
-                            # 检查是否真的成功（不是"可能需手动确认"）
-                            if "可能需手动确认" in msg:
-                                skip_count += 1
-                                print(f"待确认：{msg}")
-                            else:
-                                success_count += 1
-                                persist_candidate_greeted(c, "regreet_list")
-                                print("OK")
+                            success_count += 1
+                            persist_candidate_greeted(c, "regreet_list")
+                            print("OK")
                         else:
                             fail_count += 1
                             print(f"失败：{msg}")

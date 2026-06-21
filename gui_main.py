@@ -10337,7 +10337,14 @@ class BossFilterGUI:
                         self.browser_page, geek_id, stop_event=self.stop_event,
                         captcha_callback=captcha_callback
                     )
-                if success:
+                if success is None:
+                    self.append_log(f"[打招呼] ⚠️ {name} 待确认：{msg}")
+                    _parent.after(0, lambda: messagebox.showwarning(
+                        "发送结果待确认",
+                        f"{name} 的打招呼操作已点击，但页面没有返回明确成功状态。\n\n"
+                        "程序未将其标记为已沟通，请先在 BOSS 沟通列表核实，避免重复发送。",
+                        parent=_parent))
+                elif success:
                     self.append_log(f"[打招呼] ✅ {name} — {msg}")
                     persisted = self._update_greet_status(
                         candidate, greet_method
@@ -10644,6 +10651,11 @@ class BossFilterGUI:
                                 captcha_callback=captcha_callback2
                             )
 
+                            if success is None:
+                                self.append_log(f"[批量打招呼] ⚠️ {name} 待确认：{msg}")
+                                skip_count += 1
+                                _parent.after(0, lambda t=tree_item, c=candidate: self._safe_tree_set(tree, t, 'status', self._format_candidate_status(c)))
+                                break
                             if success:
                                 self.append_log(f"[批量打招呼] ✅ {name} — {msg}")
                                 persisted = self._update_greet_status(candidate, "manual_list")

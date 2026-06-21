@@ -1157,6 +1157,76 @@ def test_auto_greet_limit_triggers_notice_and_caps_greetings():
     assert "再次运行同一岗位扫描" in notices[0][1]
 
 
+def test_limit_popup_does_not_treat_positive_remaining_count_as_exhausted():
+    class FakePage:
+        def run_js(self, script, *_args, **_kwargs):
+            assert '"今日剩余"' in script
+            assert '"今日剩余"' not in script.split('var cfg=', 1)[1].split('"upgrade"', 1)[0]
+            return ""
+
+    with patch.object(bossmaster, "get_iframe", return_value=None):
+        limited, detail = bossmaster._detect_limit_popup(FakePage())
+
+    assert limited is False
+    assert detail == ""
+
+
+def test_limit_popup_reports_matched_explicit_exhaustion_text():
+    class FakePage:
+        def run_js(self, *_args, **_kwargs):
+            return json.dumps(
+                {"matched": "今日沟通次数已达上限", "scope": "visible page"},
+                ensure_ascii=False,
+            )
+
+    with patch.object(bossmaster, "get_iframe", return_value=None):
+        limited, detail = bossmaster._detect_limit_popup(FakePage())
+
+    assert limited is True
+    assert "今日沟通次数已达上限" in detail
+
+
+def test_verify_greeting_success_confirms_button_transition():
+    class FakeParent:
+        text = "候选人信息 继续沟通"
+
+    class FakeCard:
+        def parent(self):
+            return FakeParent()
+
+    class FakeTarget:
+        def ele(self, *_args, **_kwargs):
+            return FakeCard()
+
+    success, detail = bossmaster.verify_greeting_success(
+        FakeTarget(),
+        "g-1",
+        before_button_text="立即沟通",
+        attempts=1,
+        interval=0,
+    )
+
+    assert success is True
+    assert "按钮已变为“继续沟通”" in detail
+
+
+def test_verify_greeting_success_does_not_default_to_success_when_card_disappears():
+    class FakeTarget:
+        def ele(self, *_args, **_kwargs):
+            return None
+
+    success, detail = bossmaster.verify_greeting_success(
+        FakeTarget(),
+        "g-1",
+        before_button_text="立即沟通",
+        attempts=2,
+        interval=0,
+    )
+
+    assert success is None
+    assert "发送结果无法确认" in detail
+
+
 def test_extract_stops_and_notifies_when_page_leaves_recommend_page():
     class FakePage:
         url = "https://www.zhipin.com/web/chat/index"
