@@ -32,8 +32,14 @@ from constants import (
     SCORE_THRESHOLD_RECOMMEND,
     SCORE_THRESHOLD_STRONG,
     USER_AGENT,
+    GREET_UNCERTAIN_LIMIT,
 )
-from storage import persist_candidate_greeted, mark_candidate_greeted, save_candidates_all
+from storage import (
+    mark_candidate_greeted,
+    persist_candidate_greeted,
+    persist_candidate_greeting_pending,
+    save_candidates_all,
+)
 import gui_dialogs
 
 # ========== 路径常量 - 解决相对路径问题 ==========
@@ -8947,6 +8953,8 @@ class BossFilterGUI:
         if not followup_status:
             followup_status = "已打招呼" if candidate.get('greet_sent', False) else "未沟通"
         status_parts = [followup_status]
+        if candidate.get('greet_confirmation_pending'):
+            status_parts.append("发送待确认")
         if candidate.get('manual_review_required'):
             status_parts.append("需人工确认")
         if candidate.get('feedback_status'):
@@ -10354,6 +10362,17 @@ class BossFilterGUI:
                     )
                 if success is None:
                     self.append_log(f"[打招呼] ⚠️ {name} 待确认：{msg}")
+                    persist_candidate_greeting_pending(candidate, msg)
+                    if _tree_item is not None:
+                        _parent.after(
+                            0,
+                            lambda: self._safe_tree_set(
+                                _tree,
+                                _tree_item,
+                                'status',
+                                self._format_candidate_status(candidate),
+                            ),
+                        )
                     _parent.after(0, lambda: messagebox.showwarning(
                         "发送结果待确认",
                         f"{name} 的打招呼操作已点击，但页面没有返回明确成功状态。\n\n"
@@ -10500,6 +10519,7 @@ class BossFilterGUI:
                 success_count = 0
                 fail_count = 0
                 skip_count = 0
+                consecutive_uncertain = 0
 
                 # 先处理有 greet_context 的候选人（稳定，不依赖页面）
                 if with_context:
@@ -10669,10 +10689,21 @@ class BossFilterGUI:
                             if success is None:
                                 self.append_log(f"[批量打招呼] ⚠️ {name} 待确认：{msg}")
                                 skip_count += 1
+                                persist_candidate_greeting_pending(candidate, msg)
+                                consecutive_uncertain += 1
                                 _parent.after(0, lambda t=tree_item, c=candidate: self._safe_tree_set(tree, t, 'status', self._format_candidate_status(c)))
-                                break
+                                if consecutive_uncertain >= GREET_UNCERTAIN_LIMIT:
+                                    self.append_log(
+                                        f"[批量打招呼] 连续 {consecutive_uncertain} 人发送结果待确认，"
+                                        "停止批量打招呼并请人工核实"
+                                    )
+                                    break
+                                import random
+                                time.sleep(random.uniform(2, 4))
+                                continue
                             if success:
                                 self.append_log(f"[批量打招呼] ✅ {name} — {msg}")
+                                consecutive_uncertain = 0
                                 persisted = self._update_greet_status(candidate, "manual_list")
                                 if persisted:
                                     success_count += 1
@@ -10684,6 +10715,7 @@ class BossFilterGUI:
                             else:
                                 self.append_log(f"[批量打招呼] ❌ {name} 失败：{msg}")
                                 fail_count += 1
+                                consecutive_uncertain = 0
                                 # 恢复表格状态
                                 _parent.after(0, lambda t=tree_item, c=candidate: self._safe_tree_set(tree, t, 'status', self._format_candidate_status(c)))
                                 # 沟通次数上限时停止

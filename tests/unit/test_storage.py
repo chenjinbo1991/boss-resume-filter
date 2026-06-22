@@ -197,6 +197,28 @@ def test_dedupe_preserves_followup_from_new_to_old():
     assert result[0]["followup_note"] == "周三沟通"
 
 
+def test_dedupe_preserves_greeting_pending_and_success_clears_it():
+    pending = {
+        "geek_id": "g1",
+        "job_name": "Java",
+        "match_score": 70,
+        "greet_confirmation_pending": True,
+        "greet_confirmation_reason": "按钮未变化",
+        "greet_confirmation_updated_at": "20260622_100000",
+    }
+    result = _dedupe_candidates([
+        pending,
+        {"geek_id": "g1", "job_name": "Java", "match_score": 80},
+    ])
+    assert result[0]["greet_confirmation_pending"] is True
+
+    greeted = dict(result[0])
+    mark_candidate_greeted(greeted, "auto_list", "20260622_100100")
+    result = _dedupe_candidates([pending, greeted])
+    assert result[0]["greet_sent"] is True
+    assert "greet_confirmation_pending" not in result[0]
+
+
 def test_dedupe_preserves_blacklist_from_old_to_new():
     """高分新记录替换旧记录时，保留旧记录上的黑名单状态。"""
     result = _dedupe_candidates([

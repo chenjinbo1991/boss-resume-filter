@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
+from urllib.parse import urlparse
 from constants import (
     SCORE_THRESHOLD_PASS,
     SCORE_THRESHOLD_RECOMMEND,
@@ -18,6 +19,8 @@ from constants import (
     LLM_TEMPERATURE,
     LLM_TIMEOUT,
     LLM_MAX_RETRIES,
+    LLM_MAX_WORKERS,
+    LLM_RELAY_MAX_WORKERS,
 )
 
 import requests
@@ -34,6 +37,18 @@ logger = logging.getLogger(__name__)
 
 # 429 限流退避延迟（秒），无 Retry-After header 时按此阶梯退避
 _BACKOFF_DELAYS = (5, 15, 30)
+_NETWORK_BACKOFF_DELAYS = (3, 8, 15)
+_OFFICIAL_API_HOSTS = {
+    "qwen": ("dashscope.aliyuncs.com",),
+    "deepseek": ("api.deepseek.com",),
+    "kimi": ("api.moonshot.cn",),
+    "zhipu": ("open.bigmodel.cn",),
+    "minimax": ("api.minimaxi.com",),
+    "xiaomi": ("api.ai.xiaomi.com", "token-plan-cn.xiaomimimo.com"),
+    "stepfun": ("api.stepfun.com",),
+    "openai": ("api.openai.com",),
+    "anthropic": ("api.anthropic.com",),
+}
 
 # resume prompt 构建时的额外字符缓冲（JSON 结构、format() 占位符等）
 _RESUME_PROMPT_OVERHEAD_BUFFER = 200
@@ -542,7 +557,7 @@ def _validated_hard_failures(
 
 
 def _call_llm_api(messages: list, api_config: dict, api_key: str,
-                    stop_event=None) -> LLMEvalResult:
+                    stop_event=None, request_label: str = "") -> LLMEvalResult:
     """Call LLM API and return evaluation result.
 
     Uses the provider-aware adapter and retries transient failures.
@@ -697,10 +712,23 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
                     return LLMEvalResult(success=False, reason=friendly)
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                delay = 1 + random.uniform(0, 0.5)
-                print(f"  ⚠️ 网络异常：{type(e).__name__}，{delay:.1f}s 后重试 ({attempt+1}/{max_retries})")
-                time.sleep(delay)
+                label = f"（{request_label}）" if request_label else ""
                 last_error = str(e)
+                if attempt + 1 >= max_retries:
+                    print(
+                        f"  ⚠️ 网络异常{label}：{type(e).__name__}，"
+                        f"已达最大重试次数 ({attempt+1}/{max_retries})"
+                    )
+                    break
+                delay = (
+                    _NETWORK_BACKOFF_DELAYS[min(attempt, len(_NETWORK_BACKOFF_DELAYS) - 1)]
+                    + random.uniform(0, 1)
+                )
+                print(
+                    f"  ⚠️ 网络异常{label}：{type(e).__name__}，"
+                    f"{delay:.1f}s 后重试 ({attempt+1}/{max_retries})"
+                )
+                time.sleep(delay)
                 continue
             except Exception as e:
                 print(f"  ❌ LLM 调用异常：{type(e).__name__}: {e}")
@@ -764,8 +792,33 @@ def _evaluate_single(index: int, candidate: dict, job_requirement: str,
                      stop_event=None) -> tuple:
     """Evaluate a single candidate with LLM. Returns (index, result, candidate_ref)."""
     messages = _build_prompt(job_requirement, build_llm_candidate_summary(candidate), hard_conditions)
-    result = _call_llm_api(messages, api_config, api_key, stop_event=stop_event)
+    result = _call_llm_api(
+        messages,
+        api_config,
+        api_key,
+        stop_event=stop_event,
+        request_label=str(candidate.get('name') or index + 1),
+    )
     return index, result, candidate
+
+
+def _resolve_eval_workers(api_config: dict, max_workers: int | None) -> tuple[int, bool]:
+    """Return effective concurrency and whether the endpoint is a relay service."""
+    if max_workers is not None:
+        return max(1, max_workers), False
+
+    provider = str(api_config.get("api_provider") or "").lower()
+    hostname = (urlparse(str(api_config.get("base_url") or "")).hostname or "").lower()
+    official_hosts = _OFFICIAL_API_HOSTS.get(provider)
+    is_relay = bool(
+        hostname
+        and (
+            provider == "custom"
+            or not official_hosts
+            or not any(hostname == host or hostname.endswith(f".{host}") for host in official_hosts)
+        )
+    )
+    return (LLM_RELAY_MAX_WORKERS if is_relay else LLM_MAX_WORKERS), is_relay
 
 
 def evaluate_batch(
@@ -778,7 +831,7 @@ def evaluate_batch(
     max_candidates: int | None = None,
     progress_callback=None,
     stop_event: Optional[threading.Event] = None,
-    max_workers: int = 5,
+    max_workers: int | None = None,
 ) -> list:
     """Evaluate candidates with LLM and adjust scores (concurrent).
 
@@ -791,7 +844,7 @@ def evaluate_batch(
         max_candidates: max number of candidates to evaluate (None = no limit)
         progress_callback: callable(percentage, description)
         stop_event: threading.Event for cancellation
-        max_workers: number of concurrent API calls (default 5)
+        max_workers: explicit concurrency override; None selects 5 for official APIs and 3 for relays
 
     Returns:
         Updated candidates list (same objects, modified in-place).
@@ -821,12 +874,17 @@ def evaluate_batch(
         if capability.get("status") == "incompatible":
             print(f"  [WARN] 模型能力验证失败：{capability.get('message', '未知原因')}")
 
-    print(f"开始 AI 评估：{total} 人（共 {len(candidates)} 人通过筛选），并发数：{max_workers}")
+    effective_workers, is_relay = _resolve_eval_workers(api_config, max_workers)
+    relay_hint = "（检测到中转服务）" if is_relay else ""
+    print(
+        f"开始 AI 评估：{total} 人（共 {len(candidates)} 人通过筛选），"
+        f"并发数：{effective_workers}{relay_hint}"
+    )
 
     completed_count = 0
     count_lock = threading.Lock()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadPoolExecutor(max_workers=effective_workers) as executor:
         # Submit all tasks
         future_to_index = {}
         for i, candidate in enumerate(to_evaluate):

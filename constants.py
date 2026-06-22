@@ -37,6 +37,7 @@ MAX_SCROLL_SEARCH = 40             # 最大滚动搜索次数
 MAX_ROUNDS_DEFAULT = 30            # 默认最大扫描轮数
 EMPTY_ROUNDS_LIMIT = 5             # 连续无新候选人轮数上限
 GREET_FAIL_LIMIT = 3               # 连续打招呼失败次数上限
+GREET_UNCERTAIN_LIMIT = 2          # 连续发送结果待确认次数上限
 CAPTCHA_MAX_WAIT = 300             # 验证码最大等待秒数（5 分钟）
 CAPTCHA_CHECK_INTERVAL = 3         # 验证码检查间隔秒数
 API_PAGE_DELAY_CENTER = 3.0        # API 分页直调间隔中心值（秒），默认约 2-4 秒
@@ -57,6 +58,8 @@ LLM_MAX_TOKENS = 1024              # 最大返回 token 数，需容纳完整评
 LLM_TEMPERATURE = 0.3              # 采样温度（低 = 更确定）
 LLM_TIMEOUT = (10, 60)             # HTTP 超时（连接秒, 读取秒）
 LLM_MAX_RETRIES = 3                # API 调用最大重试次数
+LLM_MAX_WORKERS = 5                # AI 评估默认并发数
+LLM_RELAY_MAX_WORKERS = 3          # 中转服务并发数，避免网关拥塞
 
 # ========== 自动更新超时（秒） ==========
 UPDATE_TIMEOUT_GITEE = 8           # Gitee latest.json 请求

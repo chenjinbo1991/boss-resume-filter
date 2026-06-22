@@ -27,6 +27,7 @@ from constants import (
     MAX_ROUNDS_DEFAULT,
     EMPTY_ROUNDS_LIMIT,
     GREET_FAIL_LIMIT,
+    GREET_UNCERTAIN_LIMIT,
     CAPTCHA_MAX_WAIT,
     CAPTCHA_CHECK_INTERVAL,
     API_PAGE_DELAY_CENTER,
@@ -57,6 +58,7 @@ from storage import (
     is_already_greeted,
     load_candidates_all,
     merge_candidates_all,
+    persist_candidate_greeting_pending,
     persist_candidate_greeted,
     save_candidates_all,
 )
@@ -2974,7 +2976,7 @@ def verify_greeting_success(
     before_button_text: str = "",
     stop_event=None,
     attempts: int = 5,
-    interval: float = 0.4,
+    interval: float = 0.8,
 ) -> tuple[bool | None, str]:
     """
     验证列表页打招呼结果。
@@ -3381,6 +3383,14 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 candidate_record['greet_context'] = existing_record['greet_context']
                 if existing_record.get('greet_context_updated_at'):
                     candidate_record['greet_context_updated_at'] = existing_record['greet_context_updated_at']
+            if existing_record and existing_record.get('greet_confirmation_pending'):
+                candidate_record['greet_confirmation_pending'] = True
+                candidate_record['greet_confirmation_reason'] = existing_record.get(
+                    'greet_confirmation_reason', ''
+                )
+                candidate_record['greet_confirmation_updated_at'] = existing_record.get(
+                    'greet_confirmation_updated_at', ''
+                )
             # 保留 API 结构化数据和画像供后续使用
             if structured:
                 candidate_record['structured'] = structured
@@ -3619,6 +3629,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             to_greet_list = [c for c in passed_candidates
                             if c.get('recommend_level') in greet_levels_allowed
                             and c.get('geek_id') not in existing_ids_for_job_and_greeted
+                            and not c.get('greet_confirmation_pending')
                             and not c.get('manual_review_required')]
             blocked_count = sum(
                 1 for c in passed_candidates
@@ -3626,9 +3637,17 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 and c.get('geek_id') not in existing_ids_for_job_and_greeted
                 and c.get('manual_review_required')
             )
+            pending_count = sum(
+                1 for c in passed_candidates
+                if c.get('recommend_level') in greet_levels_allowed
+                and c.get('geek_id') not in existing_ids_for_job_and_greeted
+                and c.get('greet_confirmation_pending')
+            )
             print(f"需要打招呼：{len(to_greet_list)} 人 ({greet_level_text})")
             if blocked_count:
                 print(f"  已跳过 {blocked_count} 人：需要人工确认后再打招呼")
+            if pending_count:
+                print(f"  已跳过 {pending_count} 人：上次发送结果待确认，请先在 BOSS 沟通列表核实")
 
         # 点击顺序按扫描/页面顺序，减少虚拟列表反复回顶和跳跃滚动。
         to_greet_list.sort(key=lambda x: raw_order_by_geek_id.get(str(x.get('geek_id')), len(raw_order_by_geek_id)))
@@ -3650,8 +3669,10 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
 
         greet_success_count = 0
         greet_fail_count = 0
+        greet_pending_count = 0
         greeted_in_this_run = []
         consecutive_failures = 0  # 连续失败计数
+        consecutive_uncertain = 0
 
         try:
             for i, candidate in enumerate(to_greet_list):
@@ -3695,11 +3716,18 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                     candidate['greet_sent'] = False
                     candidate.setdefault('followup_status', "未沟通")
                     candidates_all.append(candidate)
+                    persist_candidate_greeting_pending(candidate, msg)
+                    greet_pending_count += 1
+                    consecutive_uncertain += 1
                     print(f"待确认：{msg}")
-                    break
+                    if consecutive_uncertain >= GREET_UNCERTAIN_LIMIT:
+                        print(f"\n连续 {consecutive_uncertain} 人发送结果待确认，停止打招呼并请人工核实")
+                        break
+                    continue
                 if success:
                     greet_success_count += 1
                     consecutive_failures = 0  # 重置连续失败计数
+                    consecutive_uncertain = 0
                     persist_candidate_greeted(candidate, "auto_list")
                     candidates_all.append(candidate)
                     greeted_in_this_run.append(candidate['geek_id'])
@@ -3707,6 +3735,7 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
                 else:
                     greet_fail_count += 1
                     consecutive_failures += 1  # 累加连续失败计数
+                    consecutive_uncertain = 0
                     candidate['greet_sent'] = False
                     candidate.setdefault('followup_status', "未沟通")
                     candidates_all.append(candidate)
@@ -3739,7 +3768,10 @@ def smart_scan_candidates(page, job_info, auto_greet=False, max_rounds=MAX_ROUND
             print(f"✅ 候选人总数：{len(candidates_all)}")
             raise
 
-        print(f"\n打招呼完成：成功 {greet_success_count} 人，失败 {greet_fail_count} 人")
+        print(
+            f"\n打招呼完成：成功 {greet_success_count} 人，失败 {greet_fail_count} 人，"
+            f"待确认 {greet_pending_count} 人"
+        )
 
     # 保存所有通过的候选人（包含未打招呼的）
     # 用字典索引避免 O(n²) 查找
@@ -3945,6 +3977,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                 to_greet = [c for c in candidates_all
                            if c.get('recommend_level') in greet_levels_allowed
                            and not c.get('greet_sent', False)
+                           and not c.get('greet_confirmation_pending')
                            and not c.get('blacklisted')
                            and not c.get('manual_review_required')]
                 blocked_count = sum(
@@ -3995,6 +4028,7 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                 success_count = 0
                 fail_count = 0
                 skip_count = 0
+                consecutive_uncertain = 0
 
                 try:
                     for i, c in enumerate(to_greet):
@@ -4014,14 +4048,21 @@ def run_smart_scan(args=None, progress_callback=None, confirm_callback=None, sto
                         success, msg = send_greeting_on_list_page(page, geek_id, stop_event=stop_event, captcha_callback=captcha_callback)
                         if success is None:
                             skip_count += 1
+                            persist_candidate_greeting_pending(c, msg)
+                            consecutive_uncertain += 1
                             print(f"待确认：{msg}")
-                            break
+                            if consecutive_uncertain >= GREET_UNCERTAIN_LIMIT:
+                                print(f"\n连续 {consecutive_uncertain} 人发送结果待确认，停止补打招呼并请人工核实")
+                                break
+                            continue
                         if success:
                             success_count += 1
+                            consecutive_uncertain = 0
                             persist_candidate_greeted(c, "regreet_list")
                             print("OK")
                         else:
                             fail_count += 1
+                            consecutive_uncertain = 0
                             print(f"失败：{msg}")
                             # 沟通次数上限是终端条件
                             if "上限" in msg or "次数" in msg:

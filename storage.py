@@ -43,6 +43,9 @@ _FEEDBACK_FIELDS = (
     'greet_context_updated_at',
     'greet_sent_at',
     'greet_method',
+    'greet_confirmation_pending',
+    'greet_confirmation_reason',
+    'greet_confirmation_updated_at',
 )
 
 # 有时间戳的字段组：(时间戳字段, (关联数据字段...))
@@ -53,6 +56,10 @@ _TIMESTAMP_FIELD_GROUPS = (
     ('blacklisted_at', ('blacklisted', 'blacklist_reason')),
     ('greet_context_updated_at', ('greet_context',)),
     ('greet_sent_at', ('greet_sent', 'greet_method')),
+    (
+        'greet_confirmation_updated_at',
+        ('greet_confirmation_pending', 'greet_confirmation_reason'),
+    ),
 )
 _TIMESTAMPED_FIELDS = frozenset(
     f for ts_f, related in _TIMESTAMP_FIELD_GROUPS for f in (ts_f, *related)
@@ -157,6 +164,22 @@ def mark_candidate_greeted(
     candidate['greet_method'] = method
     candidate['followup_status'] = "已打招呼"
     candidate['followup_updated_at'] = greeted_at
+    candidate.pop('greet_confirmation_pending', None)
+    candidate.pop('greet_confirmation_reason', None)
+    candidate.pop('greet_confirmation_updated_at', None)
+
+
+def mark_candidate_greeting_pending(
+    candidate: dict[str, Any],
+    reason: str,
+    timestamp: Optional[str] = None,
+) -> None:
+    """记录点击已执行但发送结果尚未得到明确确认。"""
+    pending_at = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate['greet_sent'] = False
+    candidate['greet_confirmation_pending'] = True
+    candidate['greet_confirmation_reason'] = reason
+    candidate['greet_confirmation_updated_at'] = pending_at
 
 
 def merge_candidates_all(
@@ -179,6 +202,20 @@ def persist_candidate_greeted(
         return False
     with _CANDIDATES_FILE_LOCK:
         mark_candidate_greeted(candidate, method)
+        merge_candidates_all([candidate], path)
+        return True
+
+
+def persist_candidate_greeting_pending(
+    candidate: dict[str, Any],
+    reason: str,
+    path: Optional[str] = None,
+) -> bool:
+    """将单个候选人的发送待确认状态立即合并到最新磁盘数据。"""
+    if not candidate.get('geek_id'):
+        return False
+    with _CANDIDATES_FILE_LOCK:
+        mark_candidate_greeting_pending(candidate, reason)
         merge_candidates_all([candidate], path)
         return True
 
@@ -254,6 +291,10 @@ def _dedupe_candidates(candidates_all: list[dict[str, Any]]) -> list[dict[str, A
     for c in unique_candidates:
         if c.get('greeting_in_progress') and c.get('greet_sent'):
             del c['greeting_in_progress']
+        if c.get('greet_sent'):
+            c.pop('greet_confirmation_pending', None)
+            c.pop('greet_confirmation_reason', None)
+            c.pop('greet_confirmation_updated_at', None)
 
     return unique_candidates
 

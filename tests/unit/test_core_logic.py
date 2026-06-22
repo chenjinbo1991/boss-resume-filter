@@ -1157,6 +1157,142 @@ def test_auto_greet_limit_triggers_notice_and_caps_greetings():
     assert "再次运行同一岗位扫描" in notices[0][1]
 
 
+def test_auto_greet_continues_after_one_uncertain_result():
+    class FakePage:
+        url = "https://www.zhipin.com/web/chat/recommend"
+
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+    job_info = {
+        "job_id": "job-uncertain",
+        "job_name": "Java 工程师",
+        "rule_key": "java",
+        "rule": {"min_exp": 0, "edu": "不限", "keywords": ["Java"]},
+    }
+    raw_candidates = [
+        {"geek_id": f"g-{i}", "name": f"候选人{i}", "summary": "本科，5 年 Java"}
+        for i in range(3)
+    ]
+
+    with patch.object(bossmaster, "load_candidates_all", return_value=[]), \
+         patch.object(bossmaster, "extract_candidates_by_comprehensive_analysis", return_value=raw_candidates), \
+         patch.object(bossmaster, "filter_candidate", return_value=(True, 80, {"skill_matches": ["Java"]})), \
+         patch.object(bossmaster, "get_iframe", return_value=None), \
+         patch.object(bossmaster, "_human_delay", return_value=0), \
+         patch.object(bossmaster.time, "sleep"), \
+         patch.object(
+             bossmaster,
+             "send_greeting_on_list_page",
+             side_effect=[(None, "按钮未变化"), (True, "成功"), (True, "成功")],
+         ) as mock_greet, \
+         patch.object(bossmaster, "merge_candidates_all"), \
+         patch.object(bossmaster, "persist_candidate_greeting_pending") as mock_pending, \
+         patch.object(bossmaster, "persist_candidate_greeted"):
+        bossmaster.smart_scan_candidates(
+            FakePage(),
+            job_info,
+            auto_greet=True,
+            max_rounds=1,
+            greet_level="normal",
+        )
+
+    assert mock_greet.call_count == 3
+    mock_pending.assert_called_once()
+
+
+def test_auto_greet_stops_after_two_consecutive_uncertain_results():
+    class FakePage:
+        url = "https://www.zhipin.com/web/chat/recommend"
+
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+    job_info = {
+        "job_id": "job-uncertain-limit",
+        "job_name": "Java 工程师",
+        "rule_key": "java",
+        "rule": {"min_exp": 0, "edu": "不限", "keywords": ["Java"]},
+    }
+    raw_candidates = [
+        {"geek_id": f"g-{i}", "name": f"候选人{i}", "summary": "本科，5 年 Java"}
+        for i in range(3)
+    ]
+
+    with patch.object(bossmaster, "load_candidates_all", return_value=[]), \
+         patch.object(bossmaster, "extract_candidates_by_comprehensive_analysis", return_value=raw_candidates), \
+         patch.object(bossmaster, "filter_candidate", return_value=(True, 80, {"skill_matches": ["Java"]})), \
+         patch.object(bossmaster, "get_iframe", return_value=None), \
+         patch.object(bossmaster, "_human_delay", return_value=0), \
+         patch.object(bossmaster.time, "sleep"), \
+         patch.object(
+             bossmaster,
+             "send_greeting_on_list_page",
+             side_effect=[(None, "按钮未变化"), (None, "卡片未出现"), (True, "成功")],
+         ) as mock_greet, \
+         patch.object(bossmaster, "merge_candidates_all"), \
+         patch.object(bossmaster, "persist_candidate_greeting_pending") as mock_pending, \
+         patch.object(bossmaster, "persist_candidate_greeted"):
+        bossmaster.smart_scan_candidates(
+            FakePage(),
+            job_info,
+            auto_greet=True,
+            max_rounds=1,
+            greet_level="normal",
+        )
+
+    assert mock_greet.call_count == bossmaster.GREET_UNCERTAIN_LIMIT
+    assert mock_pending.call_count == bossmaster.GREET_UNCERTAIN_LIMIT
+
+
+def test_auto_greet_skips_candidate_with_existing_pending_confirmation():
+    class FakePage:
+        url = "https://www.zhipin.com/web/chat/recommend"
+
+        def run_js(self, *_args, **_kwargs):
+            return None
+
+    job_info = {
+        "job_id": "job-pending-existing",
+        "job_name": "Java 工程师",
+        "rule_key": "java",
+        "rule": {"min_exp": 0, "edu": "不限", "keywords": ["Java"]},
+    }
+    existing = [{
+        "geek_id": "g-pending",
+        "job_name": "Java工程师",
+        "match_score": 80,
+        "greet_sent": False,
+        "greet_confirmation_pending": True,
+        "greet_confirmation_reason": "按钮未变化",
+        "greet_confirmation_updated_at": "20260622_100000",
+    }]
+    raw_candidates = [{
+        "geek_id": "g-pending",
+        "name": "待核实候选人",
+        "summary": "本科，5 年 Java",
+    }]
+
+    with patch.object(bossmaster, "load_candidates_all", return_value=existing), \
+         patch.object(bossmaster, "extract_candidates_by_comprehensive_analysis", return_value=raw_candidates), \
+         patch.object(bossmaster, "filter_candidate", return_value=(True, 80, {"skill_matches": ["Java"]})), \
+         patch.object(bossmaster, "get_iframe", return_value=None), \
+         patch.object(bossmaster, "_human_delay", return_value=0), \
+         patch.object(bossmaster.time, "sleep"), \
+         patch.object(bossmaster, "send_greeting_on_list_page") as mock_greet, \
+         patch.object(bossmaster, "merge_candidates_all"):
+        result = bossmaster.smart_scan_candidates(
+            FakePage(),
+            job_info,
+            auto_greet=True,
+            max_rounds=1,
+            greet_level="normal",
+        )
+
+    mock_greet.assert_not_called()
+    assert result[0]["greet_confirmation_pending"] is True
+
+
 def test_limit_popup_does_not_treat_positive_remaining_count_as_exhausted():
     class FakePage:
         def run_js(self, script, *_args, **_kwargs):

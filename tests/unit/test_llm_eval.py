@@ -16,6 +16,7 @@ from llm_eval import (
     _recalc_recommend_level,
     _use_forced_function_output,
     evaluate_batch,
+    _resolve_eval_workers,
 )
 
 
@@ -368,6 +369,10 @@ def test_call_llm_api_timeout_retries(mock_requests, mock_sleep):
         result = _call_llm_api([{"role": "user", "content": "test"}], api_config, "key")
     assert result.success is False
     assert mock_session.post.call_count == 3
+    delays = [call.args[0] for call in mock_sleep.call_args_list]
+    assert 3 <= delays[0] <= 4
+    assert 8 <= delays[1] <= 9
+    assert len(delays) == 2
 
 
 def test_call_llm_api_missing_config():
@@ -555,6 +560,28 @@ def test_batch_stop_event_interrupts(mock_call):
 def test_batch_empty_candidates():
     result = quiet_evaluate_batch([], "岗位", {}, "key")
     assert result == []
+
+
+def test_eval_workers_use_five_for_official_api_and_three_for_relay():
+    official_workers, official_relay = _resolve_eval_workers(
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        },
+        None,
+    )
+    relay_workers, relay_detected = _resolve_eval_workers(
+        {
+            "api_provider": "qwen",
+            "base_url": "https://newapi.example.com/v1",
+        },
+        None,
+    )
+
+    assert official_workers == 5
+    assert official_relay is False
+    assert relay_workers == 3
+    assert relay_detected is True
 
 
 @patch('llm_eval.time.sleep')

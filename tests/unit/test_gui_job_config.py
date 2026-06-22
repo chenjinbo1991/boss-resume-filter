@@ -196,6 +196,17 @@ def test_candidate_status_hides_internal_greet_context_capability():
     assert gui._format_candidate_status(candidate) == "未沟通"
 
 
+def test_candidate_status_surfaces_pending_greeting_confirmation():
+    gui = BossFilterGUI.__new__(BossFilterGUI)
+    candidate = {
+        "greet_sent": False,
+        "followup_status": "未沟通",
+        "greet_confirmation_pending": True,
+    }
+
+    assert gui._format_candidate_status(candidate) == "未沟通｜发送待确认"
+
+
 def test_greet_confirmation_hint_explains_prepared_path_without_technical_terms():
     candidate = {
         "greet_context": {"chat_start": {"jid": "job-1", "lid": "list-1"}},
