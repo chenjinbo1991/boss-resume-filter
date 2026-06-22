@@ -1,29 +1,29 @@
 {
-  "version": "2.13",
-  "release_date": "2026-06-21",
+  "version": "2.13.1",
+  "release_date": "2026-06-22",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.dmg"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
-      "size": 38288959,
-      "sha256": "f2eca923df17d19f3a29e66f4d524494cbefe7e1c0719668a45545c9851989a4"
+      "size": 38293534,
+      "sha256": "aa330f0818022d391c47855c60448c36d3b203031496d4bfa60a54ee31a5b736"
     },
     "macos_dmg": {
-      "size": 33133153,
-      "sha256": "6fddd241a77310150f9aa6c02717801d1282304ca9693f1746abe4d2abbc033c"
+      "size": 33130848,
+      "sha256": "f15583914dc579412e9d2a620d78538ff11bdefcea349406eb9185353f5d119e"
     },
     "macos": {
-      "size": 33977162,
-      "sha256": "daf791bd9c09a59365f2718d61e339c0e41ca5ca1ac0535f94cdfac15612895f"
+      "size": 33982566,
+      "sha256": "d45a59c848f287f9906e99d3437c9fb7f1b9011dd745c75392bf4221bc492cc1"
     }
   },
-  "release_notes": "### 新增功能\n\n- **多选批量处理候选人**：筛选结果页和明细窗口支持多选候选人，右键可批量打招呼、移除或导出；批量沟通会按候选人发送条件分组处理并保留执行结果\n- **扩展 AI 服务兼容范围**：支持 Anthropic、Azure OpenAI 和常见 OpenAI 兼容服务，模型连接测试会验证能否生成程序可识别的评估结果\n\n### 体验优化\n\n- **候选人信息补全范围扩大**：单次最多补全 20 页候选人信息，提高大量候选人场景下的资料完整度\n- **扫描完整性提示更明确**：达到扫描或信息补全上限时，如最后一轮仍有新增或有效命中，日志会提示结果可能不完整\n- **AI 评估统计更透明**：评估结束显示成功数、失败数和成功率，失败率过高时提醒人工复核\n- **模型兼容性验证更可靠**：连接测试会实际验证评估结果格式，并显示完整兼容或兼容模式；不支持结构化输出的模型会自动降级处理\n- **筛选完成口径更准确**：分别显示规则筛选通过人数、AI 复核淘汰人数和最终保留人数，避免将最终人数误写成规则通过人数\n- **已保存模型列表优化**：模型名称、服务商、状态、Base URL 四列始终显示，Base URL 过长时鼠标悬停显示完整内容；窗口最大化时列宽自动拉伸\n- **批量操作反馈更完整**：模型测试和批量沟通会显示响应时间、停止状态，以及认证失败、配额超限、免费额度不足或模型未开通等原因，方便定位配置或页面问题\n- **统招本科识别更准**：本科就读起止时间满 4 年的候选人自动通过学历硬条件，不再因学历形式疑似非统招误进人工确认\n- **在职候选人减少人工确认**：求职状态为在职的候选人直接通过状态检查，不再标记为需人工确认\n\n### 问题修复\n\n- **修复学历经历误判**：第一学历明确为大专或专科后取得本科、专升本及本科教育不超过三年的候选人按岗位硬条件淘汰，不再误进入人工确认\n- **修复 AI 返回格式异常导致批量评估失败**：通义千问评估改用稳定的参数化结果返回，并关闭不必要的深度思考；其他模型仍保留格式修复和纠错重试\n- **修复部分服务商协议不兼容**：支持 Anthropic 和 Azure 的接口差异，统一处理 OpenAI 兼容服务，并按具体模型保存已验证的输出能力\n- **修复启动时偶发页面断线误报**：浏览器刷新或重建页面导致旧连接失效时，跳过本次选择器检查并等待自动重连，不再误报选择器异常\n- **修复剩余沟通次数被误判为已用完**：收紧沟通限制提示关键词，只在页面出现明确的次数耗尽提示，或可见升级弹窗同时包含沟通次数说明时停止发送；“今日剩余 2 次”等正常额度提示不再触发上限警告\n- **修复点击打招呼后直接记为成功**：列表页发送后会确认按钮变为“继续沟通”或出现明确成功提示；页面状态无法确认时停止本轮发送且不写入已沟通状态，避免漏记或重复发送\n- **修复已保存模型状态不显示**：首次配置或切换模型后，已验证的兼容状态可能未及时刷新到模型列表\n- **修复切换结果页时偶发崩溃**：结果页面尚未就绪时触发刷新会导致程序异常退出",
+  "release_notes": "### 体验优化\n\n- **打招呼状态跟踪更可靠**：发送结果无法确认时记录为待确认状态，避免重复发送；后续扫描自动跳过待确认的候选人，核实后可继续操作\n- **连续发送异常时自动停止**：打招呼连续多次结果不明确时自动暂停，提醒人工核实后再继续，避免批量无效操作\n- **打招呼确认等待更充分**：延长发送后的状态确认等待时间，减少因页面响应慢导致的误判\n- **AI 评估更稳定**：中转服务自动降低并发数，减少网关拥塞导致的失败；网络异常采用阶梯式重试间隔，恢复成功率更高",
   "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.exe",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter.dmg",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13/BOSS_ResumeFilter_mac.zip"
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.exe",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.dmg"
   }
 }
