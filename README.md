@@ -235,7 +235,7 @@ boss-resume-filter/
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
 ├── constants.py          # 共享常量（评分模型参数、阈值、学历档位、滚动参数、城市列表）
 ├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
-├── gui_main.py            # 图形界面主程序（v2.13）
+├── gui_main.py            # 图形界面主程序（v2.13.1）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
