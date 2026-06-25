@@ -89,6 +89,8 @@ def main() -> None:
         r"%LOCALAPPDATA%",
         "--name",
         "EducationCertificateTool",
+        "--icon",
+        str(BASE_DIR / "education_tool.ico"),
         "--additional-hooks-dir",
         str(BASE_DIR / "pyinstaller-hooks"),
         "--add-data",
