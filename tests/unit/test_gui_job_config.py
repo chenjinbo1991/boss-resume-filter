@@ -1,5 +1,6 @@
 import queue
 from pathlib import Path
+from unittest.mock import Mock
 
 import icons
 from gui_main import BossFilterGUI, _optional_int_to_entry, _parse_optional_int_entry
@@ -363,3 +364,440 @@ def test_stats_page_greeted_uses_chat_icon_consistently():
 
     assert '("chat", "已打招呼", "greeted"' in stats_block
     assert '("mail", "已打招呼", "greeted"' not in stats_block
+
+
+def test_education_browser_reuses_live_page():
+    gui = object.__new__(BossFilterGUI)
+    live_tab = Mock()
+    live_tab.run_js.return_value = 1
+    gui.education_tabs = {"edu_1": live_tab}
+    gui.browser_page = None
+
+    assert gui._get_education_tab("edu_1") is live_tab
+
+
+def test_education_browser_rebuilds_after_both_page_objects_disconnect():
+    gui = object.__new__(BossFilterGUI)
+    stale_tab = Mock()
+    stale_tab.run_js.side_effect = RuntimeError("与页面的连接已断开")
+    stale_base = Mock()
+    stale_base.run_js.side_effect = RuntimeError("与页面的连接已断开")
+    fresh_page = Mock()
+    fresh_page.run_js.return_value = 1
+    fresh_page.address = "127.0.0.1:9222"
+    new_tab = Mock()
+    new_tab.run_js.return_value = 1
+    fresh_page.new_tab.return_value = new_tab
+
+    gui.education_tabs = {"edu_1": stale_tab}
+    gui.browser_page = stale_base
+    gui.browser_connected = True
+    gui._try_reconnect_browser = Mock(return_value=False)
+    gui._create_fresh_browser_page = Mock(return_value=fresh_page)
+
+    result = gui._get_education_tab("edu_1")
+
+    assert result is new_tab
+    assert gui.education_tabs["edu_1"] is new_tab
+    assert gui.browser_page is fresh_page
+    assert gui.browser_connected is True
+
+
+def test_education_browser_recovers_if_chrome_closes_before_new_tab():
+    gui = object.__new__(BossFilterGUI)
+    stale_tab = Mock()
+    stale_tab.run_js.side_effect = RuntimeError("与页面的连接已断开")
+    base_page = Mock()
+    base_page.run_js.return_value = 1
+    base_page.new_tab.side_effect = RuntimeError("与页面的连接已断开")
+    fresh_page = Mock()
+    fresh_page.run_js.return_value = 1
+    fresh_page.address = "127.0.0.1:9222"
+
+    gui.education_tabs = {"edu_1": stale_tab}
+    gui.browser_page = base_page
+    gui.browser_connected = True
+    gui._try_reconnect_browser = Mock(return_value=False)
+    gui._create_fresh_browser_page = Mock(return_value=fresh_page)
+
+    assert gui._get_education_tab("edu_1") is fresh_page
+    assert gui.browser_page is fresh_page
+
+
+def test_education_queue_saves_manual_edits_to_current_item():
+    gui = object.__new__(BossFilterGUI)
+    gui.education_current_id = "education_1"
+    gui.education_items = {
+        "education_1": {
+            "path": "certificate.jpg",
+            "name": "",
+            "certificate_number": "",
+            "status": "已识别",
+        }
+    }
+    gui.education_name_var = Mock()
+    gui.education_name_var.get.return_value = " 张三 "
+    gui.education_number_var = Mock()
+    gui.education_number_var.get.return_value = "123456789012345678"
+    gui.education_queue_tree = Mock()
+    gui.education_queue_tree.exists.return_value = True
+
+    gui._save_current_education_fields()
+
+    item = gui.education_items["education_1"]
+    assert item["name"] == "张三"
+    assert item["certificate_number"] == "123456789012345678"
+    gui.education_queue_tree.item.assert_called_once()
+
+
+def test_education_queue_disables_parallel_recognition():
+    gui = object.__new__(BossFilterGUI)
+    gui.education_items = {"education_1": {"path": "certificate.jpg"}}
+    gui.education_current_id = "education_1"
+    gui.education_recognition_running = True
+    gui.education_file_var = Mock()
+    gui.education_remove_btn = Mock()
+    gui.education_recognize_btn = Mock()
+    gui.education_fill_btn = Mock()
+
+    gui._refresh_education_queue_summary()
+
+    gui.education_recognize_btn.configure.assert_called_with(state="disabled")
+    gui.education_remove_btn.configure.assert_called_with(state="normal")
+    gui.education_fill_btn.configure.assert_called_with(state="normal")
+
+
+def test_education_import_uses_multi_file_dialog():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    block = source[
+        source.index("def _select_education_images"):
+        source.index("def _refresh_education_queue_summary")
+    ]
+
+    assert "askopenfilenames(" in block
+    assert "askopenfilename(" not in block
+
+
+def test_education_queue_supports_multi_select_batch_recognition_and_context_menu():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    create_block = source[
+        source.index("def create_education_page"):
+        source.index("def _select_education_images")
+    ]
+    recognize_block = source[
+        source.index("def _recognize_education_image"):
+        source.index("def _fill_chsi_page")
+    ]
+
+    assert 'selectmode="extended"' in create_block
+    assert 'text=" 识别证书"' in create_block
+    assert 'label="识别证书"' in create_block
+    assert 'label="删除证书"' in create_block
+    assert "ThreadPoolExecutor(max_workers=workers)" in recognize_block
+    assert "workers = min(3, len(item_ids))" in recognize_block
+
+
+def test_education_selected_ids_preserve_multi_selection():
+    gui = object.__new__(BossFilterGUI)
+    gui.education_items = {
+        "education_1": {},
+        "education_2": {},
+        "education_3": {},
+    }
+    gui.education_current_id = "education_1"
+    gui.education_queue_tree = Mock()
+    gui.education_queue_tree.selection.return_value = ("education_1", "education_3")
+
+    assert gui._selected_education_item_ids() == ["education_1", "education_3"]
+
+
+def test_education_page_has_scroll_container_and_conditional_queue():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    create_block = source[
+        source.index("def create_education_page"):
+        source.index("def _select_education_images")
+    ]
+    summary_block = source[
+        source.index("def _refresh_education_queue_summary"):
+        source.index("def _save_current_education_fields")
+    ]
+
+    assert "self.education_canvas, self.education_scrollable_frame" in create_block
+    assert "self.education_queue_card.pack_forget()" in create_block
+    queue_card_block = create_block[
+        create_block.index('content, "待核验队列"'):
+        create_block.index("self.education_queue_card")
+    ]
+    assert "title_font=" not in queue_card_block
+    assert '"Education.Treeview"' in create_block
+    assert '"Education.Treeview.Heading"' in create_block
+    assert "font=(FONT_FAMILY, int(10 * self.font_scale))" in create_block
+    assert "font=(FONT_FAMILY, int(11 * self.font_scale), \"bold\")" in create_block
+    assert '("school", "学校"' in create_block
+    assert '("major", "专业"' in create_block
+    assert '("file", "文件", 230)' in create_block
+    assert '("number", "证书编号", 160)' in create_block
+    assert '("major", "专业", 210)' in create_block
+    assert "def _on_education_queue_motion" in source
+    assert 'tooltip_columns = {"#1": 0, "#4": 3, "#5": 4}' in source
+    assert "self._education_tree_font.measure(full_text)" in source
+    assert "if total >= 1" in summary_block
+    assert "elif total < 1" in summary_block
+
+
+def test_mousewheel_routes_education_and_api_pages_to_correct_canvas():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    cocoa_block = source[
+        source.index("page_canvas = {"):
+        source.index("}.get(getattr(self, 'current_page_index', -1))")
+    ]
+
+    assert "4: getattr(self, 'education_canvas', None)" in cocoa_block
+    assert "6: getattr(self, 'api_canvas', None)" in cocoa_block
+
+
+def test_education_queue_context_menu_uses_smaller_font():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    create_block = source[
+        source.index("def create_education_page"):
+        source.index("def _select_education_images")
+    ]
+
+    assert "int(11 * self.font_scale)" in create_block
+    assert "int(12 * self.font_scale)" not in create_block
+def test_education_remove_clears_manual_rotation():
+    from gui_main import BossFilterGUI as _GUI
+    gui = object.__new__(_GUI)
+    gui.education_items = {
+        "education_1": {"path": "a.jpg"},
+        "education_2": {"path": "b.jpg"},
+    }
+    gui.education_manual_rotation = {"education_1": 90, "education_2": 180}
+    gui.education_rotation_locked = {"education_1", "education_2"}
+    gui.education_current_id = "education_1"
+    gui.education_queue_tree = Mock()
+    gui.education_queue_tree.get_children.return_value = (
+        "education_1",
+        "education_2",
+    )
+    gui.education_queue_tree.exists.return_value = True
+    gui._on_education_queue_select = Mock()
+    gui._refresh_education_queue_summary = Mock()
+
+    gui._remove_education_items(["education_1"])
+
+    assert "education_1" not in gui.education_manual_rotation
+    assert gui.education_manual_rotation["education_2"] == 180
+    assert "education_1" not in gui.education_rotation_locked
+
+
+def test_education_rotate_cw90_accumulates_and_wraps():
+    from gui_main import BossFilterGUI as _GUI
+    gui = object.__new__(_GUI)
+    gui.education_current_id = "education_1"
+    gui.education_items = {"education_1": {"path": "a.jpg", "auto_rotation": 0}}
+    gui.education_manual_rotation = {}
+    gui.education_rotation_locked = set()
+    gui._render_education_preview = Mock()
+
+    gui._rotate_education_image_cw90()
+    assert gui.education_manual_rotation["education_1"] == 90
+    assert "education_1" in gui.education_rotation_locked
+    gui._rotate_education_image_cw90()
+    assert gui.education_manual_rotation["education_1"] == 180
+    gui._rotate_education_image_cw90()
+    assert gui.education_manual_rotation["education_1"] == 270
+    gui._rotate_education_image_cw90()
+    assert gui.education_manual_rotation["education_1"] == 0
+    assert gui._render_education_preview.call_count == 4
+
+
+def test_education_rotate_cw90_noop_without_current_item():
+    from gui_main import BossFilterGUI as _GUI
+    gui = object.__new__(_GUI)
+    gui.education_current_id = None
+    gui.education_items = {}
+    gui.education_manual_rotation = {}
+    gui.education_rotation_locked = set()
+    gui._render_education_preview = Mock()
+
+    gui._rotate_education_image_cw90()
+
+    assert gui.education_manual_rotation == {}
+    gui._render_education_preview.assert_not_called()
+
+
+def test_education_manual_rotation_starts_from_model_rotation_and_locks():
+    from gui_main import BossFilterGUI as _GUI
+    gui = object.__new__(_GUI)
+    gui.education_current_id = "education_1"
+    gui.education_items = {
+        "education_1": {"path": "a.jpg", "auto_rotation": 90}
+    }
+    gui.education_manual_rotation = {}
+    gui.education_rotation_locked = set()
+    gui._render_education_preview = Mock()
+
+    gui._rotate_education_image_cw90()
+
+    assert gui.education_manual_rotation["education_1"] == 180
+    assert "education_1" in gui.education_rotation_locked
+
+
+def test_education_preview_toolbar_has_rotate_not_flip():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    create_block = source[
+        source.index("def create_education_page"):
+        source.index("def _select_education_images")
+    ]
+
+    assert "顺转 90°" in create_block
+    assert "education_rotate_btn" in create_block
+    assert "_rotate_education_image_cw90" in source
+    assert "education_manual_rotation" in source
+    # 用 tk.Label + 点击绑定代替 ttk.Button，严格不撑高标题栏
+    assert "EducationRotate.TButton" not in create_block
+    assert 'cursor="hand2"' in create_block
+    assert "<Button-1>" in create_block
+
+    # 无快捷键提示
+    assert '"快捷键 R"' not in create_block
+    assert "rotate_hint" not in create_block
+
+    # 按钮在预览卡片标题栏内（title_trailing_builder 注入），不挤占图片空间也不遮挡图片
+    assert "preview_toolbar" not in create_block
+    assert "preview_column" not in create_block
+    assert "title_trailing_builder" in create_block
+    assert "_build_rotate_button" in create_block
+    assert "title_bar, text=" in create_block
+    assert 'side="right"' in create_block
+    assert "self.education_rotate_btn.place(" not in create_block
+    # 按钮文字无前导空格（缩窄）
+    assert 'text="顺转 90°"' in create_block
+    assert 'text=" 顺转 90°"' not in create_block
+
+    # 无任何自动方向检测
+    assert "_detect_image_orientation" not in source
+    assert "education_orientation_cache" not in source
+
+    assert "flip_horizontal" not in source
+    assert "flip_vertical" not in source
+    assert "education_flip_h_btn" not in create_block
+    assert "_flip_education_image_horizontal" not in source
+    assert "_flip_education_image_vertical" not in source
+    assert "_reset_education_image_flip" not in source
+    assert "_set_education_flip_buttons_enabled" not in source
+
+def test_education_recognize_disclaimer_text_simplified():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    create_block = source[
+        source.index("def create_education_page"):
+        source.index("def _select_education_images")
+    ]
+
+    # 精简后的提示文本
+    assert "识别时图片/PDF 会发送当前配置的 AI 模型，请确认已取得候选人授权。" in create_block
+    # 旧文本已删除（"给"、"学信网验证码"等）
+    assert "识别时图片会发送给当前配置" not in create_block
+    assert "学信网验证码" not in create_block
+
+def test_education_remove_current_button_handles_multi_select():
+    """'移除当前'按钮在多选时应移除所有选中项，而非只移除当前项。"""
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    remove_block = source[
+        source.index("def _remove_current_education_image"):
+        source.index("def _remove_selected_education_images")
+    ]
+
+    assert "_selected_education_item_ids" in remove_block
+    assert "self.education_current_id" not in remove_block
+
+
+def test_education_queue_summary_text_varies_by_count():
+    """total=1 不显示'点击队列切换'，total>1 显示，单位用'张证书'。"""
+    from unittest.mock import Mock
+    from gui_main import BossFilterGUI as _GUI
+
+    gui = object.__new__(_GUI)
+    gui.education_items = {"edu_1": {}}
+    gui.education_file_var = Mock()
+    gui.education_queue_card = None
+    gui.education_workspace = None
+    gui.education_remove_btn = Mock()
+    gui.education_recognize_btn = Mock()
+    gui.education_fill_btn = Mock()
+    gui.education_current_id = "edu_1"
+    gui.education_recognition_running = False
+
+    gui._refresh_education_queue_summary()
+    gui.education_file_var.set.assert_called_with("已导入 1 张证书")
+
+    gui.education_items = {"edu_1": {}, "edu_2": {}}
+    gui._refresh_education_queue_summary()
+    gui.education_file_var.set.assert_called_with("已导入 2 张证书，点击队列切换")
+
+    gui.education_items = {}
+    gui._refresh_education_queue_summary()
+    gui.education_file_var.set.assert_called_with("尚未导入毕业证书")
+
+
+def test_education_import_button_text_is_certificate():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    create_block = source[
+        source.index("def create_education_page"):
+        source.index("def _select_education_images")
+    ]
+
+    assert 'text=" 导入证书"' in create_block
+    assert 'text=" 导入图片"' not in create_block
+
+def test_education_import_dialog_supports_pdf():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    select_block = source[
+        source.index("def _select_education_images"):
+        source.index("def _refresh_education_queue_summary")
+    ]
+
+    assert '"图片和 PDF", "*.jpg *.jpeg *.png *.bmp *.webp *.pdf"' in select_block
+    assert '("PDF 文件", "*.pdf")' in select_block
+    # 用 validate_document_path（接受图片+PDF），不再用 validate_image_path
+    assert "validate_document_path" in select_block
+    assert "is_pdf_path" in select_block
+    # item 字典存 is_pdf 标记
+    assert '"is_pdf": is_pdf_path(path)' in select_block
+
+
+def test_education_worker_branches_pdf_and_image():
+    source = Path("gui_main.py").read_text(encoding="utf-8")
+    worker_block = source[
+        source.index("def _recognize_education_image"):
+        source.index("def _fill_chsi_page")
+    ]
+
+    # 同时导入两个识别函数
+    assert "recognize_certificate_pdf" in worker_block
+    assert "recognize_certificate_image" in worker_block
+    # 按 is_pdf 分支
+    assert 'item.get("is_pdf")' in worker_block
+    assert "recognize_certificate_pdf(path" in worker_block
+
+
+def test_education_render_shows_text_placeholder_for_pdf():
+    from unittest.mock import Mock
+    from gui_main import BossFilterGUI as _GUI
+    gui = object.__new__(_GUI)
+    gui.education_current_id = "edu_1"
+    gui.education_items = {"edu_1": {"path": "cert.pdf", "is_pdf": True}}
+    gui.education_manual_rotation = {}
+    label = Mock()
+    gui.education_preview_label = label
+    gui.education_image_path = "cert.pdf"
+
+    gui._render_education_preview()
+
+    # PDF 不走 Image.open，直接显示文字占位
+    label.configure.assert_called_once()
+    kwargs = label.configure.call_args.kwargs
+    assert kwargs.get("image") == ""
+    assert "PDF" in kwargs.get("text", "")
+    assert label._image_ref is None
