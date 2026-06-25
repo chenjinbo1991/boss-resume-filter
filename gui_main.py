@@ -3671,7 +3671,9 @@ class BossFilterGUI:
                     messagebox.showwarning(
                         "模型可能不支持图片识别",
                         f"当前模型「{model_name}」可能不支持图片输入。\n\n"
-                        "图片识别需要多模态视觉模型（如 GPT-4o、Claude 3、通义千问 VL 等）。\n"
+                        "图片识别需要多模态视觉模型，如：\n"
+                        "  国外：GPT-4o / GPT-4.1、Claude Sonnet 4、Gemini 2.5 Pro\n"
+                        "  国内：qwen3.7-plus、mimo-v2.5、GLM-5、Kimi K2、MiniMax-M2.7\n\n"
                         "PDF 文件使用文本提取，不受此限制。\n\n"
                         "请在「API 配置」中切换支持图片的模型后再识别。",
                         parent=self.root,
@@ -3958,7 +3960,9 @@ class BossFilterGUI:
                 if not messagebox.askyesno(
                     "模型可能不支持图片识别",
                     f"当前模型「{model_name}」可能不支持图片输入。\n\n"
-                    "图片识别需要多模态视觉模型（如 GPT-4o、Claude 3、通义千问 VL 等）。\n"
+                    "图片识别需要多模态视觉模型，如：\n"
+                    "  国外：GPT-4o / GPT-4.1、Claude Sonnet 4、Gemini 2.5 Pro\n"
+                    "  国内：qwen3.7-plus、mimo-v2.5、GLM-5、Kimi K2、MiniMax-M2.7\n\n"
                     "PDF 文件使用文本提取，不受此限制。\n\n"
                     "是否仍要尝试识别？",
                     parent=self.root,
