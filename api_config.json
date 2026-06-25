@@ -1,7 +1,7 @@
 {
     "api_provider": "qwen",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "model": "qwen3.7-plus",
+    "model": "qwen3.7-max",
     "saved_models": [
         {
             "api_provider": "qwen",
