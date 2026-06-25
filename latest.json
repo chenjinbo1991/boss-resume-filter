@@ -1,29 +1,29 @@
 {
-  "version": "2.13.1",
-  "release_date": "2026-06-22",
+  "version": "2.14",
+  "release_date": "2026-06-25",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.dmg"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
-      "size": 38293534,
-      "sha256": "aa330f0818022d391c47855c60448c36d3b203031496d4bfa60a54ee31a5b736"
+      "size": 38364849,
+      "sha256": "9f143d94b5e33946fa3a7ac0019412149704ec1532edb375a2340083cf5bc512"
     },
     "macos_dmg": {
-      "size": 33130848,
-      "sha256": "f15583914dc579412e9d2a620d78538ff11bdefcea349406eb9185353f5d119e"
+      "size": 33204844,
+      "sha256": "603f0e7aecf40c0781eb8ac9095c6ddd5f7bf9770076dda43c94c41385b5cc47"
     },
     "macos": {
-      "size": 33982566,
-      "sha256": "d45a59c848f287f9906e99d3437c9fb7f1b9011dd745c75392bf4221bc492cc1"
+      "size": 34054704,
+      "sha256": "a4585e3085f4684052655a485822ebbe80a38c6d957716f4ea904f4bc05b961f"
     }
   },
-  "release_notes": "### 体验优化\n\n- **打招呼状态跟踪更可靠**：发送结果无法确认时记录为待确认状态，避免重复发送；后续扫描自动跳过待确认的候选人，核实后可继续操作\n- **连续发送异常时自动停止**：打招呼连续多次结果不明确时自动暂停，提醒人工核实后再继续，避免批量无效操作\n- **打招呼确认等待更充分**：延长发送后的状态确认等待时间，减少因页面响应慢导致的误判\n- **AI 评估更稳定**：中转服务自动降低并发数，减少网关拥塞导致的失败；网络异常采用阶梯式重试间隔，恢复成功率更高",
+  "release_notes": "### 新增功能\n\n- **新增学历证书核验**：支持批量导入毕业证书图片或 PDF，识别姓名、证书编号、学校和专业，并通过 Chrome 打开学信网完成批量查询、验证码识别与失败重试\n- **新增独立核验工具**：学历核验功能可单独运行和打包，使用固定 AI 服务及独立 Chrome 数据目录，无需启动 BOSS 简历筛选器",
   "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.exe",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.13.1/BOSS_ResumeFilter.dmg"
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.exe",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.dmg"
   }
 }
