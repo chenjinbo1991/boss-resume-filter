@@ -34,8 +34,8 @@ job_config.json
 
 #### 4. 自动更新
 - macOS 版本支持自动更新
-- 程序启动时会检查 GitHub Release
-- 发现新版本后自动下载并替换 .app，完成后重启
+- 程序启动时自动检查新版本（Gitee 优先，GitHub 备选）
+- 发现新版本后下载 ZIP 包替换 .app，完成后自动重启
 
 ### 配置 API Key（Windows 和 macOS 通用）
 由于 API Key 加密存储在原电脑的系统钥匙串中，新电脑需要重新配置：
