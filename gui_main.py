@@ -3659,6 +3659,23 @@ class BossFilterGUI:
             self.education_queue_tree.focus(added_ids[0])
             self.education_queue_tree.see(added_ids[0])
             self._on_education_queue_select()
+            # 导入了图片文件时检查模型是否支持视觉
+            has_image = any(
+                not self.education_items.get(item_id, {}).get("is_pdf")
+                for item_id in added_ids
+            )
+            if has_image:
+                from education_certificate import likely_supports_vision
+                if not likely_supports_vision(dict(self.api_config or {})):
+                    model_name = str((self.api_config or {}).get("model") or "未配置")
+                    messagebox.showwarning(
+                        "模型可能不支持图片识别",
+                        f"当前模型「{model_name}」可能不支持图片输入。\n\n"
+                        "图片识别需要多模态视觉模型（如 GPT-4o、Claude 3、通义千问 VL 等）。\n"
+                        "PDF 文件使用文本提取，不受此限制。\n\n"
+                        "请在「API 配置」中切换支持图片的模型后再识别。",
+                        parent=self.root,
+                    )
         if invalid_files:
             messagebox.showwarning(
                 "部分文件未导入",
@@ -3929,6 +3946,24 @@ class BossFilterGUI:
             return
         if self.education_recognition_running:
             return
+        # 检查是否有图片文件需要视觉模型
+        has_image = any(
+            not self.education_items.get(item_id, {}).get("is_pdf")
+            for item_id in item_ids
+        )
+        if has_image:
+            from education_certificate import likely_supports_vision
+            if not likely_supports_vision(dict(self.api_config or {})):
+                model_name = str((self.api_config or {}).get("model") or "未配置")
+                if not messagebox.askyesno(
+                    "模型可能不支持图片识别",
+                    f"当前模型「{model_name}」可能不支持图片输入。\n\n"
+                    "图片识别需要多模态视觉模型（如 GPT-4o、Claude 3、通义千问 VL 等）。\n"
+                    "PDF 文件使用文本提取，不受此限制。\n\n"
+                    "是否仍要尝试识别？",
+                    parent=self.root,
+                ):
+                    return
         self.education_recognition_running = True
         from education_certificate import resolve_vision_api_config
         vision_config = resolve_vision_api_config(dict(self.api_config or {}))

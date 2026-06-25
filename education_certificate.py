@@ -84,6 +84,48 @@ def resolve_vision_api_config(api_config: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+# 已知支持图片输入的模型名称关键词（小写匹配）
+_VISION_MODEL_KEYWORDS: tuple[str, ...] = (
+    "vision", "-vl", "vl-", "_vl", "vl2", "omni",
+    "gpt-4o", "gpt-4-turbo", "o1", "o3", "o4",
+    "claude-3", "claude-4", "claude-sonnet-4", "claude-opus-4",
+    "mimo-v2.5", "mimo-v2.5-vl",
+    "qwen-vl", "qwen2.5-vl", "qwen3-vl",
+    "glm-4v", "glm-5v",
+    "minimax-vl",
+    "step-1v", "step-2v",
+    "gemini", "gemma",
+    "deepseek-vl",
+    "internvl",
+)
+
+
+def likely_supports_vision(api_config: dict[str, Any]) -> bool:
+    """根据模型名称启发式判断是否可能支持图片输入。
+
+    返回 True 不保证一定支持（名称不含关键词的视觉模型会漏判）；
+    返回 False 基本确定不支持（纯文本模型名称不含这些关键词）。
+    """
+    provider = str(api_config.get("api_provider") or "").lower()
+    model = str(api_config.get("model") or "").lower()
+    base_url = str(api_config.get("base_url") or "").lower()
+    # 小米服务：mimo-v2.5 系列支持视觉
+    if (
+        provider == "xiaomi"
+        or "xiaomimimo.com" in base_url
+        or "api.ai.xiaomi.com" in base_url
+    ):
+        return "mimo" in model
+    # Anthropic：claude-3 及以后的多模态系列
+    if provider == "anthropic" or "api.anthropic.com" in base_url:
+        return any(kw in model for kw in ("claude-3", "claude-4", "sonnet", "opus"))
+    # OpenAI：gpt-4o / gpt-4-turbo / o1 / o3 / o4 系列
+    if provider == "openai" or "api.openai.com" in base_url:
+        return any(kw in model for kw in ("gpt-4o", "gpt-4-turbo", "o1", "o3", "o4"))
+    # 通用关键词匹配
+    return any(kw in model for kw in _VISION_MODEL_KEYWORDS)
+
+
 def validate_image_path(path: str | Path) -> Path:
     """校验图片路径及格式。"""
     image_path = Path(path)
