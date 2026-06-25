@@ -10,17 +10,22 @@ boss-resume-filter/
 ├── ai_adapter.py         # 多服务商接口适配与模型能力验证
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.13.1）
+├── gui_main.py           # 图形界面主程序（v2.14）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
 ├── icons.py              # 图标绘制模块（Pillow 矢量图标，35个图标函数 + IconCache）
 ├── doc_parser.py         # 招聘需求文档解析器（JD → 必要条件 + 职位要求）
+├── education_certificate.py # 毕业证书图片识别、字段校验与学信网页面填写
+├── education_tool.py    # 独立学历证书核验助手入口（复用 gui_main 学历核验模式）
+├── education_tool_config.py # 独立工具固定 AI 配置
+├── education_tool_security.py # 独立工具内置 API Key 解密
 ├── security.py           # API Key 安全存储模块（keyring 加密，按 provider+base_url 组合存储）
 ├── migrate_keys.py       # API Key 迁移工具（明文→加密）
 ├── constants.py          # 共享常量（评分模型参数、阈值、学历档位、滚动参数、城市列表）
 ├── paths.py              # 路径工具（get_base_dir、ensure_config_files、路径常量）
 ├── build.py              # PyInstaller 打包脚本（支持 --release 一键发布）
+├── build_education_tool.py # 独立学历证书核验助手打包脚本
 ├── latest.json           # 版本清单（Gitee 更新源，build.py --release 自动维护）
 ├── job_config.json       # 岗位筛选规则配置
 ├── api_config.json       # AI 模型配置（不含明文 Key）

@@ -167,6 +167,9 @@ def build_request(
     model_lower = model.lower()
     if "dashscope.aliyuncs.com" in base_lower and model_lower.startswith("qwen3.7"):
         body["enable_thinking"] = False
+    if api_config.get("_disable_thinking") and "xiaomimimo.com" in base_lower:
+        body["max_completion_tokens"] = body.pop("max_tokens")
+        body["thinking"] = {"type": "disabled"}
     return url, headers, body, protocol
 
 

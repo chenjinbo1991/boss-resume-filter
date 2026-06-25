@@ -40,6 +40,26 @@ def test_build_openai_compatible_request():
     assert body["tool_choice"]["function"]["name"] == "submit"
 
 
+def test_build_xiaomi_vision_request_disables_thinking():
+    _url, _headers, body, protocol = build_request(
+        {
+            "api_provider": "xiaomi",
+            "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "model": "mimo-v2.5",
+            "_disable_thinking": True,
+        },
+        "secret",
+        [{"role": "user", "content": "test"}],
+        max_tokens=500,
+        temperature=0,
+    )
+
+    assert protocol == "openai_compatible"
+    assert "max_tokens" not in body
+    assert body["max_completion_tokens"] == 500
+    assert body["thinking"] == {"type": "disabled"}
+
+
 def test_build_anthropic_request_converts_system_and_tool():
     url, headers, body, protocol = build_request(
         {"api_provider": "anthropic", "base_url": "https://api.anthropic.com/v1", "model": "claude-test"},

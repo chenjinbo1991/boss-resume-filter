@@ -1,7 +1,7 @@
 {
     "api_provider": "qwen",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "model": "qwen3.7-max",
+    "model": "qwen3.7-plus",
     "saved_models": [
         {
             "api_provider": "qwen",
@@ -27,6 +27,16 @@
             "api_provider": "qwen",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
             "model": "kimi-k2.7-code"
+        },
+        {
+            "api_provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.7-plus"
+        },
+        {
+            "api_provider": "xiaomi",
+            "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "model": "mimo-v2.5"
         }
     ],
     "providers": {
@@ -269,6 +279,7 @@
             "siliconflow/deepseek-v3.1-terminus",
             "siliconflow/deepseek-v3.2",
             "sre-gpu-auto-handle",
+            "test-sre-gpu-auto-handle",
             "tongyi-xiaomi-analysis-flash",
             "tongyi-xiaomi-analysis-pro",
             "vanchin/deepseek-ocr",

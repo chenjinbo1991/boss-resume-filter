@@ -4342,6 +4342,7 @@ def main():
         '--hidden-import=tkinter.messagebox',
         '--hidden-import=tkcalendar',
         '--hidden-import=pdfminer',
+        '--hidden-import=education_certificate',
         '--hidden-import=striprtf',
         '--hidden-import=babel',
         '--hidden-import=babel.numbers',
