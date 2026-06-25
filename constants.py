@@ -57,9 +57,10 @@ USER_AGENT = "BossResumeFilter/1.0"
 LLM_MAX_TOKENS = 1024              # 最大返回 token 数，需容纳完整评估参数
 LLM_TEMPERATURE = 0.3              # 采样温度（低 = 更确定）
 LLM_TIMEOUT = (10, 60)             # HTTP 超时（连接秒, 读取秒）
+LLM_RELAY_TIMEOUT = (10, 120)      # 中转服务超时（连接秒, 读取秒）
 LLM_MAX_RETRIES = 3                # API 调用最大重试次数
 LLM_MAX_WORKERS = 5                # AI 评估默认并发数
-LLM_RELAY_MAX_WORKERS = 3          # 中转服务并发数，避免网关拥塞
+LLM_RELAY_MAX_WORKERS = 2          # 中转服务并发数，避免网关拥塞
 
 # ========== 自动更新超时（秒） ==========
 UPDATE_TIMEOUT_GITEE = 8           # Gitee latest.json 请求

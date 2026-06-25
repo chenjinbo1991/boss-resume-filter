@@ -18,6 +18,7 @@ from constants import (
     LLM_MAX_TOKENS,
     LLM_TEMPERATURE,
     LLM_TIMEOUT,
+    LLM_RELAY_TIMEOUT,
     LLM_MAX_RETRIES,
     LLM_MAX_WORKERS,
     LLM_RELAY_MAX_WORKERS,
@@ -49,6 +50,27 @@ _OFFICIAL_API_HOSTS = {
     "openai": ("api.openai.com",),
     "anthropic": ("api.anthropic.com",),
 }
+
+
+def _is_relay_endpoint(api_config: dict) -> bool:
+    """Return whether the configured API endpoint is a relay service."""
+    provider = str(api_config.get("api_provider") or "").lower()
+    hostname = (urlparse(str(api_config.get("base_url") or "")).hostname or "").lower()
+    official_hosts = _OFFICIAL_API_HOSTS.get(provider)
+    return bool(
+        hostname
+        and (
+            provider == "custom"
+            or not official_hosts
+            or not any(hostname == host or hostname.endswith(f".{host}") for host in official_hosts)
+        )
+    )
+
+
+def _resolve_request_timeout(api_config: dict) -> tuple[int, int]:
+    """Return provider-aware HTTP connect/read timeouts."""
+    return LLM_RELAY_TIMEOUT if _is_relay_endpoint(api_config) else LLM_TIMEOUT
+
 
 # resume prompt 构建时的额外字符缓冲（JSON 结构、format() 占位符等）
 _RESUME_PROMPT_OVERHEAD_BUFFER = 200
@@ -596,7 +618,7 @@ def _call_llm_api(messages: list, api_config: dict, api_key: str,
         )
 
     url, headers, body, protocol = _make_request(use_tool_output)
-    timeout = LLM_TIMEOUT
+    timeout = _resolve_request_timeout(api_config)
     max_retries = LLM_MAX_RETRIES
     last_error = None
     json_format_retries = 0
@@ -807,17 +829,7 @@ def _resolve_eval_workers(api_config: dict, max_workers: int | None) -> tuple[in
     if max_workers is not None:
         return max(1, max_workers), False
 
-    provider = str(api_config.get("api_provider") or "").lower()
-    hostname = (urlparse(str(api_config.get("base_url") or "")).hostname or "").lower()
-    official_hosts = _OFFICIAL_API_HOSTS.get(provider)
-    is_relay = bool(
-        hostname
-        and (
-            provider == "custom"
-            or not official_hosts
-            or not any(hostname == host or hostname.endswith(f".{host}") for host in official_hosts)
-        )
-    )
+    is_relay = _is_relay_endpoint(api_config)
     return (LLM_RELAY_MAX_WORKERS if is_relay else LLM_MAX_WORKERS), is_relay
 
 
@@ -844,7 +856,7 @@ def evaluate_batch(
         max_candidates: max number of candidates to evaluate (None = no limit)
         progress_callback: callable(percentage, description)
         stop_event: threading.Event for cancellation
-        max_workers: explicit concurrency override; None selects 5 for official APIs and 3 for relays
+        max_workers: explicit concurrency override; None selects 5 for official APIs and 2 for relays
 
     Returns:
         Updated candidates list (same objects, modified in-place).

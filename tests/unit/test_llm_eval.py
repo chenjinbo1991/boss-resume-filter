@@ -17,6 +17,7 @@ from llm_eval import (
     _use_forced_function_output,
     evaluate_batch,
     _resolve_eval_workers,
+    _resolve_request_timeout,
 )
 
 
@@ -369,6 +370,10 @@ def test_call_llm_api_timeout_retries(mock_requests, mock_sleep):
         result = _call_llm_api([{"role": "user", "content": "test"}], api_config, "key")
     assert result.success is False
     assert mock_session.post.call_count == 3
+    assert all(
+        call.kwargs["timeout"] == (10, 120)
+        for call in mock_session.post.call_args_list
+    )
     delays = [call.args[0] for call in mock_sleep.call_args_list]
     assert 3 <= delays[0] <= 4
     assert 8 <= delays[1] <= 9
@@ -562,7 +567,7 @@ def test_batch_empty_candidates():
     assert result == []
 
 
-def test_eval_workers_use_five_for_official_api_and_three_for_relay():
+def test_eval_workers_use_five_for_official_api_and_two_for_relay():
     official_workers, official_relay = _resolve_eval_workers(
         {
             "api_provider": "qwen",
@@ -580,8 +585,22 @@ def test_eval_workers_use_five_for_official_api_and_three_for_relay():
 
     assert official_workers == 5
     assert official_relay is False
-    assert relay_workers == 3
+    assert relay_workers == 2
     assert relay_detected is True
+
+
+def test_request_timeout_uses_120_seconds_only_for_relay():
+    official_timeout = _resolve_request_timeout({
+        "api_provider": "qwen",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    })
+    relay_timeout = _resolve_request_timeout({
+        "api_provider": "custom",
+        "base_url": "https://newapi.example.com/v1",
+    })
+
+    assert official_timeout == (10, 60)
+    assert relay_timeout == (10, 120)
 
 
 @patch('llm_eval.time.sleep')
