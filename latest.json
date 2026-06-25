@@ -8,22 +8,22 @@
   },
   "assets": {
     "windows": {
-      "size": 38364386,
-      "sha256": "414c2e5cc256551a9bbf7cb5db5861321a10867f933267286f57d63775109656"
+      "size": 38364168,
+      "sha256": "ce48ed83ddaad47a9af4ad5a82f3983116a56feadbd634384503aef7b73ad5b9"
     },
     "macos_dmg": {
-      "size": 33204844,
-      "sha256": "603f0e7aecf40c0781eb8ac9095c6ddd5f7bf9770076dda43c94c41385b5cc47"
+      "size": 33195805,
+      "sha256": "bea4f3c55b060de8fdef3394fe70267d59e6c98c7d076a6eceb36e3120ea2cae"
     },
     "macos": {
-      "size": 34054704,
-      "sha256": "a4585e3085f4684052655a485822ebbe80a38c6d957716f4ea904f4bc05b961f"
+      "size": 34053886,
+      "sha256": "45f4fd99fe8069ee9f3de8a56f53b0624c3e6e0dd5296fc1f33c0dfa6513ef62"
     }
   },
-  "release_notes": "### 新增功能\n\n- **新增学历证书核验**：支持批量导入毕业证书图片或 PDF，识别姓名、证书编号、学校和专业，并通过 Chrome 打开学信网完成批量查询、验证码识别与失败重试",
+  "release_notes": "### 新增功能\n\n- **新增学历证书核验**：支持批量导入毕业证书图片或 PDF，识别姓名、证书编号、学校和专业，并通过 Chrome 打开学信网完成批量查询、验证码识别与失败重试\n\n### 体验优化\n\n- **中转服务更稳定**：中转服务读取超时从 60 秒延长至 120 秒，并发数从 3 降至 2，减少大模型响应慢或网关拥塞导致的超时失败",
   "downloads_cn": {
     "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.exe",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.dmg"
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.dmg",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter_mac.zip"
   }
 }
