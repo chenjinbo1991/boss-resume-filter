@@ -346,6 +346,10 @@ boss-resume-filter/
 | 模型列表为空 | API 不支持 models 接口 | 手动输入模型名称；或联系服务商确认 |
 | 切换模型后 API Key 为空 | 配置未正确保存 | 重新保存模型配置；检查 api_config.json 权限 |
 
+## 🛠️ 开发工具
+
+本项目由姚有忠主导设计与开发，项目方向、需求取舍和最终决策均由项目负责人确定。开发过程中使用 [Claude Code](https://www.anthropic.com/claude-code) 和 [OpenAI Codex](https://openai.com/codex/) 辅助代码实现、审查、测试与文档维护。
+
 ## 📝 License
 
 MIT
