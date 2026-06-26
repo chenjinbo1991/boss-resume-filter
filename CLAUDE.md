@@ -10,7 +10,7 @@ boss-resume-filter/
 ├── ai_adapter.py         # 多服务商接口适配与模型能力验证
 ├── job_ai_parser.py      # 岗位需求 AI 增强解析模块（基于正则初稿补充优化）
 ├── storage.py            # 候选人数据持久化模块（去重、原子写入、备份恢复）
-├── gui_main.py           # 图形界面主程序（v2.14）
+├── gui_main.py           # 图形界面主程序（v2.14.1）
 ├── gui_dialogs.py        # 独立对话框模块（更新日志、关于弹窗、CHANGELOG 渲染）
 ├── changelog_parser.py   # CHANGELOG 解析模块（版本段落提取、标题解析）
 ├── updater.py            # 自动更新模块（Gitee/GitHub 双源检查、下载替换、完整性校验、启动时自动检查）
@@ -103,6 +103,7 @@ boss-resume-filter/
 - 推送前 `input()` 确认 [y/N]；tag 冲突时自动 `--force`（master 除外）
 
 #### CHANGELOG 核实规范（双向验证）
+
 - **硬门禁**：当前版本段落、发布分类顺序、README 当前版本入口、历史版本完整性、源码编译和回归测试必须通过
 - **提示项**：条目质量、正向覆盖（CHANGELOG → 代码）、反向覆盖（代码 → CHANGELOG）、README 与 CHANGELOG 逐条一致、latest.json release_notes 同步默认只提示，避免启发式误报反复打断开发
 - **严格模式**：需要发布文案洁癖审查时运行 `python build.py --check --strict-changelog`，此时上述提示项升级为硬门禁
