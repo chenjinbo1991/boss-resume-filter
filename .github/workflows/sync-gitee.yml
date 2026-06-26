@@ -19,10 +19,8 @@ jobs:
       - name: Push to Gitee
         run: |
           git remote add gitee https://yaoyouzhong:${{ secrets.GITEE_TOKEN }}@gitee.com/yaoyouzhong/boss-resume-filter.git || true
-          # Fetch latest ref from Gitee to avoid stale ref rejection
-          git fetch gitee master || true
           git push gitee master --force || {
-            echo "First push failed, re-fetching and retrying..."
-            git fetch gitee master || true
+            echo "Push failed, retrying in 5s..."
+            sleep 5
             git push gitee master --force
           }
