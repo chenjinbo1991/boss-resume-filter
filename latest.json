@@ -1,29 +1,29 @@
 {
-  "version": "2.14",
-  "release_date": "2026-06-25",
+  "version": "2.14.1",
+  "release_date": "2026-06-26",
   "downloads": {
-    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.exe",
-    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter_mac.zip",
-    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.dmg"
+    "windows": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14.1/BOSS_ResumeFilter.exe",
+    "macos": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14.1/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://github.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14.1/BOSS_ResumeFilter.dmg"
   },
   "assets": {
     "windows": {
-      "size": 38367573,
-      "sha256": "a47ac038b53aac5eb40e8e3d1708e4a7645d307eb9a4c07a154c5b0e09b58562"
+      "size": 38379945,
+      "sha256": "3af968ba719dce76312dc7547cf97a36013accdab99969f5a57784a276c30492"
     },
     "macos_dmg": {
-      "size": 33003380,
-      "sha256": "a8423fab525f944f78969b02903a05d78fcd6bf756ffe1905a742a7b5dbb998c"
+      "size": 33045847,
+      "sha256": "e5eac26c1f4b5703f8b5e0e03fc7e85cf65261ff91c786f7fd6948ddcec9c3ea"
     },
     "macos": {
-      "size": 33912743,
-      "sha256": "694d0c82add845673412fe5da89ebe1d031a93b0b55698b96b8052825505c1b1"
+      "size": 33925567,
+      "sha256": "911fbc1227411fe8da95065e59fe3e8b014f2cea395ecbf4e7a91630c05343a7"
     }
   },
-  "release_notes": "### 新增功能\n\n- **新增学历证书核验**：支持批量导入毕业证书图片或 PDF，识别姓名、证书编号、学校和专业，并通过 Chrome 打开学信网完成批量查询、验证码识别与失败重试\n\n### 体验优化\n\n- **中转服务更稳定**：中转服务读取超时从 60 秒延长至 120 秒，并发数从 3 降至 2，减少大模型响应慢或网关拥塞导致的超时失败\n- **图片识别前置检查**：导入毕业证书图片或点击识别时，自动检查当前模型是否支持图片输入，不支持则提前提醒切换模型，避免识别失败后才发现",
+  "release_notes": "### 新增功能\n\n- **学历核验可指定独立模型**：系统设置的已保存模型列表中，右键可将某个模型设为学历核验专用模型，AI 评估继续使用全局模型，无需手动切换\n- **AI 评估超时可调**：运行控制页支持调节 AI 评估读取超时（10–300 秒），适配不同网络环境和模型响应速度\n\n### 体验优化\n\n- **已保存模型列表优化**：新增学历核验标记列，服务商、状态等列加宽显示更完整，超出时鼠标悬停显示完整内容\n- **Gitee 同步更稳定**：修复并发推送冲突，自动重试避免同步失败",
   "downloads_cn": {
-    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.exe",
-    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter.dmg",
-    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14/BOSS_ResumeFilter_mac.zip"
+    "windows": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14.1/BOSS_ResumeFilter.exe",
+    "macos": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14.1/BOSS_ResumeFilter_mac.zip",
+    "macos_dmg": "https://gitee.com/yaoyouzhong/boss-resume-filter/releases/download/v2.14.1/BOSS_ResumeFilter.dmg"
   }
 }
