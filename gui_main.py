@@ -56,6 +56,21 @@ CHROME_DEBUG_PORT_FILE = BASE_DIR / ".chrome_debug_port"
 FEEDBACK_STATUS_OPTIONS = ["合适", "误推", "误杀", "放弃"]
 FOLLOWUP_STATUS_OPTIONS = ["未沟通", "已打招呼", "已回复", "待约面", "已约面", "不合适", "已归档"]
 
+# 服务商显示名称映射（内部键 -> 显示名称）
+PROVIDER_DISPLAY = {
+    "qwen": "通义千问 (Qwen)",
+    "deepseek": "DeepSeek",
+    "kimi": "Kimi (月之暗面)",
+    "zhipu": "智谱 (Zhipu)",
+    "minimax": "MiniMax",
+    "xiaomi": "小米 (Xiaomi)",
+    "stepfun": "阶跃星辰 (StepFun)",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic (Claude)",
+    "custom": "自定义 (Custom)"
+}
+DISPLAY_TO_KEY = {v: k for k, v in PROVIDER_DISPLAY.items()}
+
 # 首次运行时确保配置文件存在
 ensure_config_files(BASE_DIR)
 
@@ -2490,21 +2505,9 @@ class BossFilterGUI:
         row1 = ttk.Frame(input_frame, style='TFrame')
         row1.pack(fill="x")
 
-        # 服务商显示名称映射（内部键 -> 显示名称）
-        self.PROVIDER_DISPLAY = {
-            "qwen": "通义千问 (Qwen)",
-            "deepseek": "DeepSeek",
-            "kimi": "Kimi (月之暗面)",
-            "zhipu": "智谱 (Zhipu)",
-            "minimax": "MiniMax",
-            "xiaomi": "小米 (Xiaomi)",
-            "stepfun": "阶跃星辰 (StepFun)",
-            "openai": "OpenAI",
-            "anthropic": "Anthropic (Claude)",
-            "custom": "自定义 (Custom)"
-        }
-        # 反向映射（显示名称 -> 内部键），用于加载配置时转换
-        self.DISPLAY_TO_KEY = {v: k for k, v in self.PROVIDER_DISPLAY.items()}
+        # 引用模块级常量（兼容旧代码 self.PROVIDER_DISPLAY / self.DISPLAY_TO_KEY）
+        self.PROVIDER_DISPLAY = PROVIDER_DISPLAY
+        self.DISPLAY_TO_KEY = DISPLAY_TO_KEY
 
         ttk.Label(row1, text="服务商:", font=self.font_label, width=UI_CONFIG['label_width_provider']).pack(side="left")
         self.api_provider_var = tk.StringVar(value=self.PROVIDER_DISPLAY["qwen"])
@@ -2706,6 +2709,24 @@ class BossFilterGUI:
             self.api_key_var.set(self.api_config.get("api_key", ""))
         self.api_base_url_var.set(self.api_config.get("base_url", ""))
         self.api_model_var.set(self.api_config.get("model", ""))
+
+        # 超时设置（字段缺失时按中转/非中转取默认值）
+        if hasattr(self, 'llm_read_timeout_var'):
+            _is_relay = self._is_relay_endpoint_for_timeout()
+            _default_read = 120 if _is_relay else 60
+            self.llm_read_timeout_var.set(self.api_config.get("llm_read_timeout") or _default_read)
+            # 刷新提示文案
+            if hasattr(self, '_timeout_hint_label'):
+                _pk = self.api_config.get("api_provider", "")
+                _pn = PROVIDER_DISPLAY.get(_pk, _pk)
+                _mn = self.api_config.get("model", "")
+                if _is_relay:
+                    _label = f"中转服务/{_mn}" if _mn else "中转服务"
+                    _hint = f"（{_label}，默认 120 秒）"
+                else:
+                    _label = f"{_pn}/{_mn}" if _mn else _pn
+                    _hint = f"（{_label}，默认 60 秒）"
+                self._timeout_hint_label.config(text=_hint)
 
         # 更新当前使用模型显示
         self.update_current_model_display()
@@ -3074,6 +3095,44 @@ class BossFilterGUI:
                  foreground=self.colors['danger'], background=self.colors['bg_card']).pack(side="left")
         tk.Label(row_ai, text=_note_suffix, font=_note_font,
                  foreground=self.colors['text_muted'], background=self.colors['bg_card']).pack(side="left")
+
+        # AI 评估超时设置（紧跟 AI 评估行下方，缩进对齐）
+        row_ai_timeout = ttk.Frame(param_frame, style='TFrame')
+        row_ai_timeout.pack(fill="x", pady=(0, int(5 * self.dpi_scale * self.zoom_factor)))
+        ttk.Label(row_ai_timeout, text="", width=12, background=self.colors['bg_card']).pack(side="left")
+        _spin_font = (FONT_FAMILY, int(12 * self.font_scale))
+        _spin_w = 5
+        _spin_pad = int(3 * self.dpi_scale * self.zoom_factor)
+        _sub_font = (FONT_FAMILY, int(11 * self.font_scale))
+
+        # 根据是否中转服务决定默认读取超时
+        _is_relay = self._is_relay_endpoint_for_timeout()
+        _default_read = 120 if _is_relay else 60
+        _init_read = self.api_config.get("llm_read_timeout") or _default_read
+        self.llm_read_timeout_var = tk.IntVar(value=_init_read)
+
+        ttk.Label(row_ai_timeout, text="AI 响应超时:", font=_sub_font,
+                 background=self.colors['bg_card'],
+                 foreground=self.colors['text_secondary']).pack(side="left")
+        ttk.Spinbox(row_ai_timeout, from_=10, to=300, increment=10, width=_spin_w,
+                    textvariable=self.llm_read_timeout_var,
+                    font=_spin_font).pack(side="left", padx=(_spin_pad, 0))
+        ttk.Label(row_ai_timeout, text="秒", font=_sub_font,
+                 background=self.colors['bg_card'],
+                 foreground=self.colors['text_secondary']).pack(side="left", padx=(_spin_pad, int(10 * self.dpi_scale * self.zoom_factor)))
+        _provider_key = self.api_config.get("api_provider", "")
+        _provider_name = PROVIDER_DISPLAY.get(_provider_key, _provider_key)
+        _model_name = self.api_config.get("model", "")
+        if _is_relay:
+            _label = f"中转服务/{_model_name}" if _model_name else "中转服务"
+            _hint = f"（{_label}，默认 120 秒）"
+        else:
+            _label = f"{_provider_name}/{_model_name}" if _model_name else _provider_name
+            _hint = f"（{_label}，默认 60 秒）"
+        self._timeout_hint_label = ttk.Label(row_ai_timeout, text=_hint, font=_sub_font,
+                 background=self.colors['bg_card'],
+                 foreground=self.colors['text_muted'])
+        self._timeout_hint_label.pack(side="left")
 
         # === 进度条 ===
         progress_frame = ttk.Frame(param_frame, style='TFrame')
@@ -6022,7 +6081,8 @@ class BossFilterGUI:
                         "model": config.get("model", "deepseek-chat"),
                         "saved_models": config.get("saved_models", []),
                         "providers": config.get("providers", {}),
-                        "fetched_models": config.get("fetched_models", {})
+                        "fetched_models": config.get("fetched_models", {}),
+                        "llm_read_timeout": config.get("llm_read_timeout"),
                     }
 
                     # 从 keyring 读取所有 saved_models 的 API Key（按服务商）
@@ -6068,7 +6128,8 @@ class BossFilterGUI:
             "model": "deepseek-chat",
             "saved_models": [],
             "providers": {},
-            "fetched_models": {}
+            "fetched_models": {},
+            "llm_read_timeout": None,
         }
 
     def _sanitize_config_for_save(self, config):
@@ -6140,6 +6201,31 @@ class BossFilterGUI:
         if foreground is not None:
             config["foreground"] = foreground
         self.api_status_label.config(**config)
+
+    def _is_relay_endpoint_for_timeout(self) -> bool:
+        """判断当前 API 配置是否为中转服务（用于读取超时默认值）"""
+        from urllib.parse import urlparse
+        _OFFICIAL_HOSTS = {
+            "qwen": ("dashscope.aliyuncs.com",),
+            "deepseek": ("api.deepseek.com",),
+            "kimi": ("api.moonshot.cn",),
+            "zhipu": ("open.bigmodel.cn",),
+            "minimax": ("api.minimaxi.com",),
+            "xiaomi": ("api.ai.xiaomi.com", "token-plan-cn.xiaomimimo.com"),
+            "stepfun": ("api.stepfun.com",),
+            "openai": ("api.openai.com",),
+            "anthropic": ("api.anthropic.com",),
+        }
+        provider = str(self.api_config.get("api_provider") or "").lower()
+        hostname = (urlparse(str(self.api_config.get("base_url") or "")).hostname or "").lower()
+        official = _OFFICIAL_HOSTS.get(provider)
+        if not hostname:
+            return False
+        if provider == "custom":
+            return True
+        if not official:
+            return True
+        return not any(hostname == h or hostname.endswith(f".{h}") for h in official)
 
     def _update_ai_eval_status(self):
         """更新 AI 评估状态标签和 checkbox 默认值（根据当前 API Key 是否已配置）"""
@@ -6407,7 +6493,8 @@ class BossFilterGUI:
                 "model": model_name,
                 "saved_models": getattr(self, 'saved_models', []),
                 "providers": self.api_config.get("providers", {}),
-                "fetched_models": self.api_config.get("fetched_models", {})
+                "fetched_models": self.api_config.get("fetched_models", {}),
+                "llm_read_timeout": self.llm_read_timeout_var.get() if hasattr(self, 'llm_read_timeout_var') else 60,
             }
 
             # 检查当前模型是否已存在于列表
@@ -9350,6 +9437,20 @@ class BossFilterGUI:
             ai_api_key = None
             if ai_eval_enabled:
                 try:
+                    # 同步运行页超时设置到 api_config
+                    _timeout_changed = False
+                    if hasattr(self, 'llm_read_timeout_var'):
+                        _new_rt = self.llm_read_timeout_var.get()
+                        if self.api_config.get("llm_read_timeout") != _new_rt:
+                            self.api_config["llm_read_timeout"] = _new_rt
+                            _timeout_changed = True
+                    # 超时值变更时持久化到 api_config.json
+                    if _timeout_changed:
+                        try:
+                            with open(API_CONFIG_PATH, 'w', encoding='utf-8') as _f:
+                                json.dump(self._sanitize_config_for_save(self.api_config), _f, ensure_ascii=False, indent=4)
+                        except Exception:
+                            pass
                     ai_api_config = self.api_config
                     from security import get_api_key
                     ai_api_key = get_api_key(self.api_config.get('api_provider', ''), self.api_config.get('base_url', ''))

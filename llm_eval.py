@@ -17,8 +17,9 @@ from constants import (
     USER_AGENT,
     LLM_MAX_TOKENS,
     LLM_TEMPERATURE,
-    LLM_TIMEOUT,
-    LLM_RELAY_TIMEOUT,
+    LLM_CONNECT_TIMEOUT,
+    LLM_READ_TIMEOUT_DEFAULT,
+    LLM_RELAY_READ_TIMEOUT_DEFAULT,
     LLM_MAX_RETRIES,
     LLM_MAX_WORKERS,
     LLM_RELAY_MAX_WORKERS,
@@ -68,8 +69,16 @@ def _is_relay_endpoint(api_config: dict) -> bool:
 
 
 def _resolve_request_timeout(api_config: dict) -> tuple[int, int]:
-    """Return provider-aware HTTP connect/read timeouts."""
-    return LLM_RELAY_TIMEOUT if _is_relay_endpoint(api_config) else LLM_TIMEOUT
+    """Return provider-aware HTTP connect/read timeouts.
+
+    Connect timeout is fixed at LLM_CONNECT_TIMEOUT (10s).
+    Read timeout: user-configured llm_read_timeout > relay default (120s) > official default (60s).
+    """
+    if "llm_read_timeout" in api_config and api_config["llm_read_timeout"]:
+        read = api_config["llm_read_timeout"]
+    else:
+        read = LLM_RELAY_READ_TIMEOUT_DEFAULT if _is_relay_endpoint(api_config) else LLM_READ_TIMEOUT_DEFAULT
+    return (LLM_CONNECT_TIMEOUT, read)
 
 
 # resume prompt 构建时的额外字符缓冲（JSON 结构、format() 占位符等）
