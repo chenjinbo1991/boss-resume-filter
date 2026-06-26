@@ -567,7 +567,7 @@ def test_batch_empty_candidates():
     assert result == []
 
 
-def test_eval_workers_use_five_for_official_api_and_two_for_relay():
+def test_eval_workers_use_five_for_official_api_and_three_for_relay():
     official_workers, official_relay = _resolve_eval_workers(
         {
             "api_provider": "qwen",
@@ -585,7 +585,7 @@ def test_eval_workers_use_five_for_official_api_and_two_for_relay():
 
     assert official_workers == 5
     assert official_relay is False
-    assert relay_workers == 2
+    assert relay_workers == 3
     assert relay_detected is True
 
 
