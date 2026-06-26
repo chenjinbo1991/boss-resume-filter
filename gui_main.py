@@ -1299,7 +1299,7 @@ class BossFilterGUI:
                 pady=base_pad_y,
             )
 
-        if current_page == 5:
+        if current_page == 6:
             self._update_model_list_height()
             self._update_model_list_columns()
         elif current_page == 1:
@@ -2592,18 +2592,20 @@ class BossFilterGUI:
             fill="both", expand=True, padx=int(25 * self.dpi_scale * self.zoom_factor), pady=int(15 * self.dpi_scale * self.zoom_factor))
 
         # 模型列表 Treeview
-        model_columns = ("name", "provider", "compat", "base_url")
+        model_columns = ("name", "provider", "compat", "edu_ref", "base_url")
         self.model_list_tree = ttk.Treeview(model_list_card, columns=model_columns, show="headings", selectmode='extended')
         self.model_list_tree.heading("name", text="模型名称")
         self.model_list_tree.heading("provider", text="服务商")
         self.model_list_tree.heading("compat", text="状态")
+        self.model_list_tree.heading("edu_ref", text="学历核验")
         self.model_list_tree.heading("base_url", text="Base URL")
-        self.model_list_tree.column("name", width=280, minwidth=200, anchor='center', stretch=False)
-        self.model_list_tree.column("provider", width=260, minwidth=200, anchor='center', stretch=False)
-        self.model_list_tree.column("compat", width=160, minwidth=120, anchor='center', stretch=False)
-        self.model_list_tree.column("base_url", width=350, minwidth=200, anchor='w', stretch=True)
-        # 普通窗口隐藏 Base URL 列，最大化时显示
-        self.model_list_tree.configure(displaycolumns=("name", "provider", "compat"))
+        self.model_list_tree.column("name", width=260, minwidth=200, anchor='center', stretch=False)
+        self.model_list_tree.column("provider", width=240, minwidth=200, anchor='center', stretch=False)
+        self.model_list_tree.column("compat", width=140, minwidth=100, anchor='center', stretch=False)
+        self.model_list_tree.column("edu_ref", width=130, minwidth=90, anchor='center', stretch=False)
+        self.model_list_tree.column("base_url", width=200, minwidth=100, anchor='w', stretch=True)
+        # 默认显示全部列
+        self.model_list_tree.configure(displaycolumns=("name", "provider", "compat", "edu_ref", "base_url"))
 
         # 已保存模型列表字体比表格字体小一号
         fs = self.dpi_scale * self.zoom_factor
@@ -2615,19 +2617,25 @@ class BossFilterGUI:
                                   font=(FONT_FAMILY, int(12 * self.font_scale), 'bold'))
         self.model_list_tree.configure(style="ModelList.Treeview")
 
-        # 滚动条
-        model_scrollbar = ttk.Scrollbar(model_list_card, orient="vertical", command=self.model_list_tree.yview)
-        self.model_list_tree.configure(yscrollcommand=model_scrollbar.set)
+        # 滚动条（垂直 + 水平）
+        model_v_scrollbar = ttk.Scrollbar(model_list_card, orient="vertical", command=self.model_list_tree.yview)
+        model_h_scrollbar = ttk.Scrollbar(model_list_card, orient="horizontal", command=self.model_list_tree.xview)
+        self.model_list_tree.configure(yscrollcommand=model_v_scrollbar.set, xscrollcommand=model_h_scrollbar.set)
 
-        self.model_list_tree.pack(side="left", fill="both", expand=True)
-        model_scrollbar.pack(side="right", fill="y")
+        self.model_list_tree.pack(side="top", fill="both", expand=True)
+        model_v_scrollbar.pack(side="right", fill="y")
+        model_h_scrollbar.pack(side="bottom", fill="x")
 
         # 右键菜单 - 模型列表
         model_menu_font = (FONT_FAMILY, int(12 * self.font_scale))
         self.model_context_menu = tk.Menu(self.model_list_tree, tearoff=0, font=model_menu_font)
-        self.model_context_menu.add_command(label="切换", command=self.use_selected_model)
+        self.model_context_menu.add_command(label="切换模型", command=self.use_selected_model)
         self.model_context_menu.add_command(label="测试连通性", command=self.test_saved_model_connectivity)
-        self.model_context_menu.add_command(label="删除", command=self.delete_selected_model)
+        self.model_context_menu.add_separator()
+        self.model_context_menu.add_command(label="设为学历核验模型", command=self._set_education_model)
+        self.model_context_menu.add_command(label="取消学历核验模型", command=self._unset_education_model)
+        self.model_context_menu.add_separator()
+        self.model_context_menu.add_command(label="删除模型", command=self.delete_selected_model)
 
         def show_model_context_menu(event):
             item = self.model_list_tree.identify_row(event.y)
@@ -2635,36 +2643,59 @@ class BossFilterGUI:
                 # 右键点击的行已在多选集合内时，保持现有选区
                 if item not in self.model_list_tree.selection():
                     self.model_list_tree.selection_set(item)
+                # 动态切换学历核验菜单项可用状态
+                is_edu = self._is_education_model_item(item)
+                self.model_context_menu.entryconfig("设为学历核验模型", state="disabled" if is_edu else "normal")
+                self.model_context_menu.entryconfig("取消学历核验模型", state="normal" if is_edu else "disabled")
                 self.model_context_menu.tk_popup(event.x_root, event.y_root)
 
         self.model_list_tree.bind("<Button-3>", show_model_context_menu)
 
-        # Base URL 列 tooltip
+        # 列 tooltip（文字截断时弹出）
         self._model_tooltip_after_id = None
         self._model_tooltip = None
         self._model_tooltip_item = None
+        # 列标识 → values 下标
+        self._model_col_idx = {"#1": 0, "#2": 1, "#3": 2, "#4": 3, "#5": 4}
 
         def _on_model_motion(event):
-            """鼠标移动时检查是否需要显示 Base URL tooltip"""
+            """鼠标移动时检查是否需要显示 tooltip"""
             item = self.model_list_tree.identify_row(event.y)
             column = self.model_list_tree.identify_column(event.x)
-            # 第4列是 base_url
-            if not item or column != '#4':
+            if not item or column not in self._model_col_idx:
                 self._hide_model_tooltip()
                 return
+            idx = self._model_col_idx[column]
             values = self.model_list_tree.item(item, 'values')
-            if not values or len(values) < 4:
+            if not values or len(values) <= idx:
                 self._hide_model_tooltip()
                 return
-            base_url = values[3]
-            if not base_url:
+            text = str(values[idx])
+            if not text:
                 self._hide_model_tooltip()
                 return
-            # 检查文本是否被截断（简单判断：长度超过一定字符）
-            if len(base_url) <= 50:
+            # 用 bbox 获取单元格实际像素宽度
+            try:
+                bbox = self.model_list_tree.bbox(item, column)
+                if bbox:
+                    cell_width = bbox[2]  # (x, y, width, height)
+                else:
+                    cell_width = self.model_list_tree.column(column, "width")
+            except Exception:
+                cell_width = self.model_list_tree.column(column, "width")
+            # 用字体度量文字像素宽度
+            try:
+                style = ttk.Style()
+                font_name = style.lookup("ModelList.Treeview", "font") or (FONT_FAMILY, 12)
+                from tkinter.font import Font
+                text_width = Font(font=font_name).measure(text)
+            except Exception:
+                text_width = len(text) * 8
+            # 内边距 16px
+            if text_width <= cell_width - 16:
                 self._hide_model_tooltip()
                 return
-            tooltip_key = (item, 'base_url')
+            tooltip_key = (item, column)
             if tooltip_key == self._model_tooltip_item and self._model_tooltip and self._model_tooltip.winfo_exists():
                 return
             self._model_tooltip_item = tooltip_key
@@ -2673,7 +2704,7 @@ class BossFilterGUI:
             x = self.root.winfo_pointerx() + 15
             y = self.root.winfo_pointery() + 10
             self._model_tooltip_after_id = self.root.after(
-                300, lambda: self._show_model_tooltip(base_url, x, y, tooltip_key)
+                300, lambda t=text, k=tooltip_key, px=x, py=y: self._show_model_tooltip(t, px, py, k)
             )
 
         def _on_model_leave(event):
@@ -2833,6 +2864,7 @@ class BossFilterGUI:
         # 加载已保存的模型
         saved_models = self.api_config.get("saved_models", [])
         current_model = self.api_config.get("model", "")
+        edu_ref = self.api_config.get("education_model_ref") or {}
 
         # 同步到 self.saved_models（关键修复！）
         self.saved_models = saved_models
@@ -2861,10 +2893,23 @@ class BossFilterGUI:
             else:
                 status_display = "未检测"
             is_current = "✓ 使用中" if name == current_model else ""
-            self.model_list_tree.insert("", "end", values=(name, provider_display, status_display, base_url), tags=('current' if is_current else ''))
+            # 学历核验标记：匹配 provider + model
+            is_edu = (
+                edu_ref
+                and edu_ref.get("model") == name
+                and edu_ref.get("api_provider") == provider_key
+            )
+            edu_display = "✓" if is_edu else ""
+            tags = []
+            if is_current:
+                tags.append('current')
+            if is_edu:
+                tags.append('edu_ref')
+            self.model_list_tree.insert("", "end", values=(name, provider_display, status_display, edu_display, base_url), tags=tuple(tags))
 
-        # 设置使用中标记的样式
+        # 设置使用中标记和学历核验标记的样式
         self.model_list_tree.tag_configure('current', foreground=self.colors['success'])
+        self.model_list_tree.tag_configure('edu_ref', foreground=self.colors['primary'])
 
         # 动态调整高度：普通窗口保持原来的最多6行，全屏/高窗口显示更多行。
         self._update_model_list_height()
@@ -2901,25 +2946,25 @@ class BossFilterGUI:
             return
 
     def _update_model_list_columns(self):
-        """始终显示四列：模型名称、服务商、状态、Base URL，最大化时自动拉伸"""
+        """显示模型名称、服务商、状态、学历核验、Base URL 列；最大化时所有列拉伸"""
         if not hasattr(self, 'model_list_tree'):
             return
-        display = ("name", "provider", "compat", "base_url")
+        display = ("name", "provider", "compat", "edu_ref", "base_url")
         current = tuple(self.model_list_tree.cget("displaycolumns"))
         if current != display:
             self.model_list_tree.configure(displaycolumns=display)
-
-        # 最大化时所有列自动拉伸，普通窗口固定宽度
         if self._is_window_maximized():
-            self.model_list_tree.column("name", width=350, stretch=True)
-            self.model_list_tree.column("provider", width=260, stretch=True)
-            self.model_list_tree.column("compat", width=160, stretch=True)
-            self.model_list_tree.column("base_url", width=500, stretch=True)
+            self.model_list_tree.column("name", width=320, stretch=False)
+            self.model_list_tree.column("provider", width=280, stretch=False)
+            self.model_list_tree.column("compat", width=170, stretch=False)
+            self.model_list_tree.column("edu_ref", width=150, stretch=False)
+            self.model_list_tree.column("base_url", width=200, stretch=True)
         else:
-            self.model_list_tree.column("name", width=280, stretch=False)
-            self.model_list_tree.column("provider", width=260, stretch=False)
-            self.model_list_tree.column("compat", width=160, stretch=False)
-            self.model_list_tree.column("base_url", width=350, stretch=True)
+            self.model_list_tree.column("name", width=260, stretch=False)
+            self.model_list_tree.column("provider", width=240, stretch=False)
+            self.model_list_tree.column("compat", width=140, stretch=False)
+            self.model_list_tree.column("edu_ref", width=130, stretch=False)
+            self.model_list_tree.column("base_url", width=200, stretch=True)
 
     def create_run_page(self):
         """创建运行控制页面 - 增强版：浏览器状态检测 + 进度条 + 滚动支持"""
@@ -3998,6 +4043,13 @@ class BossFilterGUI:
         self.education_rotation_locked.add(item_id)
         self._render_education_preview()
 
+    def _get_education_api_config(self) -> dict:
+        """获取学历核验使用的 API 配置。优先 education_model_ref，回退全局模型。"""
+        edu_ref = (self.api_config or {}).get("education_model_ref")
+        if edu_ref and edu_ref.get("model"):
+            return dict(edu_ref)
+        return dict(self.api_config or {})
+
     def _recognize_education_image(self):
         """最多三路并发识别当前选中的毕业证书。"""
         self._save_current_education_fields()
@@ -4007,6 +4059,8 @@ class BossFilterGUI:
             return
         if self.education_recognition_running:
             return
+        # 学历核验专用配置（优先 education_model_ref，回退全局模型）
+        edu_config = self._get_education_api_config()
         # 检查是否有图片文件需要视觉模型
         has_image = any(
             not self.education_items.get(item_id, {}).get("is_pdf")
@@ -4014,22 +4068,23 @@ class BossFilterGUI:
         )
         if has_image:
             from education_certificate import likely_supports_vision
-            if not likely_supports_vision(dict(self.api_config or {})):
-                model_name = str((self.api_config or {}).get("model") or "未配置")
+            if not likely_supports_vision(edu_config):
+                model_name = str(edu_config.get("model") or "未配置")
                 if not messagebox.askyesno(
                     "模型可能不支持图片识别",
-                    f"当前模型「{model_name}」可能不支持图片输入。\n\n"
+                    f"当前学历核验模型「{model_name}」可能不支持图片输入。\n\n"
                     "图片识别需要多模态视觉模型，如：\n"
                     "  国外：GPT-4o / GPT-4.1、Claude Sonnet 4、Gemini 2.5 Pro\n"
                     "  国内：qwen3.7-plus、mimo-v2.5、GLM-5、Kimi K2、MiniMax-M2.7\n\n"
                     "PDF 文件使用文本提取，不受此限制。\n\n"
+                    "可在系统设置的已保存模型列表中右键指定学历核验专用模型。\n\n"
                     "是否仍要尝试识别？",
                     parent=self.root,
                 ):
                     return
         self.education_recognition_running = True
         from education_certificate import resolve_vision_api_config
-        vision_config = resolve_vision_api_config(dict(self.api_config or {}))
+        vision_config = resolve_vision_api_config(edu_config)
         vision_model = str(vision_config.get("model") or "当前模型")
         for item_id in item_ids:
             item = self.education_items[item_id]
@@ -4051,7 +4106,7 @@ class BossFilterGUI:
                     recognize_certificate_image,
                     recognize_certificate_pdf,
                 )
-                config = dict(self.api_config or {})
+                config = vision_config
                 api_key = self._get_education_api_key(config)
                 workers = min(3, len(item_ids))
 
@@ -6083,6 +6138,7 @@ class BossFilterGUI:
                         "providers": config.get("providers", {}),
                         "fetched_models": config.get("fetched_models", {}),
                         "llm_read_timeout": config.get("llm_read_timeout"),
+                        "education_model_ref": config.get("education_model_ref"),
                     }
 
                     # 从 keyring 读取所有 saved_models 的 API Key（按服务商）
@@ -6142,6 +6198,82 @@ class BossFilterGUI:
             ]
         return clean
 
+    def _is_education_model_item(self, item_id: str) -> bool:
+        """判断 Treeview 中的模型项是否为当前指定的学历核验模型"""
+        if not hasattr(self, 'api_config') or not self.api_config:
+            return False
+        edu_ref = self.api_config.get("education_model_ref")
+        if not edu_ref:
+            return False
+        values = self.model_list_tree.item(item_id, 'values')
+        if not values or len(values) < 2:
+            return False
+        name = values[0]
+        provider_display = values[1]
+        provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
+        return edu_ref.get("model") == name and edu_ref.get("api_provider") == provider_key
+
+    def _set_education_model(self):
+        """将选中模型设为学历核验专用模型"""
+        selection = self.model_list_tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个模型")
+            return
+        item = self.model_list_tree.item(selection[0])
+        values = item['values']
+        if not values or len(values) < 2:
+            return
+        name = values[0]
+        provider_display = values[1]
+        provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
+        # 从 saved_models 中查找完整配置
+        base_url = ""
+        for m in getattr(self, 'saved_models', []):
+            if m.get("model") == name and m.get("api_provider") == provider_key:
+                base_url = m.get("base_url", "")
+                break
+        if not base_url:
+            # fallback: 从 Treeview values 取 base_url（最大化时可见）
+            if len(values) >= 5:
+                base_url = values[4]
+        if not hasattr(self, 'api_config') or not self.api_config:
+            return
+        self.api_config["education_model_ref"] = {
+            "api_provider": provider_key,
+            "base_url": base_url,
+            "model": name,
+        }
+        self._save_api_config_to_file()
+        self.load_saved_models_to_tree()
+        self._update_api_status(
+            text=f"✓ 学历核验模型已设为 {provider_display} / {name}",
+            foreground=self.colors['success'],
+        )
+
+    def _unset_education_model(self):
+        """取消学历核验专用模型，回退到全局模型"""
+        if not hasattr(self, 'api_config') or not self.api_config:
+            return
+        if not self.api_config.get("education_model_ref"):
+            return
+        self.api_config.pop("education_model_ref", None)
+        self._save_api_config_to_file()
+        self.load_saved_models_to_tree()
+        self._update_api_status(
+            text="✓ 已取消学历核验专用模型，将使用全局模型",
+            foreground=self.colors['success'],
+        )
+
+    def _save_api_config_to_file(self):
+        """将当前 api_config 持久化到 api_config.json"""
+        if not hasattr(self, 'api_config') or not self.api_config:
+            return
+        try:
+            with open(API_CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(self._sanitize_config_for_save(self.api_config), f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"保存配置失败：{e}")
+
     def delete_selected_model(self):
         """删除选中的模型"""
         selection = self.model_list_tree.selection()
@@ -6155,11 +6287,18 @@ class BossFilterGUI:
         # 获取选中的模型信息
         item = self.model_list_tree.item(selection[0])
         model_name = item['values'][0]
-        provider = item['values'][1]
+        provider_display = item['values'][1]
+        provider_key = self.DISPLAY_TO_KEY.get(provider_display, provider_display)
 
         # 从列表移除
         if hasattr(self, 'saved_models'):
             self.saved_models = [m for m in self.saved_models if m.get("model") != model_name]
+
+        # 如果删除的是学历核验模型，清除配置
+        if hasattr(self, 'api_config') and self.api_config:
+            edu_ref = self.api_config.get("education_model_ref")
+            if edu_ref and edu_ref.get("model") == model_name and edu_ref.get("api_provider") == provider_key:
+                self.api_config.pop("education_model_ref", None)
 
         # 同步更新 api_config 并持久化到文件
         if hasattr(self, 'api_config') and self.api_config:
@@ -6486,7 +6625,8 @@ class BossFilterGUI:
             # 按服务商 + Base URL 组合存储 API Key（区分同一服务商的不同接入方式）
             save_api_key(provider, api_key, base_url)
 
-            # 构建当前配置
+            # 构建当前配置（保留 education_model_ref）
+            edu_ref = (self.api_config or {}).get("education_model_ref")
             self.api_config = {
                 "api_provider": provider,
                 "base_url": base_url,
@@ -6496,6 +6636,8 @@ class BossFilterGUI:
                 "fetched_models": self.api_config.get("fetched_models", {}),
                 "llm_read_timeout": self.llm_read_timeout_var.get() if hasattr(self, 'llm_read_timeout_var') else 60,
             }
+            if edu_ref:
+                self.api_config["education_model_ref"] = edu_ref
 
             # 检查当前模型是否已存在于列表
             model_exists = False
